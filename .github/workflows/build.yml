@@ -92,11 +92,11 @@ jobs:
           cd "$CONFIG/kernel_platform"
           
           echo "Adding KernelSU..."
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          #cd ./KernelSU-Next/kernel
-          #sed -i 's/ccflags-y += -DKSU_VERSION=16/ccflags-y += -DKSU_VERSION=12000/' ./Makefile
-          KSU_VERSION=$(cd ./KernelSU-Next/kernel && git describe --tags --abbrev=0)
-          echo "KSUVER=${KSU_VERSION}" >> $GITHUB_ENV
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next-susfs-dev
+          cd KernelSU-Next/kernel
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
 
       - name: Apply SUSFS Patches
         run: |
@@ -168,6 +168,17 @@ jobs:
           # Add additional tmpfs config setting
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+          # Add additionalconfig setting
+           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_SCHED_CLASS_EXT=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_SMP=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_MSM_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_NO_HZ_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
+           echo "CONFIG_PM_SLEEP_SMP=y" >> ./common/arch/arm64/configs/gki_defconfig
 
       - name: Run sed and perl Commands
         run: |
