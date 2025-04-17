@@ -208,8 +208,7 @@ jobs:
 
           # ── Additional Netfilter Options ──
           echo "CONFIG_WIREGUARD=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_NF_NAT=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NET_SCH_CAKE=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_NAT=y" >> common/arch/arm64/configs/gki_defconfig          
 
           # ── Scheduler & CPU governor tweaks ──
           echo "CONFIG_SCHED_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
@@ -227,8 +226,7 @@ jobs:
           echo "CONFIG_DEBUG_KERNEL=n" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DYNAMIC_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEBUG_INFO=n" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_INFO_DWARF5=n" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_FS=n" >> common/arch/arm64/configs/gki_defconfig                    
+          echo "CONFIG_DEBUG_INFO_DWARF5=n" >> common/arch/arm64/configs/gki_defconfig                           
 
       - name: Run sed and perl Commands
         run: |
