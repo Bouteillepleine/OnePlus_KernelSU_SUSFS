@@ -228,11 +228,7 @@ jobs:
           echo "CONFIG_DYNAMIC_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEBUG_INFO=n" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEBUG_INFO_DWARF5=n" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_FS=n" >> common/arch/arm64/configs/gki_defconfig      
-          
-          # ── Android Binder ──
-          echo "CONFIG_ANDROID_BINDER_IPC=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_ANDROID_BINDERFS=y" >> common/arch/arm64/configs/gki_defconfig          
+          echo "CONFIG_DEBUG_FS=n" >> common/arch/arm64/configs/gki_defconfig                    
 
       - name: Run sed and perl Commands
         run: |
