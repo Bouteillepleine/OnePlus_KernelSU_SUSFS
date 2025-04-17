@@ -201,6 +201,59 @@ jobs:
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
+          # ── Netfilter: TTL targets/matches ──
+          echo "CONFIG_IP_NF_TARGET_TTL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_TARGET_HL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_MATCH_HL=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Additional Netfilter Options ──
+          echo "CONFIG_WIREGUARD=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_NAT=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_SCH_CAKE=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Scheduler & CPU governor tweaks ──
+          echo "CONFIG_SCHED_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_UCLAMP_TASK=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_FAIR_GROUP_SCHED=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_ENERGY_MODEL=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Power & idle optimizations ──
+          echo "CONFIG_NO_HZ_IDLE=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_SLEEP_SMP=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_AUTOSLEEP=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_QCOM_CPUFREQ_HW=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Strip debug to reduce size ──
+          echo "CONFIG_DEBUG_KERNEL=n" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_INFO=n" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_INFO_DWARF5=n" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_FS=n" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── OnePlus-Specific Optimizations ──
+          echo "CONFIG_OPLUS_FEATURE_OCH=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OPLUS_TOUCHSCREEN_COMMON=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Kernel Hardening ──
+          echo "CONFIG_SLAB_FREELIST_HARDENED=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_STACKPROTECTOR_STRONG=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_INIT_STACK_ALL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_REFCOUNT_FULL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_HARDENED_USERCOPY=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_FORTIFY_SOURCE=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Android Binder ──
+          echo "CONFIG_ANDROID_BINDER_IPC=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_ANDROID_BINDERFS=y" >> common/arch/arm64/configs/gki_defconfig
+
+          # ── Thermal & Battery (Qualcomm/OnePlus) ──
+          echo "CONFIG_THERMAL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_THERMAL_WRITABLE_TRIPS=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_QCOM_THERMAL=y" >> common/arch/arm64/configs/gki_defconfig
+
       - name: Run sed and perl Commands
         run: |
           echo "Changing to configuration directory: $CONFIG..."
