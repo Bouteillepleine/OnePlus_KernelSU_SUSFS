@@ -214,12 +214,20 @@ jobs:
           echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_UCLAMP_TASK=y" >> common/arch/arm64/configs/gki_defconfig          
           echo "CONFIG_ENERGY_MODEL=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MQ_IOSCHED_KYBER=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MQ_IOSCHED_BFQ=y" >> common/arch/arm64/configs/gki_defconfig          
 
           # ── Power & idle optimizations ──
           echo "CONFIG_NO_HZ_IDLE=y" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_PM_SLEEP_SMP=y" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CPU_IDLE=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_AUTOSLEEP=y" >> common/arch/arm64/configs/gki_defconfig          
+          echo "CONFIG_PM_AUTOSLEEP=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_LRU_GEN=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_LRU_GEN_ENABLED=y" >> common/arch/arm64/configs/gki_defconfig      
+          echo "CONFIG_PM=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_WAKELOCKS=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_LRU_GEN=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_LRU_GEN_ENABLED=y" >> common/arch/arm64/configs/gki_defconfig
 
           # ── Strip debug to reduce size ──
           echo "CONFIG_DEBUG_KERNEL=n" >> common/arch/arm64/configs/gki_defconfig
