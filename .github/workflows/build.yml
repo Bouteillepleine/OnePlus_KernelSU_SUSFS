@@ -226,9 +226,7 @@ jobs:
           echo "CONFIG_LRU_GEN_ENABLED=y" >> common/arch/arm64/configs/gki_defconfig      
           echo "CONFIG_PM=y" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_PM_WAKELOCKS=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_LRU_GEN=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_LRU_GEN_ENABLED=y" >> common/arch/arm64/configs/gki_defconfig
-
+          
           # ── Strip debug to reduce size ──
           echo "CONFIG_DEBUG_KERNEL=n" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DYNAMIC_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
