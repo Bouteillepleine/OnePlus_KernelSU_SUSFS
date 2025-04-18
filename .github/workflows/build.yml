@@ -210,8 +210,7 @@ jobs:
           echo "CONFIG_WIREGUARD=y" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP_NF_NAT=y" >> common/arch/arm64/configs/gki_defconfig          
 
-          # ── Scheduler & CPU governor tweaks ──
-          echo "CONFIG_SCHED_DEBUG=n" >> common/arch/arm64/configs/gki_defconfig
+          # ── Scheduler & CPU governor tweaks ──          
           echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_UCLAMP_TASK=y" >> common/arch/arm64/configs/gki_defconfig          
           echo "CONFIG_ENERGY_MODEL=y" >> common/arch/arm64/configs/gki_defconfig
