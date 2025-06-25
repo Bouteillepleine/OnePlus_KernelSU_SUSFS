@@ -278,8 +278,7 @@ jobs:
           echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KPROBES=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig          
           echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig          
