@@ -285,6 +285,23 @@ runs:
           echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
 
+          echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_QOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SUSPEND=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_SLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_AUTOSLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WAKELOCK=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_LADDER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KPROBES=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig  
+
       - name: Add TTL Target Support
         shell: bash
         run: |
