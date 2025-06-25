@@ -269,7 +269,7 @@ jobs:
 
   trigger-release:
     needs:
-      - build-batch-1
+#      - build-batch-1
       - build-batch-2
     runs-on: ubuntu-latest
     if: ${{ inputs.make_release }}
