@@ -195,6 +195,19 @@ jobs:
           else
             echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
           fi
+          
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+            echo "Patching hmdird!"
+            echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
+            curl -Ls https://raw.githubusercontent.com/Numbersf/Action-Build/refs/heads/SukiSU-Ultra/patches/hmbird_patch.patch | patch -p1 -F 3 --verbose
+            echo "Patching hmbird files!"
+            # curl -Ls https://github.com/schqiushui/android_kernel_common_oneplus_sm8750/commit/5d2cc9706a35f5e4b5dbbd5d247487225a46e02c.patch | patch -p1 -F 3
+            cd ./kernel/sched
+            rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
+            curl -Ls https://github.com/HanKuCha/sched_ext/commit/7ab1d04d5cb622d6c32c932add617803074ec5a7.patch | patch -p1 -F 3
+          else
+            echo "Not OPAce5Pro / OP13, skipping fengchi patch"
+          fi
 
       - name: Apply KSUN Hooks
         run: |
@@ -259,29 +272,6 @@ jobs:
           
           echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
-
-          echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_QOS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SUSPEND=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_SLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_AUTOSLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_WAKELOCK=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE_GOV_LADDER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig          
-          echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig          
 
       - name: Add TTL Target Support
         run: |
@@ -292,6 +282,34 @@ jobs:
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+      - name: Others configurations
+        shell: bash
+        run: |
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+
+          echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig          
+          echo "CONFIG_SUSPEND=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_SLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_AUTOSLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WAKELOCK=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_LADDER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig      
+          echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig
 
       - name: Run sed and perl Commands
         run: |
