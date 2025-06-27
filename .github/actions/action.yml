@@ -3,7 +3,6 @@ permissions:
   contents: write  # Allow writing to repository contents (for pushing tags)
   actions: write   # Allows triggering actions
 
-
 inputs:
   model:
     required: true
@@ -209,6 +208,17 @@ runs:
           else
             echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
           fi
+          
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+            echo "Patching hmdird!"
+            curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/hmbird_kernel_patch.patch | patch -p1 -F 3 --verbose
+            echo "Patching hmbird files!"
+            cd ./kernel/sched
+            rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
+            curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/hmbird_files_patch.patch | patch -p1 -F 3
+          else
+            echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
+          fi
 
       - name: Apply KSUN Hooks
         shell: bash
@@ -277,29 +287,6 @@ runs:
           
           echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
-
-          echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_QOS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SUSPEND=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_SLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_AUTOSLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_WAKELOCK=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE_GOV_LADDER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig          
-          echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig  
 
       - name: Add TTL Target Support
         shell: bash
@@ -311,6 +298,34 @@ runs:
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+      - name: Others configurations
+        shell: bash
+        run: |
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+
+          echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig          
+          echo "CONFIG_SUSPEND=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_SLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PM_AUTOSLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WAKELOCK=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_LADDER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig      
+          echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig
 
       - name: Run sed and perl Commands
         run: |
@@ -340,7 +355,7 @@ runs:
           # Run perl command to modify UTS_VERSION
           perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
           perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
-          
+                   
       - name: Build the Kernel
         shell: bash
         run: |
@@ -394,6 +409,16 @@ runs:
           
           echo "Navigating to AnyKernel3 directory..."
           cd ../AnyKernel3
+          
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/dtc -o ./tools/dtc
+            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/fdtdump -o ./tools/fdtdump
+            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/fdtget -o ./tools/fdtget
+            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/fdtput -o ./tools/fdtput
+            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/mkdtimg -o ./tools/mkdtimg
+            
+            curl -LSs https://raw.githubusercontent.com/WildKernels/kernel_patches/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/ak3_hmbird_patch.patch | patch -F 3
+          fi
           
           # Zip the files in the AnyKernel3 directory with a new naming convention
           ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
