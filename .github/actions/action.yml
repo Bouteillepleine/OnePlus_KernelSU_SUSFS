@@ -3,6 +3,7 @@ permissions:
   contents: write  # Allow writing to repository contents (for pushing tags)
   actions: write   # Allows triggering actions
 
+
 inputs:
   model:
     required: true
@@ -193,29 +194,24 @@ runs:
           fi
           patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
           
-          if ! grep -qxF '#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561' ./include/linux/susfs_def.h; then
-              curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/hide_sus_mnts_for_all_procs.patch  | patch -p1 -F 3
-          else
-              echo "Line already present. Skipping SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS Patch."
-          fi
-          
           KERNEL_VERSION="${{ inputs.kernel_version }}"
           MIN_VERSION="5.16"
           
           if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
             echo "Patching ptrace!"
-            curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/ptrace.patch  | patch -p1 -F 3
+            patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
           else
             echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
           fi
           
           if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-            echo "Patching hmdird!"
-            curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/hmbird_kernel_patch.patch | patch -p1 -F 3 --verbose
+            echo "Patching hmbird!"
+            echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
+            patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
             echo "Patching hmbird files!"
             cd ./kernel/sched
             rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-            curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/hmbird_files_patch.patch | patch -p1 -F 3
+            patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
           else
             echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
           fi
@@ -299,35 +295,8 @@ runs:
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-      - name: Others configurations
-        shell: bash
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
-
-          echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig          
-          echo "CONFIG_SUSPEND=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_SLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PM_AUTOSLEEP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_WAKELOCK=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE_GOV_LADDER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPU_IDLE_GOV_MENU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SCHED_EAS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_FS=n" >> ./common/arch/arm64/configs/gki_defconfig      
-          echo "CONFIG_DEBUG_PREEMPT=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TRACING=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_WLAN_POWER_SAVE=y" >> ./common/arch/arm64/configs/gki_defconfig
-
       - name: Run sed and perl Commands
+        shell: bash
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform"
@@ -340,9 +309,17 @@ runs:
           
           # Run sed commands for modifications
           sed -i 's/check_defconfig//' ./common/build.config.gki
-          sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion
-          sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion
-          sed -i '$s|echo "\$res"|echo "\$res"|' ./external/dtc/scripts/setlocalversion
+          # For Old setlocalversion Script
+          tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
+          tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
+          tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
+          # For New setlocalversion Script
+          sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./common/scripts/setlocalversion
+          sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
+          sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./external/dtc/scripts/setlocalversion
+          chmod +x ./common/scripts/setlocalversion
+          chmod +x ./msm-kernel/scripts/setlocalversion
+          chmod +x ./external/dtc/scripts/setlocalversion
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
           sed -i 's/-dirty//' ./common/scripts/setlocalversion
           sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
@@ -353,9 +330,10 @@ runs:
           sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
          
           # Run perl command to modify UTS_VERSION
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
-                   
+          DATESTR=$(date -u)
+          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
+          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h
+
       - name: Build the Kernel
         shell: bash
         run: |
@@ -410,14 +388,9 @@ runs:
           echo "Navigating to AnyKernel3 directory..."
           cd ../AnyKernel3
           
-          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/dtc -o ./tools/dtc
-            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/fdtdump -o ./tools/fdtdump
-            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/fdtget -o ./tools/fdtget
-            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/fdtput -o ./tools/fdtput
-            curl -LSs https://github.com/WildKernels/kernel_patches/raw/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/bins/mkdtimg -o ./tools/mkdtimg
-            
-            curl -LSs https://raw.githubusercontent.com/WildKernels/kernel_patches/600322932b3d75a0800b29b03b3e21db8a3aa0f2/oneplus/hmbird/ak3_hmbird_patch.patch | patch -F 3
+           if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+            cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
+            patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
           fi
           
           # Zip the files in the AnyKernel3 directory with a new naming convention
