@@ -301,17 +301,7 @@ runs:
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-
-      - name: Remove OnePlus Kernel Module
-        shell: bash
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform/common"
-          wget https://github.com/reigadegr/Action-Build/raw/suki/black_module.patch
-          cat black_module.patch     
-          git apply black_module.patch
-          echo "black modules applied..."
-
+      
       - name: Disable OnePlus Kernel Module
         shell: bash
         run: |
