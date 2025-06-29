@@ -294,17 +294,8 @@ jobs:
           echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig          
-
-      - name: Remove OnePlus Kernel Module
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform/common"
-          wget https://github.com/reigadegr/Action-Build/raw/suki/black_module.patch
-          cat black_module.patch     
-          git apply black_module.patch
-          echo "black modules applied..."
-          
+          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig        
+               
       - name: Disable OnePlus Kernel Module
         run: |
           echo "Changing to configuration directory: $CONFIG..."
