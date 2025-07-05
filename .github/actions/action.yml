@@ -321,10 +321,7 @@ runs:
           echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig      
-          # Additional optimizations
-          echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TRIM_UNUSED_KSYMS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SLUB_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig          
+          # Additional optimizations  
           echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig          
           echo "CONFIG_OPTIMIZE_INLINING=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CFI_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
