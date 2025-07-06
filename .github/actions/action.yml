@@ -27,9 +27,6 @@ inputs:
     required: true
     type: string
     default: stable
-  github-token:
-    description: 'GitHub Token'
-    required: true
   susfs_branch:
     required: true
     type: string
@@ -172,7 +169,7 @@ runs:
           echo "SusFS Version: $susfs_version"
           
           case "$susfs_version" in
-             "v1.5.5"|"v1.5.6"|"v1.5.7")
+            "v1.5.5"|"v1.5.6"|"v1.5.7")
               cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
               ;;
             "v1.5.8"|"v1.5.9")
@@ -418,26 +415,7 @@ runs:
           else
             LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
           fi
-      - name: Download Latest SUSFS Module from CI
-        shell: bash
-        continue-on-error: true
-        run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ inputs.github-token }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
-          else
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github-token }}" \
-              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-            if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ inputs.github-token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-            else
-              echo "Failed to fetch artifact URL"
-            fi
-          fi
-
+     
       - name: Create ZIP Files for Different Formats
         shell: bash
         run: |
