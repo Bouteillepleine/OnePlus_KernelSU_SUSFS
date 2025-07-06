@@ -373,9 +373,28 @@ jobs:
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
             ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
           else
-            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"            
           fi
+      - name: Download Latest SUSFS Module from CI
+        continue-on-error: true
+        run: |
+          echo "Downloading latest SUSFS module from CI..."
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "${{ inputs.susfs_branch }}") | .id' | head -n 1)
 
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "No successful run found for branch ${{ inputs.susfs_branch }}"
+          else
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+
+            if [ -n "$ARTIFACT_URL" ]; then
+              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_CI.zip "$ARTIFACT_URL"
+              cp ksu_module_susfs_CI.zip ./AnyKernel3/
+            else
+              echo "Failed to fetch artifact URL"
+            fi          
       - name: Create ZIP Files for Different Formats
         run: |
           echo "Changing to configuration directory: $CONFIG..."
