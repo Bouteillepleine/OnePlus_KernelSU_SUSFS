@@ -415,24 +415,21 @@ runs:
           else
             LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
           fi
-      - name: Download Latest SUSFS Module from CI
-        shell: bash
+      - name: Download Latest SUSFS Module from CI        
         continue-on-error: true
+        shell: bash
         run: |
-          echo "Downloading latest SUSFS module from CI..."
           LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "${{ inputs.susfs_branch }}") | .id' | head -n 1)
-
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
           if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch ${{ inputs.susfs_branch }}"
+            echo "No successful run found for branch v1.5.2+"
           else
             ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-
             if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_CI.zip ./AnyKernel3/
+              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
             else
               echo "Failed to fetch artifact URL"
             fi          
