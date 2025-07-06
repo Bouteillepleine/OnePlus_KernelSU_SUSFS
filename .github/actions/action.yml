@@ -415,10 +415,10 @@ runs:
           else
             LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
           fi
-      - name: Download Latest SUSFS Module from CI        
-        continue-on-error: true
+      - name: Download Latest SUSFS Module from CI
         shell: bash
-        run: |
+        continue-on-error: true
+          run: |
           LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
             jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
