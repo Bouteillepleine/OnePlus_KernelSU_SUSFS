@@ -27,6 +27,9 @@ inputs:
     required: true
     type: string
     default: stable
+  github-token:
+    description: 'GitHub Token'
+    required: true
   susfs_branch:
     required: true
     type: string
