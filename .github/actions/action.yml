@@ -162,7 +162,7 @@ runs:
           echo "Applying next SUSFS patches..."
           susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
           echo "SUSVER=$susfs_version" >> $GITHUB_ENV
-          BASE_VERSION=10977
+          BASE_VERSION=10200
           KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/commits?sha=${{ inputs.ksun_branch }}&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" $BASE_VERSION)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           echo "KernelSU Next Version: $KSU_VERSION"
@@ -175,13 +175,13 @@ runs:
             "v1.5.8"|"v1.5.9")
               cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
               patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
-              cp ../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_apk_sign.c.patch ./
+              cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
               patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
-              cp ../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_core_hook.c.patch ./
+              cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
               patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
-              cp ../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_selinux.c.patch ./
+              cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
               patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
-              cp ../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_ksud.c.patch ./
+              cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
               patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
               ;;
             *)
@@ -303,7 +303,7 @@ runs:
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-
+          
       - name: Others configurations
         shell: bash
         run: |
