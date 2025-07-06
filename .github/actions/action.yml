@@ -163,7 +163,7 @@ runs:
           susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
           echo "SUSVER=$susfs_version" >> $GITHUB_ENV
           BASE_VERSION=10200
-          KSU_VERSION=$(expr $(curl -sI -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/commits?sha=${{ inputs.ksun_branch }}&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" $BASE_VERSION)
+          KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/commits?sha=${{ inputs.ksun_branch }}&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" $BASE_VERSION)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           echo "KernelSU Next Version: $KSU_VERSION"
           echo "SusFS Version: $susfs_version"
@@ -172,7 +172,7 @@ runs:
             "v1.5.5"|"v1.5.6"|"v1.5.7")
               cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
               ;;
-            "v1.5.8"|"v1.5.9")
+            "v1.5.8")
               cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
               patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
               cp ../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_apk_sign.c.patch ./
@@ -415,7 +415,7 @@ runs:
           else
             LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
           fi
-     
+
       - name: Create ZIP Files for Different Formats
         shell: bash
         run: |
