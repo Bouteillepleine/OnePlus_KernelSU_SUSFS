@@ -129,18 +129,24 @@ runs:
           # Sync repo and apply patches
           $REPO --version
           $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
-          
-        - name: "⚡ Setup SukiSU Ultra"
-          shell: bash
-          run: |
-          echo "🛠️ Setting up SukiSU Ultra..."
+      
+      - name: Add KernelSU Next
+        shell: bash
+        run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform"
-          cd kernel_workspace/kernel_platform      
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main          
-          git submodule update --init --recursive        
           
-     - name: Apply SUSFS Patches
+          echo "Adding KernelSU Next..."
+          
+          if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          else
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
+          fi
+          
+          git submodule update --init --recursive
+
+      - name: Apply SUSFS Patches
         shell: bash
         run: |
           echo "Changing to configuration directory: $CONFIG..."
@@ -155,37 +161,18 @@ runs:
           
           cd ./KernelSU-Next
           
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
-          cd ./KernelSU
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10700)
+          echo "Applying next SUSFS patches..."
+          susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
+          echo "SUSVER=$susfs_version" >> $GITHUB_ENV
+          BASE_VERSION=10200
+          cd ./kernel
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
+          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          cd ..
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
-          echo "SukiSU Ultra Version: $KSU_VERSION"
-          echo "✅ SukiSU Ultra configuration completed"
+          echo "KernelSU Next Version: $KSU_VERSION"
+          echo "SusFS Version: $susfs_version"
           
-          case "${{ inputs.susfs_branch }}" in
-            "gki-android12-5.10"|"gki-android13-5.15"|"gki-android14-6.1")
-              cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
-              ;;
-            "gki-android15-6.6")
-              cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-              patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
-              cp "../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_apk_sign.c.patch" ./
-              patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
-              cp "../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_core_hook.c.patch" ./
-              patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
-              cp "../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_selinux.c.patch" ./
-              patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
-              cp "../../../kernel_patches/next/susfs_fix_patches/v1.5.8/fix_ksud.c.patch" ./
-              patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
-              ;;
-            *)
-              echo "Invalid SUSFS branch: ${{ inputs.susfs_branch }}"
-              exit 1
-              ;;
-          esac
-          patch -p1 --forward < ksun_susfs_latest.patch || true                    
           case "$susfs_version" in
             "v1.5.5"|"v1.5.6"|"v1.5.7")
               cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
@@ -208,7 +195,8 @@ runs:
               ;;
           esac
           patch -p1 --forward < ksun_susfs_latest.patch || true
-                    
+          
+          
           # Change to common directory and apply SUSFS patch
           cd ../common
           if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
