@@ -268,7 +268,7 @@ runs:
           # Apply additional patch
           cp ../../../kernel_patches/69_hide_stuff.patch ./
           patch -p1 -F 3 < 69_hide_stuff.patch
-
+          
       - name: Add KernelSU-Next and SUSFS Configuration Settings
         shell: bash
         run: |
