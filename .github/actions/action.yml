@@ -316,8 +316,7 @@ runs:
           
           echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          sed -i 's/echo fq > \/proc\/sys\/net\/core\/default_qdisc 2>\/dev\/null/echo "fq_codel" > \/proc\/sys\/net\/core\/default_qdisc 2>\/dev\/null/g' filename
-          
+
       - name: Add TTL Target Support
         shell: bash
         run: |
@@ -470,4 +469,3 @@ runs:
           name: kernel-${{ env.CONFIG }}
           path: |
             *.zip
-      
