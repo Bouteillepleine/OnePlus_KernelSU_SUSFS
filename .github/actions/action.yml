@@ -323,9 +323,7 @@ runs:
           echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_COMPACTION=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_THP_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
+                    
       - name: Add TTL Target Support
         shell: bash
         run: |
