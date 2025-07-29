@@ -50,6 +50,17 @@ runs:
         key: ${{ runner.os }}-repo-2.16-v1
         restore-keys: ${{ runner.os }}-repo-
 
+    - name: Cache cloned repositories
+      uses: actions/cache@v4
+      id: cache-repos
+      with:
+        path: |
+          ./AnyKernel3
+          ./kernel_patches
+          ./susfs4ksu
+        key: ${{ runner.os }}-repos-${{ hashFiles('.github/workflows/*.yml') }}-v1
+        restore-keys: ${{ runner.os }}-repos-
+
     - name: Setup Build System
       shell: bash
       run: |
@@ -69,7 +80,7 @@ runs:
           esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
           google-cloud-sdk imagemagick \
           libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
-          mercurial apt-transport-https mono-complete libmysqlclient \
+          mercarial apt-transport-https mono-complete libmysqlclient \
           unixodbc-dev yarn chrpath libssl-dev libxft-dev \
           libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
@@ -132,20 +143,38 @@ runs:
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        # Clone repositories in parallel with shallow depth
-        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
-        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git &
-        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git &
-        wait
+        if [ "${{ steps.cache-repos.outputs.cache-hit }}" != "true" ]; then
+          # Clone repositories in parallel with shallow depth
+          git clone --depth=1 --no-tags https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
+          git clone --depth=1 --no-tags https://github.com/TheWildJames/kernel_patches.git &
+          git clone --depth=1 --no-tags https://gitlab.com/simonpunk/susfs4ksu.git &
+          wait
+        else
+          echo "Using cached repositories"
+        fi
         
         cd susfs4ksu || exit 1
         
-        # Try to check if TARGET_REF is a valid branch or tag
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
+        # Fetch branches and tags for debugging
+        git fetch --depth=1 --no-tags origin
+        echo "Available branches in susfs4ksu:"
+        git branch -r
+        echo "Available tags in susfs4ksu:"
+        git tag
+        
+        # Try to check if TARGET_REF is a valid branch, tag, or commit
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
           git checkout "$SUSFS_BRANCH"
         else
-          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
-          exit 1
+          echo "Error: '$SUSFS_BRANCH' is neither a valid branch, tag, nor commit hash."
+          echo "Attempting fallback to 'main' branch..."
+          if git rev-parse --verify "origin/main" >/dev/null 2>&1; then
+            git checkout main
+            echo "Fallback to 'main' branch successful"
+          else
+            echo "Error: Fallback branch 'main' not found. Please check the repository and branch name."
+            exit 1
+          fi
         fi
 
     - name: Initialize and Sync Kernel Source
