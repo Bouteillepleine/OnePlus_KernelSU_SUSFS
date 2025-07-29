@@ -36,16 +36,18 @@ runs:
   steps:
     - name: Cache apt packages
       uses: actions/cache@v4
+      id: cache-apt
       with:
         path: /var/cache/apt
-        key: ${{ runner.os }}-apt-${{ hashFiles('**/build.yml') }}
+        key: ${{ runner.os }}-apt-${{ hashFiles('**/*.yml') }}-v1
         restore-keys: ${{ runner.os }}-apt-
 
     - name: Cache repo binary
       uses: actions/cache@v4
+      id: cache-repo
       with:
         path: ./git-repo/repo
-        key: ${{ runner.os }}-repo-2.16
+        key: ${{ runner.os }}-repo-2.16-v1
         restore-keys: ${{ runner.os }}-repo-
 
     - name: Setup Build System
@@ -56,6 +58,7 @@ runs:
         
         df -h
         
+        # Clean up unnecessary directories
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
         sudo docker image prune --all --force
         echo "some directories deleted"
@@ -82,15 +85,31 @@ runs:
         
         df -h
         
-        # Install dependencies
+        # Install dependencies only if not already installed
         echo "Installing Repo and Python"
-        sudo apt update
-        sudo apt install -y python3 python-is-python3
+        if ! dpkg -l python3 python-is-python3 >/dev/null 2>&1; then
+          if [ "${{ steps.cache-apt.outputs.cache-hit }}" != "true" ]; then
+            sudo apt update
+          fi
+          sudo apt install -y python3 python-is-python3
+        else
+          echo "Python3 and python-is-python3 already installed"
+        fi
         
         mkdir -p ./git-repo
-        if [ ! -f ./git-repo/repo ]; then
-          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo@2.16 > ./git-repo/repo
+        if [ ! -f ./git-repo/repo ] || ! file ./git-repo/repo | grep -q "executable"; then
+          echo "Downloading repo binary..."
+          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o ./git-repo/repo || {
+            echo "Failed to download repo from primary URL, trying fallback..."
+            curl -sSL https://gerrit.googlesource.com/git-repo/+/refs/heads/stable/repo?format=TEXT | base64 -d > ./git-repo/repo
+          }
+          if ! file ./git-repo/repo | grep -q "executable"; then
+            echo "Error: Downloaded repo file is not executable"
+            exit 1
+          fi
           chmod a+rx ./git-repo/repo
+        else
+          echo "Using cached repo binary"
         fi
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
@@ -113,17 +132,16 @@ runs:
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        # Clone repositories using the branch names
-        git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone https://github.com/TheWildJames/kernel_patches.git
+        # Clone repositories in parallel with shallow depth
+        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
+        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git &
+        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git &
+        wait
         
-        # Clone the repo with all branches and history (can optimize later if needed)
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
         
         # Try to check if TARGET_REF is a valid branch or tag
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          # It's a branch or commit hash
           git checkout "$SUSFS_BRANCH"
         else
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
@@ -431,7 +449,7 @@ runs:
         BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
         if [ "${{ inputs.soc }}" == "sun" ]; then
           BUILD_TYPE="perf"
-          B офисел_ARGS+=(-g)
+          BAZEL_ARGS+=(-g)
         fi
         
         (stdbuf -oL bash -c '
