@@ -20,115 +20,16 @@ on:
           - stable
           - next
         default: next
+      android14-6_1_susfs_branch:
+        description: "Choose SusFS Branch for android14-6.1"
+        type: string
+        default: "main"
+      android15-6_6_susfs_branch:
+        description: "Choose SusFS Branch for android15-6.6"
+        type: string
+        default: "main"
 
 jobs:
-#  build-batch-1: # Non Bazel Builds
-#    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
-#    strategy:
-#      fail-fast: false
-#      matrix:
-#        include:
-#          - model: OP11
-#            soc: kalama
-#            branch: oneplus/sm8550
-#            manifest: oneplus_11_v.xml
-#            android_version: android13
-#            kernel_version: "5.15"
-#          - model: OP11r
-#            soc: waipio
-#            branch: oneplus/sm8475
-#            manifest: oneplus_11r_v.xml
-#            android_version: android12
-#            kernel_version: "5.10"
-#          - model: OP-OPEN
-#            soc: kalama
-#            branch: oneplus/sm8550
-#            manifest: oneplus_open_v.xml
-#            android_version: android13
-#            kernel_version: "5.15"
-#          - model: OP-ACE-2
-#            soc: waipio
-#            branch: oneplus/sm8475
-#            manifest: oneplus_ace2_v.xml
-#            android_version: android12
-#            kernel_version: "5.10"
-#          - model: OP10t
-#            soc: waipio
-#            branch: oneplus/sm8475
-#            manifest: oneplus_10t_v.xml
-#            android_version: android12
-#            kernel_version: "5.10"
-#          - model: OP10pro
-#            soc: waipio
-#            branch: oneplus/sm8450
-#            manifest: oneplus_10_pro_v.xml
-#            android_version: android12
-#            kernel_version: "5.10"
-#          - model: OP-ACE-2-PRO
-#            soc: kalama
-#            branch: oneplus/sm8550
-#            manifest: oneplus_ace2_pro_v.xml
-#            android_version: android13
-#            kernel_version: "5.15"
-#          - model: OP12r
-#            soc: kalama
-#            branch: oneplus/sm8550
-#            manifest: oneplus_12r_v.xml
-#            android_version: android13
-#            kernel_version: "5.15"
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Select Appropriate SusFS Branch
-#        id: get-susfs-branch
-#        run: |
-#          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-#          
-#          case "$KERNEL_STRING" in
-#            "android12-5.10")
-#              SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
-#              ;;
-#            "android13-5.10")
-#              SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}"
-#              ;;
-#            "android13-5.15")
-#              SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}"
-#              ;;
-#            "android14-5.15")
-#              SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}"
-#              ;;
-#            "android14-6.1")
-#              SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}"
-#              ;;
-#            "android15-6.6")
-#              SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}"
-#              ;;
-#            *)
-#              echo "Invalid kernel version or unsupported: $KERNEL_STRING"
-#              exit 1
-#              ;;
-#          esac
-#          
-#          if [[ -z "$SUSFS_BRANCH" ]]; then
-#            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-#          fi
-#          
-#          echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-#
-#      - name: Checkout Code
-#        uses: actions/checkout@v3
-#
-#      - name: Build Kernel
-#        uses: ./.github/actions/
-#        with:
-#          model: ${{ matrix.model }}
-#          soc: ${{ matrix.soc }}
-#          branch: ${{ matrix.branch }}
-#          manifest: ${{ matrix.manifest }}
-#          android_version: ${{ matrix.android_version }}
-#          kernel_version: ${{ matrix.kernel_version }}
-#          ksun_branch: ${{ inputs.ksun_branch }}
-#          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-
   build-batch-2:
     name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     strategy:
@@ -200,12 +101,13 @@ jobs:
         run: |
           APT_CACHE_DIR="$HOME/apt-cache"
           mkdir -p "$APT_CACHE_DIR"/{archives,lists/partial}
+          sudo chown _apt:$USER "$APT_CACHE_DIR" -R
+          sudo chmod 775 "$APT_CACHE_DIR" -R
           echo "Dir::Cache \"$APT_CACHE_DIR\";" | sudo tee /etc/apt/apt.conf.d/90user-cache
           echo "Dir::Cache::archives \"$APT_CACHE_DIR/archives\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
           echo "Dir::State::lists \"$APT_CACHE_DIR/lists\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
           echo "Acquire::Check-Valid-Until \"false\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
           echo "Acquire::Languages \"none\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
-          sudo chown -R $USER:$USER "$APT_CACHE_DIR"
 
       - name: Set APT Cache
         uses: actions/cache@v4
@@ -229,18 +131,6 @@ jobs:
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
           case "$KERNEL_STRING" in
-            "android12-5.10")
-              SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
-              ;;
-            "android13-5.10")
-              SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}"
-              ;;
-            "android13-5.15")
-              SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}"
-              ;;
-            "android14-5.15")
-              SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}"
-              ;;
             "android14-6.1")
               SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}"
               ;;
@@ -253,11 +143,21 @@ jobs:
               ;;
           esac
           
-          if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          fi
+          echo "Initial SUSFS branch: $SUSFS_BRANCH"
+          
+          # Validate branch exists
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" /tmp/susfs4ksu || {
+            echo "Branch $SUSFS_BRANCH not found, falling back to main"
+            SUSFS_BRANCH="main"
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b main /tmp/susfs4ksu || {
+              echo "Error: main branch not found in susfs4ksu"
+              exit 1
+            }
+          }
+          rm -rf /tmp/susfs4ksu
           
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
+          echo "Selected SUSFS branch: $SUSFS_BRANCH"
 
       - name: Checkout Code
         uses: actions/checkout@v3
