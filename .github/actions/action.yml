@@ -83,11 +83,7 @@ runs:
         echo "Cloning AnyKernel3 and other dependencies..."
         
         ANYKERNEL_BRANCH="gki-2.0"
-        if [[ -z "${{ inputs.susfs_branch }}" ]]; then
-          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-        else
-          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
-        fi
+        SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         
         # Debug print the branches
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
@@ -96,16 +92,11 @@ runs:
         # Clone repositories with shallow cloning
         git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
-        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
+        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
         cd susfs4ksu || exit 1
         
-        # Try to check if TARGET_REF is a valid branch or tag
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          git checkout "$SUSFS_BRANCH"
-        else
-          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
-          exit 1
-        fi
+        # Verify checkout
+        git checkout "$SUSFS_BRANCH"
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -167,6 +158,7 @@ runs:
         echo "KernelSU Next Version: $KSU_VERSION"
         echo "SusFS Version: $susfs_version"
         
+        # Apply SUSFS patches in parallel where possible
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
@@ -174,20 +166,22 @@ runs:
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
             for file in apk_sign.c core_hook.c selinux.c ksud.c; do
               cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.patch" ./
-              patch -p1 --forward --fuzz=3 < fix_$file.patch || true
+              patch -p1 --forward --fuzz=3 < fix_$file.patch || true &
             done
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
+            wait
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
               echo "Patching file: $file.c with fix_$file.c.patch"
-              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true
+              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true &
             done
             patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
+            wait
             ;;
           *)
             echo "Invalid version: $susfs_version"
@@ -199,8 +193,8 @@ runs:
         cd ../common
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
         cp ../../../kernel_patches/69_hide_stuff.patch ./
-        patch -p1 < manual_hooks.patch || true
-        patch -p1 -F 3 < 69_hide_stuff.patch || true
+        patch -p1 < manual_hooks.patch || true &
+        patch -p1 -F 3 < 69_hide_stuff.patch || true &
         
         # Apply SUSFS patch
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
@@ -210,13 +204,13 @@ runs:
             echo "Line already present. Skipping insert."
           fi
         fi
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true &
         
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" || true
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" || true &
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
@@ -224,13 +218,14 @@ runs:
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || true
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || true &
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true &
         else
           echo "Not OPAce5Pro / OP13, skipping hmbird patch"
         fi
+        wait
 
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
@@ -401,7 +396,7 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
         
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
+        time if [ -f ./kernel_platform/build_with_bazel.py ]; then
           ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
           ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
         else
@@ -430,7 +425,7 @@ runs:
         zip -r "../$ZIP_NAME" ./*
 
     - name: Upload Build Artifacts
-      uses: actions/cache@v4
+      uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
         path: |
