@@ -1,4 +1,5 @@
 name: Build
+
 permissions:
   contents: write  # Allow writing to repository contents (for pushing tags)
   actions: write   # Allows triggering actions
@@ -34,15 +35,24 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Configure ccache environment
+      shell: bash
+      run: |
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+        echo "CCACHE_SLOPPINESS=file_macro,locale,time_macros" >> $GITHUB_ENV
+        echo "CCACHE_COMPRESSLEVEL=6" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=50G" >> $GITHUB_ENV
+        echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
+        echo "CCACHE_HASHDIR=true" >> $GITHUB_ENV
+
     - name: Cache ccache
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.branch }}-${{ inputs.manifest }}-${{ inputs.ksun_branch }}-${{ inputs.susfs_branch }}-${{ github.run_id }}
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ hashFiles('.github/workflows/build.yml') }}
         restore-keys: |
-          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.branch }}-${{ inputs.manifest }}-${{ inputs.ksun_branch }}-${{ inputs.susfs_branch }}-
-          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
-          ccache-${{ runner.os }}-${{ inputs.model }}-
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
           ccache-${{ runner.os }}-
 
     - name: Setup Build System
@@ -84,20 +94,9 @@ runs:
         sudo apt update
         sudo apt install -y python3 python-is-python3 ccache
         
-        # Configure ccache
-        echo "Configuring ccache"
-        export CCACHE_DIR=$HOME/.ccache
-        ccache --max-size=50G
-        ccache --set-config=compression=true
-        ccache --set-config=compression_level=4  # Balanced compression for kernel builds
-        ccache --set-config=cache_dir=$CCACHE_DIR
-        ccache --set-config=hash_dir=true
-        ccache --evict-older-than=7d  # Remove cache entries older than 7 days
-        ccache --clear  # Clear cache for fresh start in this run
-        ccache -z
-        echo "Initial ccache stats:"
-        ccache -s > ccache_stats_initial.txt
-        cat ccache_stats_initial.txt
+        # Show initial ccache configuration
+        echo "Current ccache configuration:"
+        ccache --show-config
         
         # Explicitly set compiler wrappers
         echo "CC=ccache clang" >> $GITHUB_ENV
@@ -140,7 +139,7 @@ runs:
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
-          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
+          echo "Error: '$TARGET_REF' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
 
@@ -449,6 +448,10 @@ runs:
           BAZEL_ARGS+=(-g)
         fi
         
+        # Reset ccache statistics for current build
+        echo "Resetting ccache statistics..."
+        ccache -z
+        
         (stdbuf -oL bash -c '
           while true; do
             echo "=== $(date) ==="
@@ -464,9 +467,6 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
         
-        # Configure ccache (no explicit compiler setting)
-        ccache -z
-        
         if [ -f ./kernel_platform/build_with_bazel.py ]; then
           ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
           ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
@@ -475,9 +475,8 @@ runs:
         fi
         
         # Display ccache statistics
-        echo "Final ccache stats:"
-        ccache -s > ccache_stats_final.txt
-        cat ccache_stats_final.txt
+        echo "Build ccache statistics:"
+        ccache -s
 
     - name: Download Latest SUSFS Module from CI
       shell: bash
@@ -527,3 +526,9 @@ runs:
         name: kernel-${{ env.CONFIG }}
         path: |
           *.zip
+
+    - name: Show ccache statistics
+      shell: bash
+      run: |
+        echo "Final ccache statistics:"
+        ccache -s -v
