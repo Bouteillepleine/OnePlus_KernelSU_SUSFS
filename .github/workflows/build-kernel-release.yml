@@ -46,7 +46,7 @@ on:
         default: "gki-android15-6.6"
 
 jobs:
-  build-batch-1: # Non Bazel Builds
+  build-batch-1:
     name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     strategy:
       fail-fast: false
@@ -154,7 +154,6 @@ jobs:
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
 
   build-batch-2:
-    # needs: build-batch-1
     name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     strategy:
       fail-fast: false
@@ -291,18 +290,18 @@ jobs:
 
       - name: Generate and Create New Tag
         run: |
-            BASE_TAG="v1.5.9-r0"
-            LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name')
-            if [ -z "$LATEST_TAG" ]; then
-              LATEST_TAG="$BASE_TAG"
-            else
-              LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
-            fi
-            NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
-            echo "New tag: $NEW_TAG"
-            echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
-            git tag $NEW_TAG
-            git push origin $NEW_TAG
+          BASE_TAG="v1.5.9-r0"
+          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name')
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="$BASE_TAG"
+          else
+            LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
+          fi
+          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
+          echo "New tag: $NEW_TAG"
+          echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
+          git tag $NEW_TAG
+          git push origin $NEW_TAG
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -328,7 +327,6 @@ jobs:
           |-------|----------------|
           EOF
           
-          # === Generate table rows ===
           while IFS= read -r file; do
             if [ -f "$file" ]; then
               model=$(basename "$file" .txt)
@@ -337,7 +335,6 @@ jobs:
             fi
           done < <(find downloaded-artifacts -name "*.txt" -type f | sort)
           
-          # === Add features and finalize ===
           cat << 'EOF' >> release_notes.md
           
           ### Features
@@ -354,7 +351,6 @@ jobs:
           - [+] HMBIRD scx support for OnePlus 13 & OnePlus Ace 5 Pro.
           EOF
           
-          # === Output for debugging ===
           echo "--- Final Release Notes ---"
           cat release_notes.md
 
@@ -371,11 +367,11 @@ jobs:
       - name: Upload Release Assets Dynamically
         run: |
           for file in ./downloaded-artifacts/kernel-*/*.zip; do
-              if [ -d "$file" ]; then
-                  continue
-              fi
-              echo "Uploading $file..."
-              gh release upload ${{ env.NEW_TAG }} "$file"
+            if [ -d "$file" ]; then
+              continue
+            fi
+            echo "Uploading $file..."
+            gh release upload ${{ env.NEW_TAG }} "$file"
           done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
