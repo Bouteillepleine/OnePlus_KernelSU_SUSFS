@@ -30,13 +30,12 @@ inputs:
     required: true
     type: string
     default: ""
-  use_cpt:
-    required: false
-    type: boolean
-    default: false
   github_token:
     required: true
     type: string
+
+env:
+  CCACHE_DIR: '/home/runner/.ccache'
 
 runs:
   using: "composite"
@@ -92,12 +91,10 @@ runs:
         
         # Configure ccache
         echo "Configuring ccache"
-        export CCACHE_DIR=$HOME/.ccache
-        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        ccache --max-size=20G
+        ccache --max-size=30G
         ccache --set-config=compression=true
         ccache --set-config=compression_level=6
-        ccache --set-config=cache_dir=$HOME/.ccache
+        ccache --set-config=cache_dir=$CCACHE_DIR
         ccache --set-config=hash_dir=true
         ccache -z
         echo "Initial ccache stats:"
@@ -119,21 +116,6 @@ runs:
         
         # Set CONFIG Environment Variable
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
-
-    - name: Setup ccache Prebuilt Toolchain (Optional)
-      if: ${{ inputs.use_cpt }}
-      shell: bash
-      run: |
-        echo "Setting up ccache-prebuilt-toolchain (cpt)..."
-        # Download and extract a prebuilt toolchain with ccache integration
-        # Adjust the URL based on your toolchain source
-        curl -sSL https://example.com/path/to/ccache-prebuilt-toolchain.tar.gz -o cpt.tar.gz
-        tar -xzf cpt.tar.gz -C /usr/local
-        rm cpt.tar.gz
-        echo "PATH=/usr/local/cpt/bin:/usr/lib/ccache:$PATH" >> $GITHUB_ENV
-        # Verify toolchain setup
-        which clang || echo "Warning: Clang not found in cpt toolchain"
-        ccache -s
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -174,19 +156,21 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         
-        # Initialize and sync kernel source
+        # Initialize and sync kernel source with timing
         echo "Initializing and syncing kernel source..."
-        if [[ "${{ inputs.manifest }}" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        fi
-        
-        # Sync repo
-        $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        time (
+          if [[ "${{ inputs.manifest }}" == https://* ]]; then
+            mkdir -p .repo/manifests
+            curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
+            $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          else
+            $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          fi
+          
+          # Sync repo with no verification
+          $REPO --version
+          $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch --no-repo-verify -j$(nproc --all) --fail-fast
+        )
 
     - name: Add KernelSU Next
       shell: bash
@@ -466,7 +450,7 @@ runs:
         rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
         
         BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
+        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin --disk_cache=/home/runner/.bazel_cache)
         if [ "${{ inputs.soc }}" == "sun" ]; then
           BUILD_TYPE="perf"
           BAZEL_ARGS+=(-g)
@@ -492,12 +476,15 @@ runs:
         echo "Pre-build ccache stats:"
         ccache -s
         
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
-          ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
-        else
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
-        fi
+        # Build with timing
+        time (
+          if [ -f ./kernel_platform/build_with_bazel.py ]; then
+            ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
+            ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
+          else
+            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+          fi
+        )
         
         # Display ccache statistics
         echo "Post-build ccache stats:"
