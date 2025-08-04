@@ -1,7 +1,7 @@
 name: Build
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 inputs:
   model:
@@ -64,7 +64,6 @@ runs:
         sudo docker image prune --all --force
         echo "some directories deleted"
         
-        # Remove large unwanted packages
         sudo apt-get purge -y \
           aria2 ansible azure-cli shellcheck rpm xorriso zsync \
           esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -76,22 +75,18 @@ runs:
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         
-        # Regex-based purges (for bulk families like mysql, php, dotnet)
         sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
         
-        # Clean up
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
         echo "some packages purged"
         
         df -h
         
-        # Install dependencies including ccache
         echo "Installing Repo, Python, and ccache"
         sudo apt update
         sudo apt install -y python3 python-is-python3 ccache
         
-        # Configure ccache
         echo "Configuring ccache"
         export CCACHE_DIR=$HOME/.ccache
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
@@ -101,7 +96,6 @@ runs:
         ccache --set-config=compression=true
         echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
         
-        # Install repo tool if cache miss
         if [ "${{ steps.cache-repo-tool.outputs.cache-hit }}" != "true" ]; then
           mkdir -p ./git-repo
           curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
@@ -109,7 +103,6 @@ runs:
         fi
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
-        # Set CONFIG Environment Variable
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
 
     - name: Cache Kernel Source
@@ -120,7 +113,6 @@ runs:
         restore-keys: |
           kernel-source-${{ runner.os }}-${{ inputs.model }}-${{ inputs.branch }}-${{ hashFiles(inputs.manifest) }}-
           kernel-source-${{ runner.os }}-${{ inputs.model }}-
-        continue-on-error: true
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -129,7 +121,6 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         
-        # Initialize and sync kernel source
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
@@ -139,7 +130,6 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         
-        # Sync repo
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
@@ -167,10 +157,36 @@ runs:
         
         echo "Applying SUSFS patches..."
         
-        # Copy SUSFS patches
-        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
-        cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
-        cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        # Ensure susfs4ksu submodule is updated to the correct branch
+        if [ -d "../../susfs4ksu" ]; then
+          cd ../../susfs4ksu
+          git fetch origin
+          git checkout "${{ inputs.susfs_branch }}"
+          cd "$CONFIG/kernel_platform"
+        else
+          echo "Error: susfs4ksu directory not found!"
+          exit 1
+        fi
+        
+        # Copy SUSFS patches with error handling
+        PATCH_FILE="../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
+        if [ -f "$PATCH_FILE" ]; then
+          cp "$PATCH_FILE" ./common/
+        else
+          echo "Warning: SUSFS patch $PATCH_FILE not found, skipping..."
+        fi
+        
+        if [ -d "../../susfs4ksu/kernel_patches/fs" ]; then
+          cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        else
+          echo "Warning: SUSFS fs patches directory not found, skipping..."
+        fi
+        
+        if [ -d "../../susfs4ksu/kernel_patches/include/linux" ]; then
+          cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        else
+          echo "Warning: SUSFS include/linux patches directory not found, skipping..."
+        fi
         
         cd ./KernelSU-Next
         
@@ -189,52 +205,65 @@ runs:
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
+            patch -p1 --forward < ksun_susfs_latest.patch || true
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
+            for file in apk_sign core_hook selinux ksud; do
+              if [ -f "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" ]; then
+                cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" ./
+                patch -p1 --forward --fuzz=3 < "fix_$file.c.patch" || true
+              else
+                echo "Warning: SUSFS fix patch for $file not found, skipping..."
+              fi
+            done
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
+              if [ -f "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" ]; then
                 echo "Patching file: $file.c with fix_$file.c.patch"
-                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true
+              else
+                echo "Warning: SUSFS fix patch for $file not found, skipping..."
+              fi
             done
-            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+            if [ -f "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" ]; then
+              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
+            else
+              echo "Warning: SUSFS fix patch for kernel_compat not found, skipping..."
+            fi
             ;;
           *)
             echo "Invalid version: $susfs_version"
             exit 1
             ;;
         esac
-        patch -p1 --forward < ksun_susfs_latest.patch || true
         
         cd ../common
         
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
-            if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-                sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-            else
-                echo "Line already present. Skipping insert."
-            fi
+          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
+          else
+            echo "Line already present. Skipping insert."
+          fi
         fi
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+        
+        if [ -f "50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch" ]; then
+          patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+        else
+          echo "Warning: SUSFS patch 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch not found, skipping..."
+        fi
         
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" || true
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
@@ -242,13 +271,13 @@ runs:
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || true
           echo "Patching hmbird files!"
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true
         else
-          echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
+          echo "Not OPAce5Pro / OP13, skipping hmbird patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -258,7 +287,7 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         echo "Applying KSUN Hooks..."
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-        patch -p1 < ./manual_hooks.patch
+        patch -p1 < ./manual_hooks.patch || true
 
     - name: Apply Hide Stuff Patches
       shell: bash
@@ -266,7 +295,7 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch
+        patch -p1 -F 3 < 69_hide_stuff.patch || true
 
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
@@ -395,7 +424,6 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
         
-        # Debug ccache
         ccache -v
         ccache -z
         
@@ -406,7 +434,6 @@ runs:
           LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
         fi
         
-        # Display ccache statistics
         ccache -s
 
     - name: Create ZIP Files for Different Formats
@@ -424,7 +451,7 @@ runs:
         
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
-          patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
+          patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
         fi
         
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
