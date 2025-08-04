@@ -38,10 +38,19 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.run_id }}
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}
         restore-keys: |
           ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
           ccache-${{ runner.os }}-
+
+    - name: Cache Repo Tool
+      id: cache-repo-tool
+      uses: actions/cache@v4
+      with:
+        path: ./git-repo/repo
+        key: repo-tool-${{ runner.os }}-${{ hashFiles('https://storage.googleapis.com/git-repo-downloads/repo') }}
+        restore-keys: |
+          repo-tool-${{ runner.os }}-
 
     - name: Setup Build System
       shell: bash
@@ -86,49 +95,32 @@ runs:
         echo "Configuring ccache"
         export CCACHE_DIR=$HOME/.ccache
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        ccache --max-size=10G
+        export CCACHE_SIZE=15G
+        echo "CCACHE_SIZE=$CCACHE_SIZE" >> $GITHUB_ENV
+        ccache -M $CCACHE_SIZE
         ccache --set-config=compression=true
         echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
         
-        mkdir -p ./git-repo
-        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-        chmod a+rx ./git-repo/repo
+        # Install repo tool if cache miss
+        if [ "${{ steps.cache-repo-tool.outputs.cache-hit }}" != "true" ]; then
+          mkdir -p ./git-repo
+          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
+          chmod a+rx ./git-repo/repo
+        fi
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
         # Set CONFIG Environment Variable
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
 
-    - name: Clone AnyKernel3 and Other Dependencies
-      shell: bash
-      run: |
-        echo "Cloning AnyKernel3 and other dependencies..."
-        
-        ANYKERNEL_BRANCH="gki-2.0"
-        if [[ -z "${{ inputs.susfs_branch }}" ]]; then
-          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-        else
-          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
-        fi
-        
-        # Debug print the branches
-        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
-        echo "Using branch for SUSFS: $SUSFS_BRANCH"
-        
-        # Clone repositories using the branch names
-        git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone https://github.com/TheWildJames/kernel_patches.git
-        
-        # Clone the repo with all branches and history
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
-        cd susfs4ksu || exit 1
-        
-        # Try to check if TARGET_REF is a valid branch or tag
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          git checkout "$SUSFS_BRANCH"
-        else
-          echo "Error: '$TARGET_REF' is neither a valid branch/tag nor a valid commit hash."
-          exit 1
-        fi
+    - name: Cache Kernel Source
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CONFIG }}
+        key: kernel-source-${{ runner.os }}-${{ inputs.model }}-${{ inputs.branch }}-${{ hashFiles(inputs.manifest) }}-${{ github.sha }}
+        restore-keys: |
+          kernel-source-${{ runner.os }}-${{ inputs.model }}-${{ inputs.branch }}-${{ hashFiles(inputs.manifest) }}-
+          kernel-source-${{ runner.os }}-${{ inputs.model }}-
+        continue-on-error: true
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -376,7 +368,7 @@ runs:
         cd "$CONFIG"
         
         echo "Building the kernel..."
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches; free -m'
         
         rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
         rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
@@ -403,7 +395,8 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
         
-        # Configure ccache
+        # Debug ccache
+        ccache -v
         ccache -z
         
         if [ -f ./kernel_platform/build_with_bazel.py ]; then
