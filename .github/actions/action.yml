@@ -466,7 +466,7 @@ runs:
           else
             echo "File not found: $file"
           fi
-       España
+        done
         
         if [ -z "$BRANCH_LINE" ]; then
           echo "Error: No BRANCH= found in any of: ${CONFIG_FILES[*]}"
