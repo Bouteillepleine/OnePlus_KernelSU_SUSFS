@@ -30,6 +30,10 @@ inputs:
     required: true
     type: string
     default: ""
+  use_cpt:
+    required: false
+    type: boolean
+    default: false
 
 runs:
   using: "composite"
@@ -38,9 +42,10 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.run_id }}
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.branch }}-${{ github.run_id }}
         restore-keys: |
-          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-
           ccache-${{ runner.os }}-
 
     - name: Setup Build System
@@ -77,17 +82,24 @@ runs:
         
         df -h
         
-        # Install dependencies including ccache
-        echo "Installing Repo, Python, and ccache"
+        # Install dependencies including ccache and jq
+        echo "Installing Repo, Python, ccache, and jq"
         sudo apt update
-        sudo apt install -y python3 python-is-python3 ccache
+        sudo apt install -y python3 python-is-python3 ccache jq
         
         # Configure ccache
         echo "Configuring ccache"
         export CCACHE_DIR=$HOME/.ccache
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        ccache --max-size=10G
+        ccache --max-size=20G
         ccache --set-config=compression=true
+        ccache --set-config=compression_level=6
+        ccache --set-config=hard_links=true
+        ccache --set-config=cache_dir=$HOME/.ccache
+        ccache --set-config=hash_dir=true
+        ccache -z
+        echo "Initial ccache stats:"
+        ccache -s
         echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
         
         mkdir -p ./git-repo
@@ -97,6 +109,21 @@ runs:
         
         # Set CONFIG Environment Variable
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+
+    - name: Setup ccache Prebuilt Toolchain (Optional)
+      if: ${{ inputs.use_cpt }}
+      shell: bash
+      run: |
+        echo "Setting up ccache-prebuilt-toolchain (cpt)..."
+        # Download and extract a prebuilt toolchain with ccache integration
+        # Adjust the URL based on your toolchain source
+        curl -sSL https://example.com/path/to/ccache-prebuilt-toolchain.tar.gz -o cpt.tar.gz
+        tar -xzf cpt.tar.gz -C /usr/local
+        rm cpt.tar.gz
+        echo "PATH=/usr/local/cpt/bin:/usr/lib/ccache:$PATH" >> $GITHUB_ENV
+        # Verify toolchain setup
+        which clang || echo "Warning: Clang not found in cpt toolchain"
+        ccache -s
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -450,8 +477,10 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
         
-        # Configure ccache (no explicit compiler setting)
+        # Configure ccache
         ccache -z
+        echo "Pre-build ccache stats:"
+        ccache -s
         
         if [ -f ./kernel_platform/build_with_bazel.py ]; then
           ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
@@ -461,6 +490,7 @@ runs:
         fi
         
         # Display ccache statistics
+        echo "Post-build ccache stats:"
         ccache -s
 
     - name: Download Latest SUSFS Module from CI
