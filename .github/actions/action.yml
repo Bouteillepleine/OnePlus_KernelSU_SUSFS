@@ -34,6 +34,9 @@ inputs:
     required: false
     type: boolean
     default: false
+  github_token:
+    required: true
+    type: string
 
 runs:
   using: "composite"
@@ -153,7 +156,7 @@ runs:
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
-          echo "Error: '$TARGET_REF' is neither a valid branch/tag nor a valid commit hash."
+          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
 
@@ -494,18 +497,19 @@ runs:
         ccache -s
 
     - name: Download Latest SUSFS Module from CI
+      shell: bash
       continue-on-error: true
       run: |
-        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
           "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
           jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
         if [ -z "$LATEST_RUN_ID" ]; then
           echo "No successful run found for branch v1.5.2+"
         else
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
           if [ -n "$ARTIFACT_URL" ]; then
-            curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+            curl -L -H "Authorization: Bearer ${{ inputs.github_token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
             cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
           else
             echo "Failed to fetch artifact URL"
