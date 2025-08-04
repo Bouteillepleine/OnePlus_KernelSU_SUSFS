@@ -71,7 +71,7 @@ runs:
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         
-        # Regex-based purges (for bulk families like mysql, php, dotnet)
+        # Regex-based purges
         sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
         
         # Clean up
@@ -81,27 +81,33 @@ runs:
         
         df -h
         
-        # Install dependencies including ccache and jq
+        # Install dependencies
         echo "Installing Repo, Python, ccache, and jq"
         sudo apt update
         sudo apt install -y python3 python-is-python3 ccache jq
         
         # Configure ccache
         echo "Configuring ccache"
-        ccache --max-size=30G
+        ccache --max-size=50G
         ccache --set-config=compression=true
         ccache --set-config=compression_level=6
         ccache --set-config=cache_dir=$CCACHE_DIR
         ccache --set-config=hash_dir=true
+        ccache --clear
         ccache -z
         echo "Initial ccache stats:"
-        ccache -s
+        ccache -s > ccache_stats_initial.txt
+        
+        # Explicitly set compiler wrappers
+        echo "CC=ccache clang" >> $GITHUB_ENV
+        echo "CXX=ccache clang++" >> $GITHUB_ENV
+        echo "LD=ccache ld.lld" >> $GITHUB_ENV
         
         # Check ccache version
         CCACHE_VERSION=$(ccache --version | head -n 1 | awk '{print $3}')
         echo "ccache version: $CCACHE_VERSION"
         if [ "$(printf '%s\n' "$CCACHE_VERSION" "4.10" | sort -V | head -n1)" != "4.10" ]; then
-          echo "Warning: ccache version $CCACHE_VERSION is older than 4.10. Some optimizations (e.g., hard_links) are not supported."
+          echo "Warning: ccache version $CCACHE_VERSION is older than 4.10. Some optimizations may be limited."
         fi
         
         echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
@@ -164,10 +170,10 @@ runs:
             $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
           fi
           
-          # Sync repo with no verification
+          # Sync only required projects
           $REPO --version
-          $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch --no-repo-verify -j$(nproc --all) --fail-fast
-        )
+          $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch --no-repo-verify -j$(nproc --all) --fail-fast kernel_platform
+        ) 2>&1 | tee repo_sync_timing.txt
 
     - name: Add KernelSU Next
       shell: bash
@@ -237,7 +243,7 @@ runs:
                 patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
             
-            # Fix build errors (no rejects; Still giving errors)
+            # Fix build errors
             patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
@@ -411,7 +417,7 @@ runs:
         rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
         
         BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin --disk_cache=/home/runner/.bazel_cache)
+        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin --disk_cache=/home/runner/.bazel_cache --local_ram_resources=HOST_RAM*0.8 --experimental_multi_cpu)
         if [ "${{ inputs.soc }}" == "sun" ]; then
           BUILD_TYPE="perf"
           BAZEL_ARGS+=(-g)
@@ -435,7 +441,7 @@ runs:
         # Configure ccache
         ccache -z
         echo "Pre-build ccache stats:"
-        ccache -s
+        ccache -s > ccache_stats_pre_build.txt
         
         # Build with timing
         time (
@@ -443,13 +449,13 @@ runs:
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
             ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
           else
-            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+            LTO=thin CC="ccache clang" CXX="ccache clang++" LD="ccache ld.lld" ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
           fi
-        )
+        ) 2>&1 | tee build_timing.txt
         
         # Display ccache statistics
         echo "Post-build ccache stats:"
-        ccache -s
+        ccache -s > ccache_stats_post_build.txt
 
     - name: Create ZIP Files for Different Formats
       id: create_zip
@@ -495,7 +501,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break  # Found it — exit loop
+              break
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -536,3 +542,8 @@ runs:
         path: |
           ${{ inputs.model }}.txt
           *.zip
+          ccache_stats_initial.txt
+          ccache_stats_pre_build.txt
+          ccache_stats_post_build.txt
+          repo_sync_timing.txt
+          build_timing.txt
