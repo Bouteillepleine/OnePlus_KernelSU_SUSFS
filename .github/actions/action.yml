@@ -1,7 +1,7 @@
 name: Build
 permissions:
-  contents: write
-  actions: write
+  contents: write  # Allow writing to repository contents (for pushing tags)
+  actions: write   # Allows triggering actions
 
 inputs:
   model:
@@ -31,6 +31,9 @@ inputs:
     type: string
     default: ""
 
+env:
+  CCACHE_DIR: '/home/runner/.ccache'
+
 runs:
   using: "composite"
   steps:
@@ -38,19 +41,11 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.branch }}-${{ github.run_id }}
         restore-keys: |
-          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.soc }}-
           ccache-${{ runner.os }}-
-
-    - name: Cache Repo Tool
-      id: cache-repo-tool
-      uses: actions/cache@v4
-      with:
-        path: ./git-repo/repo
-        key: repo-tool-${{ runner.os }}-${{ hashFiles('https://storage.googleapis.com/git-repo-downloads/repo') }}
-        restore-keys: |
-          repo-tool-${{ runner.os }}-
 
     - name: Setup Build System
       shell: bash
@@ -64,6 +59,7 @@ runs:
         sudo docker image prune --all --force
         echo "some directories deleted"
         
+        # Remove large unwanted packages
         sudo apt-get purge -y \
           aria2 ansible azure-cli shellcheck rpm xorriso zsync \
           esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -75,44 +71,80 @@ runs:
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         
+        # Regex-based purges (for bulk families like mysql, php, dotnet)
         sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
         
+        # Clean up
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
         echo "some packages purged"
         
         df -h
         
-        echo "Installing Repo, Python, and ccache"
+        # Install dependencies including ccache and jq
+        echo "Installing Repo, Python, ccache, and jq"
         sudo apt update
-        sudo apt install -y python3 python-is-python3 ccache
+        sudo apt install -y python3 python-is-python3 ccache jq
         
+        # Configure ccache
         echo "Configuring ccache"
-        export CCACHE_DIR=$HOME/.ccache
-        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        export CCACHE_SIZE=15G
-        echo "CCACHE_SIZE=$CCACHE_SIZE" >> $GITHUB_ENV
-        ccache -M $CCACHE_SIZE
+        ccache --max-size=30G
         ccache --set-config=compression=true
+        ccache --set-config=compression_level=6
+        ccache --set-config=cache_dir=$CCACHE_DIR
+        ccache --set-config=hash_dir=true
+        ccache -z
+        echo "Initial ccache stats:"
+        ccache -s
+        
+        # Check ccache version
+        CCACHE_VERSION=$(ccache --version | head -n 1 | awk '{print $3}')
+        echo "ccache version: $CCACHE_VERSION"
+        if [ "$(printf '%s\n' "$CCACHE_VERSION" "4.10" | sort -V | head -n1)" != "4.10" ]; then
+          echo "Warning: ccache version $CCACHE_VERSION is older than 4.10. Some optimizations (e.g., hard_links) are not supported."
+        fi
+        
         echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
         
-        if [ "${{ steps.cache-repo-tool.outputs.cache-hit }}" != "true" ]; then
-          mkdir -p ./git-repo
-          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-          chmod a+rx ./git-repo/repo
-        fi
+        mkdir -p ./git-repo
+        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
+        chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
+        # Set CONFIG Environment Variable
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
 
-    - name: Cache Kernel Source
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CONFIG }}
-        key: kernel-source-${{ runner.os }}-${{ inputs.model }}-${{ inputs.branch }}-${{ hashFiles(inputs.manifest) }}-${{ github.sha }}
-        restore-keys: |
-          kernel-source-${{ runner.os }}-${{ inputs.model }}-${{ inputs.branch }}-${{ hashFiles(inputs.manifest) }}-
-          kernel-source-${{ runner.os }}-${{ inputs.model }}-
+    - name: Clone AnyKernel3 and Other Dependencies
+      shell: bash
+      run: |
+        echo "Cloning AnyKernel3 and other dependencies..."
+        
+        ANYKERNEL_BRANCH="gki-2.0"
+        if [[ -z "${{ inputs.susfs_branch }}" ]]; then
+          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        else
+          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
+        fi
+        
+        # Debug print the branches
+        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
+        echo "Using branch for SUSFS: $SUSFS_BRANCH"
+        
+        # Clone repositories using the branch names
+        git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone https://github.com/TheWildJames/kernel_patches.git
+        
+        # Clone the repo with all branches and history
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        cd susfs4ksu || exit 1
+        
+        # Try to check if SUSFS_BRANCH is a valid branch or tag
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
+          git checkout "$SUSFS_BRANCH"
+        else
+          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
+          exit 1
+        fi
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -121,17 +153,21 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         
+        # Initialize and sync kernel source with timing
         echo "Initializing and syncing kernel source..."
-        if [[ "${{ inputs.manifest }}" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        fi
-        
-        $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        time (
+          if [[ "${{ inputs.manifest }}" == https://* ]]; then
+            mkdir -p .repo/manifests
+            curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
+            $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          else
+            $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          fi
+          
+          # Sync repo with no verification
+          $REPO --version
+          $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch --no-repo-verify -j$(nproc --all) --fail-fast
+        )
 
     - name: Add KernelSU Next
       shell: bash
@@ -157,36 +193,10 @@ runs:
         
         echo "Applying SUSFS patches..."
         
-        # Ensure susfs4ksu submodule is updated to the correct branch
-        if [ -d "../../susfs4ksu" ]; then
-          cd ../../susfs4ksu
-          git fetch origin
-          git checkout "${{ inputs.susfs_branch }}"
-          cd "$CONFIG/kernel_platform"
-        else
-          echo "Error: susfs4ksu directory not found!"
-          exit 1
-        fi
-        
-        # Copy SUSFS patches with error handling
-        PATCH_FILE="../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          cp "$PATCH_FILE" ./common/
-        else
-          echo "Warning: SUSFS patch $PATCH_FILE not found, skipping..."
-        fi
-        
-        if [ -d "../../susfs4ksu/kernel_patches/fs" ]; then
-          cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
-        else
-          echo "Warning: SUSFS fs patches directory not found, skipping..."
-        fi
-        
-        if [ -d "../../susfs4ksu/kernel_patches/include/linux" ]; then
-          cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-        else
-          echo "Warning: SUSFS include/linux patches directory not found, skipping..."
-        fi
+        # Copy SUSFS patches
+        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
+        cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
         
         cd ./KernelSU-Next
         
@@ -205,65 +215,56 @@ runs:
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
-            patch -p1 --forward < ksun_susfs_latest.patch || true
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
-            for file in apk_sign core_hook selinux ksud; do
-              if [ -f "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" ]; then
-                cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" ./
-                patch -p1 --forward --fuzz=3 < "fix_$file.c.patch" || true
-              else
-                echo "Warning: SUSFS fix patch for $file not found, skipping..."
-              fi
-            done
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+            
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-              if [ -f "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" ]; then
                 echo "Patching file: $file.c with fix_$file.c.patch"
-                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true
-              else
-                echo "Warning: SUSFS fix patch for $file not found, skipping..."
-              fi
+                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
-            if [ -f "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" ]; then
-              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
-            else
-              echo "Warning: SUSFS fix patch for kernel_compat not found, skipping..."
-            fi
+            
+            # Fix build errors (no rejects; Still giving errors)
+            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
             echo "Invalid version: $susfs_version"
             exit 1
             ;;
         esac
+        patch -p1 --forward < ksun_susfs_latest.patch || true
         
+        # Change to common directory and apply SUSFS patch
         cd ../common
         
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
-          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-          else
-            echo "Line already present. Skipping insert."
-          fi
+            if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+                sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
+            else
+                echo "Line already present. Skipping insert."
+            fi
         fi
-        
-        if [ -f "50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch" ]; then
-          patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-        else
-          echo "Warning: SUSFS patch 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch not found, skipping..."
-        fi
+        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
         
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" || true
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
@@ -271,13 +272,13 @@ runs:
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || true
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
           echo "Patching hmbird files!"
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13, skipping hmbird patch"
+          echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -287,15 +288,16 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         echo "Applying KSUN Hooks..."
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-        patch -p1 < ./manual_hooks.patch || true
+        patch -p1 < ./manual_hooks.patch
 
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
+        # Apply additional patch
         cp ../../../kernel_patches/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch || true
+        patch -p1 -F 3 < 69_hide_stuff.patch
 
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
@@ -305,9 +307,11 @@ runs:
         
         echo "Adding configuration settings to gki_defconfig..."
         
+        # Add KSU configuration settings
         echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
         
+        # Add SUSFS configuration settings
         echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -325,6 +329,7 @@ runs:
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
         
+        # Add additional tmpfs config setting
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -389,6 +394,8 @@ runs:
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h
+        
+        find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
 
     - name: Build the Kernel
       shell: bash
@@ -397,13 +404,14 @@ runs:
         cd "$CONFIG"
         
         echo "Building the kernel..."
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches; free -m'
+        # Clear Cache
+        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
         
         rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
         rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
         
         BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
+        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin --disk_cache=/home/runner/.bazel_cache)
         if [ "${{ inputs.soc }}" == "sun" ]; then
           BUILD_TYPE="perf"
           BAZEL_ARGS+=(-g)
@@ -424,16 +432,23 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
         
-        ccache -v
+        # Configure ccache
         ccache -z
+        echo "Pre-build ccache stats:"
+        ccache -s
         
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
-          ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
-        else
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
-        fi
+        # Build with timing
+        time (
+          if [ -f ./kernel_platform/build_with_bazel.py ]; then
+            ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
+            ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
+          else
+            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+          fi
+        )
         
+        # Display ccache statistics
+        echo "Post-build ccache stats:"
         ccache -s
 
     - name: Create ZIP Files for Different Formats
@@ -451,9 +466,10 @@ runs:
         
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
-          patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
+          patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
         fi
         
+        # Zip the files in the AnyKernel3 directory with a new naming convention
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
         zip -r "../$ZIP_NAME" ./*
@@ -479,7 +495,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break
+              break  # Found it — exit loop
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -501,6 +517,7 @@ runs:
           exit 1
         fi
         
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
