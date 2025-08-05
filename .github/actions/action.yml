@@ -281,7 +281,7 @@ runs:
     - name: Add BBR Support
       shell: bash
       run: |
-        echo "Changing to configuration database
+        echo "Changing to configuration database"
         cd "$CONFIG/kernel_platform"
         CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
