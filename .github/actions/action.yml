@@ -403,9 +403,8 @@ runs:
         fi
 
     - name: Download Latest SUSFS Module from CI
-      continue-on-error: true
-      shell: bash
-      run: |
+        continue-on-error: true
+        run: |
           LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
             jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
@@ -421,7 +420,7 @@ runs:
               echo "Failed to fetch artifact URL"
             fi
           fi
-      
+          
     - name: Create ZIP Files for Different Formats
       id: create_zip
       shell: bash
