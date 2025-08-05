@@ -1,8 +1,8 @@
 name: Build
 
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 inputs:
   model:
@@ -31,7 +31,7 @@ inputs:
     required: true
     type: string
     default: ""
-  github_token:  # Added new input for GITHUB_TOKEN
+  github_token:
     required: true
     type: string
 
@@ -41,16 +41,13 @@ runs:
     - name: Setup Build System
       shell: bash
       run: |
+        set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
         echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
-
         df -h
-
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
         sudo docker image prune --all --force
         echo "Some directories deleted"
-
-        # Remove large unwanted packages
         sudo apt-get purge -y \
           aria2 ansible azure-cli shellcheck rpm xorriso zsync \
           esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -61,49 +58,37 @@ runs:
           libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
-
-        # Regex-based purges for bulk families
         sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php')
-
-        # Clean up
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
         echo "Some packages purged"
-
         df -h
-
-        # Install dependencies
         echo "Installing Repo and Python"
         sudo apt update
         sudo apt install -y python3 python-is-python3
-
         mkdir -p ./git-repo
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
-
-        # Set CONFIG environment variable
+        export PATH=$PATH:$GITHUB_WORKSPACE/git-repo
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
+        set -euo pipefail
         echo "Cloning AnyKernel3 and other dependencies..."
-
         ANYKERNEL_BRANCH="gki-2.0"
         if [[ -z "${{ inputs.susfs_branch }}" ]]; then
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         else
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
-
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
-
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
-
         cd susfs4ksu || exit 1
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
           git checkout "$SUSFS_BRANCH"
@@ -115,10 +100,10 @@ runs:
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
+        set -euo pipefail
         echo "Creating folder for configuration: $CONFIG..."
         mkdir -p "$CONFIG"
         cd "$CONFIG"
-
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
@@ -127,36 +112,33 @@ runs:
         else
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
-
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
     - name: Add KernelSU Next
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-
         echo "Adding KernelSU Next..."
         if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         else
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
         fi
-
         git submodule update --init --recursive
 
     - name: Apply SUSFS Patches
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-
         echo "Applying SUSFS patches..."
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-
         cd ./KernelSU-Next
         echo "Applying next SUSFS patches..."
         susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
@@ -169,7 +151,6 @@ runs:
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
         echo "KernelSU Next Version: $KSU_VERSION"
         echo "SusFS Version: $susfs_version"
-
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
@@ -201,7 +182,6 @@ runs:
             ;;
         esac
         patch -p1 --forward < ksun_susfs_latest.patch || true
-
         cd ../common
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
@@ -211,7 +191,6 @@ runs:
           fi
         fi
         patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
@@ -220,7 +199,6 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
-
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
@@ -236,6 +214,7 @@ runs:
     - name: Apply KSUN Hooks
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         echo "Applying KSUN Hooks..."
@@ -245,6 +224,7 @@ runs:
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         echo "Applying hide stuff patch..."
@@ -254,6 +234,7 @@ runs:
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
@@ -281,6 +262,7 @@ runs:
     - name: Add BBR Support
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration database"
         cd "$CONFIG/kernel_platform"
         CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
@@ -302,6 +284,7 @@ runs:
     - name: Add TTL Target Support
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
@@ -312,6 +295,7 @@ runs:
     - name: Add Other Configurations
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
@@ -327,6 +311,7 @@ runs:
     - name: Disable OnePlus Kernel Modules
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
@@ -342,12 +327,13 @@ runs:
           sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"        
+          sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
         fi
 
     - name: Run sed and perl Commands
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Running sed and perl commands..."
@@ -374,6 +360,7 @@ runs:
     - name: Build the Kernel
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG"
         echo "Building the kernel..."
@@ -409,28 +396,35 @@ runs:
 
     - name: Download Latest SUSFS Module from CI
       continue-on-error: true
-      shell: bash  # Added shell property
+      shell: bash
       run: |
-        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
-          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-          jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+        set -euo pipefail
+        echo "Fetching latest successful run for branch v1.5.2+..."
+        RUNS_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success")
+        if [[ $(echo "$RUNS_RESPONSE" | jq -r '.workflow_runs | length') -eq 0 ]]; then
+          echo "No successful runs found for branch v1.5.2+"
+          exit 0
+        fi
+        LATEST_RUN_ID=$(echo "$RUNS_RESPONSE" | jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
         if [ -z "$LATEST_RUN_ID" ]; then
           echo "No successful run found for branch v1.5.2+"
-        else
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-          if [ -n "$ARTIFACT_URL" ]; then
-            curl -L -H "Authorization: Bearer ${{ inputs.github_token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-            cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-          else
-            echo "Failed to fetch artifact URL"
-          fi
+          exit 0
         fi
+        ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+        if [ -z "$ARTIFACT_URL" ] || [ "$ARTIFACT_URL" == "null" ]; then
+          echo "Failed to fetch artifact URL or no artifacts available"
+          exit 0
+        fi
+        curl -L -H "Authorization: Bearer ${{ inputs.github_token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+        cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
 
     - name: Create ZIP Files for Different Formats
       id: create_zip
       shell: bash
       run: |
+        set -euo pipefail
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG"
         echo "Copying Image"
@@ -438,8 +432,8 @@ runs:
         echo "Navigating to AnyKernel3 directory..."
         cd ../AnyKernel3
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/ ||
-          patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch ||
+          cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/ || true
+          patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
         fi
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
