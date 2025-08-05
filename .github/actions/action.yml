@@ -122,7 +122,7 @@ runs:
       run: |
         echo "Installing build dependencies..."
         sudo apt-get update -o Acquire::http::Timeout=30 -o Acquire::Retries=3
-        sudo apt-get install -y --no-install-recommends python3 git curl ccache build-essential bc libncurses-dev bison flex libssl-dev libelf-dev lld
+        sudo apt-get install -y --no-install-recommends python3 git curl ccache build-essential bc libncurses-dev bison flex libssl-dev libelf-dev lld clang
         if [ $? -ne 0 ]; then
           echo "Error: Failed to install dependencies"
           exit 1
@@ -131,6 +131,8 @@ runs:
         ccache -M ${{ env.CCACHE_SIZE }}
         ccache -z
         ccache --version
+        clang --version || { echo "Error: clang not found"; exit 1; }
+        ld.lld --version || { echo "Error: ld.lld not found"; exit 1; }
         echo "Dependencies installed successfully"
 
     - name: Clone AnyKernel3 and Other Dependencies
@@ -468,11 +470,18 @@ runs:
           ls -l "$CLANG_FULL_PATH"
         else
           echo "Clang toolchain directory not found: $CLANG_FULL_PATH"
+          echo "Listing available toolchains:"
+          ls -l $GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/ || true
+          echo "Falling back to Bazel build."
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         cd kernel_workspace/kernel_platform/common
         echo "Current directory: $(pwd)"
+        if [ ! -f arch/arm64/configs/gki_defconfig ]; then
+          echo "Error: gki_defconfig not found at $(pwd)/arch/arm64/configs/gki_defconfig"
+          exit 1
+        fi
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
@@ -500,27 +509,25 @@ runs:
         fi
         ccache -s
         echo "✅ Fast kernel compilation completed with ThinLTO"
-
+    
     - name: Build the Kernel
       if: steps.fast_build.outputs.fallback != 'true'
       shell: bash
       run: |
         echo "Starting Bazel build..."
         cd "$CONFIG"
-        
+        echo "Listing Clang toolchain directory:"
+        ls -l $GITHUB_WORKSPACE/kernel_platform/prebuilts/clang/host/linux-x86/ || true
         echo "Clearing system cache..."
         sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-        
         rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
         rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
-        
         BUILD_TYPE="gki"
         BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
         if [ "${{ inputs.soc }}" == "sun" ]; then
           BUILD_TYPE="perf"
           BAZEL_ARGS+=(-g)
         fi
-        
         (stdbuf -oL bash -c '
           while true; do
             echo "=== $(date) ==="
@@ -535,7 +542,6 @@ runs:
         ') &
         MONITOR_PID=$!
         trap "kill $MONITOR_PID" EXIT
-        
         if [ -f ./kernel_platform/build_with_bazel.py ]; then
           ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
           ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
@@ -546,6 +552,8 @@ runs:
           echo "Error: Kernel image not found at ./out/dist/Image"
           exit 1
         fi
+        echo "Listing output directory:"
+        ls -l ./out/dist/
 
     - name: Create ZIP Files for Different Formats
       id: create_zip
