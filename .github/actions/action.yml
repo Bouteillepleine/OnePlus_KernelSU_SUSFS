@@ -1,7 +1,7 @@
 name: Build
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 inputs:
   model:
@@ -42,7 +42,7 @@ runs:
       shell: bash
       run: |
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        echo "CCACHE_SIZE=50G" >> $GITHUB_ENV
+        echo "CCACHE_SIZE=20G" >> $GITHUB_ENV
         echo "WORKSPACE_DIR=$GITHUB_WORKSPACE/kernel_workspace" >> $GITHUB_ENV
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
@@ -83,39 +83,56 @@ runs:
         sudo docker image prune --all --force
         echo "some directories deleted"
         
-        # Remove large unwanted packages
-        sudo apt-get purge -y \
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync \
-          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
-          google-cloud-sdk imagemagick \
-          libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
-          mercurial apt-transport-https mono-complete libmysqlclient \
-          unixodbc-dev yarn chrpath libssl-dev libxft-dev \
-          libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
-          snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-          sphinxsearch subversion mongodb-org microsoft-edge-stable || true
+        echo "Purging unnecessary packages..."
+        PACKAGES_TO_PURGE=(
+          aria2 ansible azure-cli shellcheck rpm xorriso zsync
+          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable
+          google-cloud-sdk imagemagick
+          libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl
+          mercurial apt-transport-https mono-complete libmysqlclient
+          unixodbc-dev yarn chrpath libssl-dev libxft-dev
+          libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev
+          snmp pollinate libpq-dev postgresql-client powershell ruby-full
+          sphinxsearch subversion mongodb-org microsoft-edge-stable
+        )
+        INSTALLED_PACKAGES=$(dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | grep -E "^($(echo "${PACKAGES_TO_PURGE[*]}" | tr ' ' '|'))$" || true)
+        if [ -n "$INSTALLED_PACKAGES" ]; then
+          sudo apt-get purge -y $INSTALLED_PACKAGES || true
+        else
+          echo "No listed packages found to purge"
+        fi
         
-        # Regex-based purges (for bulk families like mysql, php, dotnet)
-        sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
+        INSTALLED_REGEX=$(dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | grep -E '^mysql|^php|^dotnet' || true)
+        if [ -n "$INSTALLED_REGEX" ]; then
+          sudo apt-get purge -y $INSTALLED_REGEX || true
+        else
+          echo "No regex-matched packages (mysql, php, dotnet) found to purge"
+        fi
         
-        # Clean up
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
-        echo "some packages purged"
+        echo "Package cleanup completed"
         
         echo "Disk space after cleanup:"
         df -h
         
-        # Install dependencies
-        echo "Installing Repo and Python"
-        sudo apt update
-        sudo apt install -y python3 python-is-python3
+        echo "Installing Repo and Python..."
+        sudo apt-get update -o Acquire::http::Timeout=30 -o Acquire::Retries=3
+        sudo apt-get install -y python3 python-is-python3
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to install python3 and python-is-python3"
+          exit 1
+        fi
         
         mkdir -p ./git-repo
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         ./git-repo/repo --version
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to verify repo tool"
+          exit 1
+        fi
 
     - name: Install Dependencies and ccache
       shell: bash
@@ -128,13 +145,14 @@ runs:
           exit 1
         fi
         echo "Configuring ccache..."
+        mkdir -p "${{ env.CCACHE_DIR }}"
+        chmod -R 755 "${{ env.CCACHE_DIR }}"
         ccache -M ${{ env.CCACHE_SIZE }}
         ccache -z
-        ccache --version
         clang --version || { echo "Error: clang not found"; exit 1; }
         ld.lld --version || { echo "Error: ld.lld not found"; exit 1; }
         echo "Dependencies installed successfully"
-
+        
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
