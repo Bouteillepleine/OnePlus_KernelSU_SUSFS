@@ -31,7 +31,10 @@ inputs:
     required: true
     type: string
     default: ""
-  
+  github_token:
+    required: true
+    type: string
+
 runs:
   using: "composite"
   steps:
@@ -395,8 +398,9 @@ runs:
       continue-on-error: true
       shell: bash
       run: |
+        set -euo pipefail
         echo "Fetching latest successful run for branch v1.5.2+..."
-        RUNS_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+        RUNS_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
           "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success")
         if [[ $(echo "$RUNS_RESPONSE" | jq -r '.workflow_runs | length') -eq 0 ]]; then
           echo "No successful runs found for branch v1.5.2+"
@@ -427,6 +431,9 @@ runs:
         cp ./out/dist/Image ../AnyKernel3/Image || { echo "::error::Failed to copy kernel Image"; exit 1; }
         echo "Navigating to AnyKernel3 directory..."
         cd ../AnyKernel3
+        if [ ! -f ksu_module_susfs_1.5.2+_CI.zip ]; then
+          echo "::warning::SUSFS module (ksu_module_susfs_1.5.2+_CI.zip) not found in AnyKernel3/"
+        fi
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/ || true
           patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
