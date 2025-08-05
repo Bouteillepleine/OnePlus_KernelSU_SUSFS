@@ -30,24 +30,37 @@ inputs:
     required: true
     type: string
     default: ""
+  FAST_BUILD:
+    required: false
+    type: boolean
+    default: false
 
 runs:
   using: "composite"
   steps:
+    - name: Set Environment Variables
+      shell: bash
+      run: |
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_SIZE=50G" >> $GITHUB_ENV
+        echo "WORKSPACE_DIR=$GITHUB_WORKSPACE/kernel_workspace" >> $GITHUB_ENV
+        echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
+        echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+
     - name: Setup ccache
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ github.job }}-kernel-${{ env.KERNEL_VERSION }}-${{ github.sha }}
+        key: ccache-${{ github.job }}-kernel-${{ inputs.kernel_version }}-${{ github.sha }}
         restore-keys: |
-          ccache-${{ github.job }}-kernel-${{ env.KERNEL_VERSION }}-
+          ccache-${{ github.job }}-kernel-${{ inputs.kernel_version }}-
       continue-on-error: true
 
     - name: Cache Repo Tool
       uses: actions/cache@v4
       with:
-        path: /usr/local/bin/repo
-        key: repo-tool-${{ hashFiles('**/build.yml') }}
+        path: ./git-repo/repo
+        key: repo-tool-${{ hashFiles('**/*.yml') }}
         restore-keys: |
           repo-tool-
       continue-on-error: true
@@ -95,16 +108,6 @@ runs:
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
-        
-        # Set CONFIG Environment Variable
-        echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
-        # Set KERNEL_VERSION Environment Variable
-        echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
-        # Set CCACHE_DIR and CCACHE_SIZE
-        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        echo "CCACHE_SIZE=50G" >> $GITHUB_ENV
-        # Set WORKSPACE_DIR
-        echo "WORKSPACE_DIR=$GITHUB_WORKSPACE/kernel_workspace" >> $GITHUB_ENV
 
     - name: Install Dependencies and ccache
       shell: bash
@@ -151,9 +154,9 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ env.WORKSPACE_DIR }}
-        key: kernel-source-${{ env.CPU }}-${{ env.FEIL }}-${{ github.sha }}
+        key: kernel-source-${{ inputs.soc }}-${{ inputs.model }}-${{ github.sha }}
         restore-keys: |
-          kernel-source-${{ env.CPU }}-${{ env.FEIL }}-
+          kernel-source-${{ inputs.soc }}-${{ inputs.model }}-
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -409,11 +412,11 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h
 
     - name: Build Kernel FAST
-      if: github.event.inputs.FAST_BUILD == 'true'
+      if: inputs.FAST_BUILD == true
       id: fast_build
       shell: bash
       run: |
-        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
         if [[ "$KERNEL_VERSION" == "6.6" ]]; then
           CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
@@ -461,6 +464,9 @@ runs:
         fi
         make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
         make -j$(nproc --all) O=out $MAKE_ARGS
+        # Copy kernel image to expected location for ZIP creation
+        mkdir -p ../out/dist
+        cp out/Image ../out/dist/Image
         ccache -s
         echo "✅ Fast kernel compilation completed with ThinLTO"
 
