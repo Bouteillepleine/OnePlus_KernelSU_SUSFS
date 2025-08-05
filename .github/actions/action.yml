@@ -406,7 +406,7 @@ runs:
       continue-on-error: true
       shell: bash
       run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+       LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
             jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
           if [ -z "$LATEST_RUN_ID" ]; then
@@ -420,10 +420,7 @@ runs:
             else
               echo "Failed to fetch artifact URL"
             fi
-          fi
-        curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o "$ARTIFACT_NAME.zip" "$ARTIFACT_URL" || 
-        cp "$ARTIFACT_NAME.zip" ./AnyKernel3/ || 
-        echo "SUSFS_MODULE=$ARTIFACT_NAME.zip" >> $GITHUB_ENV 
+          fi 
       
     - name: Create ZIP Files for Different Formats
       id: create_zip
