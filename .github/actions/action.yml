@@ -31,10 +31,7 @@ inputs:
     required: true
     type: string
     default: ""
-  github_token:
-    required: true
-    type: string
-
+  
 runs:
   using: "composite"
   steps:
@@ -400,7 +397,7 @@ runs:
       run: |
         set -euo pipefail
         echo "Fetching latest successful run for branch v1.5.2+..."
-        RUNS_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+        RUNS_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
           "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success")
         if [[ $(echo "$RUNS_RESPONSE" | jq -r '.workflow_runs | length') -eq 0 ]]; then
           echo "No successful runs found for branch v1.5.2+"
