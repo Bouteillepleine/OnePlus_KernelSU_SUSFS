@@ -31,6 +31,10 @@ inputs:
     required: true
     type: string
     default: ""
+  FAST_BUILD:  # New input for fast build
+    required: true
+    type: boolean
+    default: true
 
 runs:
   using: "composite"
@@ -92,7 +96,7 @@ runs:
         # Install dependencies including ccache
         echo "Installing Repo, Python, and ccache"
         sudo apt update
-        sudo apt install -y python3 python-is-python3 ccache
+        sudo apt install -y python3 python-is-python3 ccache lld  # Added lld for fast build
         
         # Show initial ccache configuration
         echo "Current ccache configuration:"
@@ -139,7 +143,7 @@ runs:
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
-          echo "Error: '$TARGET_REF' is neither a valid branch/tag nor a valid commit hash."
+          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
 
@@ -273,7 +277,7 @@ runs:
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
+          echo "Not OPAce5Pro / OP13 , skipping hmbird patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -377,6 +381,8 @@ runs:
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
+        # Set KERNEL_VERSION for fast build
+        echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
 
     - name: Disable OnePlus Kernel Module
       shell: bash
@@ -428,7 +434,66 @@ runs:
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
 
+    - name: Build Kernel FAST
+      if: inputs.FAST_BUILD == 'true'
+      shell: bash
+      run: |
+        echo "Starting fast kernel build..."
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          CLANG_PATH="clang-r510928"
+          CLANG_DIR="prebuilts"
+        elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
+          CLANG_PATH="clang-r487747c"
+          CLANG_DIR="prebuilts"
+        elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
+          CLANG_PATH="clang-r450784e"
+          CLANG_DIR="prebuilts"
+        elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
+          CLANG_PATH="clang-r416183b"
+          CLANG_DIR="prebuilts-master"
+          USE_LLVM_IAS=true
+        else
+          echo "fallback=true" >> "$GITHUB_OUTPUT"
+          echo "⚠️ The current kernel version \"$KERNEL_VERSION\" does not have a corresponding clang toolchain, falling back to using the official build script"
+          exit 0
+        fi
+        export PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH"
+        export PATH="/usr/lib/ccache:$PATH"
+        export CC="ccache clang"
+        # Verify ld.lld is available
+        if ! command -v ld.lld >/dev/null 2>&1; then
+          echo "⚠️ ld.lld not found. Ensure the lld package is installed and the Clang toolchain includes ld.lld."
+          echo "Falling back to Bazel build."
+          echo "fallback=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Verify Clang toolchain directory
+        if [ -d "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin" ]; then
+          echo "Clang toolchain found:"
+          ls -l $GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin
+        else
+          echo "Clang toolchain directory not found: $GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin"
+          echo "fallback=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        cd $CONFIG/kernel_platform/common
+        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
+        if [[ "$USE_LLVM_IAS" == "true" ]]; then
+          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+        fi
+        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+        make -j$(nproc --all) O=out $MAKE_ARGS
+        ccache -s
+        echo "✅ Fast kernel compilation completed with ThinLTO"
+        # Copy the built Image to AnyKernel3 for packaging
+        cp out/arch/arm64/boot/Image ../AnyKernel3/Image
+
     - name: Build the Kernel
+      if: inputs.FAST_BUILD != 'true'
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
@@ -477,6 +542,8 @@ runs:
         # Display ccache statistics
         echo "Build ccache statistics:"
         ccache -s
+        # Copy the built Image to AnyKernel3 for packaging
+        cp out/dist/Image ../AnyKernel3/Image
 
     - name: Download Latest SUSFS Module from CI
       shell: bash
