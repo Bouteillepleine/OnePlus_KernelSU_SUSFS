@@ -46,6 +46,11 @@ runs:
         echo "WORKSPACE_DIR=$GITHUB_WORKSPACE/kernel_workspace" >> $GITHUB_ENV
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+        echo "Debug: Environment variables set"
+        echo "CCACHE_DIR=$HOME/.ccache"
+        echo "KERNEL_VERSION=${{ inputs.kernel_version }}"
+        echo "CONFIG=${{ inputs.model }}"
+        echo "FAST_BUILD=${{ inputs.FAST_BUILD }}"
 
     - name: Setup ccache
       uses: actions/cache@v4
@@ -71,6 +76,7 @@ runs:
         export DEBIAN_FRONTEND=noninteractive
         echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
         
+        echo "Disk space before cleanup:"
         df -h
         
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
@@ -97,6 +103,7 @@ runs:
         sudo apt-get autoclean -y
         echo "some packages purged"
         
+        echo "Disk space after cleanup:"
         df -h
         
         # Install dependencies
@@ -108,14 +115,23 @@ runs:
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
+        ./git-repo/repo --version
 
     - name: Install Dependencies and ccache
       shell: bash
       run: |
+        echo "Installing build dependencies..."
         sudo apt-get update -o Acquire::http::Timeout=30 -o Acquire::Retries=3
         sudo apt-get install -y --no-install-recommends python3 git curl ccache build-essential bc libncurses-dev bison flex libssl-dev libelf-dev lld
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to install dependencies"
+          exit 1
+        fi
+        echo "Configuring ccache..."
         ccache -M ${{ env.CCACHE_SIZE }}
         ccache -z
+        ccache --version
+        echo "Dependencies installed successfully"
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -129,26 +145,30 @@ runs:
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
         
-        # Debug print the branches
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        # Clone repositories using the branch names
         git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to clone AnyKernel3"
+          exit 1
+        fi
         git clone https://github.com/TheWildJames/kernel_patches.git
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to clone kernel_patches"
+          exit 1
+        fi
         
-        # Clone the repo with all branches and history (can optimize later if needed)
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
         
-        # Try to check if TARGET_REF is a valid branch or tag
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          # It's a branch or commit hash
           git checkout "$SUSFS_BRANCH"
         else
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
+        cd ..
 
     - name: Cache Kernel Source
       uses: actions/cache@v4
@@ -167,19 +187,25 @@ runs:
         mkdir -p kernel_workspace
         echo "KERNEL_WORKSPACE=$CONFIG/kernel_workspace" >> $GITHUB_ENV
         
-        # Initialize and sync kernel source
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8550 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to initialize repo"
+          exit 1
+        fi
         
-        # Sync repo and apply patches
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to sync repo"
+          exit 1
+        fi
 
     - name: Add KernelSU Next
       shell: bash
@@ -194,6 +220,10 @@ runs:
         else
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
         fi
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to add KernelSU Next"
+          exit 1
+        fi
         
         git submodule update --init --recursive
 
@@ -205,7 +235,6 @@ runs:
         
         echo "Applying SUSFS patches..."
         
-        # Copy SUSFS patches
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -249,7 +278,6 @@ runs:
                 patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
             
-            # Fix build errors (no rejects; Still giving errors)
             patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
@@ -259,7 +287,6 @@ runs:
         esac
         patch -p1 --forward < ksun_susfs_latest.patch || true
         
-        # Change to common directory and apply SUSFS patch
         cd ../common
         
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
@@ -290,7 +317,7 @@ runs:
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
+          echo "Not OPAce5Pro / OP13 , skipping hmbird patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -307,7 +334,6 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
-        # Apply additional patch
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
 
@@ -319,11 +345,9 @@ runs:
         
         echo "Adding configuration settings to gki_defconfig..."
         
-        # Add KSU configuration settings
         echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
         
-        # Add SUSFS configuration settings
         echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -341,7 +365,6 @@ runs:
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
         
-        # Add additional tmpfs config setting
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -384,13 +407,10 @@ runs:
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         
-        # Run sed commands for modifications
         sed -i 's/check_defconfig//' ./common/build.config.gki
-        # For Old setlocalversion Script
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
         tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
         tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
-        # For New setlocalversion Script
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./common/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./external/dtc/scripts/setlocalversion
@@ -406,7 +426,6 @@ runs:
         sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
         sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
        
-        # Run perl command to modify UTS_VERSION
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h
@@ -416,6 +435,7 @@ runs:
       id: fast_build
       shell: bash
       run: |
+        echo "Starting fast build for kernel version: ${{ inputs.kernel_version }}"
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         if [[ "$KERNEL_VERSION" == "6.6" ]]; then
           CLANG_PATH="clang-r510928"
@@ -435,26 +455,24 @@ runs:
           echo "⚠️ The current kernel version \"$KERNEL_VERSION\" does not have a corresponding clang toolchain, falling back to using the official build script"
           exit 0
         fi
-        export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH"
+        CLANG_FULL_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin"
+        echo "Adding Clang to PATH: $CLANG_FULL_PATH"
+        export PATH="$CLANG_FULL_PATH:$PATH"
         export PATH="/usr/lib/ccache:$PATH"
         export CC="ccache clang"
-        # Verify ld.lld is available
-        if ! command -v ld.lld >/dev/null 2>&1; then
-          echo "⚠️ ld.lld not found. Ensure the lld package is installed and the Clang toolchain includes ld.lld."
-          echo "Falling back to Bazel build."
-          echo "fallback=true" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        # Verify Clang toolchain directory
-        if [ -d "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin" ]; then
+        echo "Verifying tools..."
+        clang --version || { echo "Error: clang not found"; exit 1; }
+        ld.lld --version || { echo "⚠️ ld.lld not found. Falling back to Bazel build."; echo "fallback=true" >> "$GITHUB_OUTPUT"; exit 0; }
+        if [ -d "$CLANG_FULL_PATH" ]; then
           echo "Clang toolchain found:"
-          ls -l $GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin
+          ls -l "$CLANG_FULL_PATH"
         else
-          echo "Clang toolchain directory not found: $GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin"
+          echo "Clang toolchain directory not found: $CLANG_FULL_PATH"
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         cd kernel_workspace/kernel_platform/common
+        echo "Current directory: $(pwd)"
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
@@ -462,11 +480,24 @@ runs:
         if [[ "$USE_LLVM_IAS" == "true" ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
+        echo "Generating defconfig..."
         make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to generate defconfig"
+          exit 1
+        fi
+        echo "Building kernel..."
         make -j$(nproc --all) O=out $MAKE_ARGS
-        # Copy kernel image to expected location for ZIP creation
+        if [ $? -ne 0 ]; then
+          echo "Error: Kernel compilation failed"
+          exit 1
+        fi
         mkdir -p ../out/dist
         cp out/Image ../out/dist/Image
+        if [ ! -f ../out/dist/Image ]; then
+          echo "Error: Kernel image not found at ../out/dist/Image"
+          exit 1
+        fi
         ccache -s
         echo "✅ Fast kernel compilation completed with ThinLTO"
 
@@ -474,11 +505,10 @@ runs:
       if: steps.fast_build.outputs.fallback != 'true'
       shell: bash
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
+        echo "Starting Bazel build..."
         cd "$CONFIG"
         
-        echo "Building the kernel..."
-        # Clear Cache
+        echo "Clearing system cache..."
         sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
         
         rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
@@ -512,6 +542,10 @@ runs:
         else
           LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
         fi
+        if [ ! -f ./out/dist/Image ]; then
+          echo "Error: Kernel image not found at ./out/dist/Image"
+          exit 1
+        fi
 
     - name: Create ZIP Files for Different Formats
       id: create_zip
@@ -520,7 +554,11 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG"
         
-        echo "Copying Image"
+        echo "Copying Image..."
+        if [ ! -f ./out/dist/Image ]; then
+          echo "Error: Kernel image not found at ./out/dist/Image"
+          exit 1
+        fi
         cp ./out/dist/Image ../AnyKernel3/Image
         
         echo "Navigating to AnyKernel3 directory..."
@@ -531,10 +569,13 @@ runs:
           patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
         fi
         
-        # Zip the files in the AnyKernel3 directory with a new naming convention
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
         zip -r "../$ZIP_NAME" ./*
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to create ZIP file"
+          exit 1
+        fi
 
     - name: Save Build Metadata
       shell: bash
@@ -557,7 +598,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break  # Found it — exit loop
+              break
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -579,7 +620,6 @@ runs:
           exit 1
         fi
         
-        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
