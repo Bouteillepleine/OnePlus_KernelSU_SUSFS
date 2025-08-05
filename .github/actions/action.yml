@@ -167,8 +167,11 @@ runs:
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
+          echo "Manifest contents:"
+          cat .repo/manifests/temp_manifest.xml
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
+          echo "Manifest file: ${{ inputs.manifest }}"
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         if [ $? -ne 0 ]; then
@@ -191,8 +194,15 @@ runs:
           echo "Clang toolchain directory found:"
           ls -l "$CLANG_DIR/"
         else
-          echo "Error: Clang toolchain directory not found at $CLANG_DIR"
-          exit 1
+          echo "Warning: Clang toolchain directory not found at $CLANG_DIR"
+          echo "Attempting to re-sync Clang toolchain..."
+          $REPO sync -c --no-clone-bundle --no-tags kernel_platform/prebuilts/clang/host/linux-x86
+          if [ -d "$CLANG_DIR" ]; then
+            echo "Clang toolchain directory found after re-sync:"
+            ls -l "$CLANG_DIR/"
+          else
+            echo "Warning: Clang toolchain still not found, proceeding to build (may fall back to Bazel)"
+          fi
         fi
 
     - name: Apply SUSFS Patches
