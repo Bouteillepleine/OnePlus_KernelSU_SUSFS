@@ -431,17 +431,14 @@ runs:
         cp ./out/dist/Image ../AnyKernel3/Image || { echo "::error::Failed to copy kernel Image"; exit 1; }
         echo "Navigating to AnyKernel3 directory..."
         cd ../AnyKernel3
-        if [ ! -f ksu_module_susfs_1.5.2+_CI.zip ]; then
-          echo "::warning::SUSFS module (ksu_module_susfs_1.5.2+_CI.zip) not found in AnyKernel3/"
-        fi
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/ || true
           patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
         fi
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
-        zip -r "../$ZIP_NAME" ./* || { echo "::error::Failed to create ZIP file"; exit 1; }
-        mv "../$ZIP_NAME" "$GITHUB_WORKSPACE/$ZIP_NAME" || { echo "::error::Failed to move ZIP to workspace"; exit 1; }
+        zip -r "$ZIP_NAME" ./* || { echo "::error::Failed to create ZIP file"; exit 1; }
+        echo "ZIP file created at $GITHUB_WORKSPACE/$ZIP_NAME"
 
     - name: Upload Build Artifacts
       id: upload_ak3_zip
