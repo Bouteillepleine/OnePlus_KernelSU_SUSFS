@@ -165,7 +165,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.model }}-kernel
-          path: ${{ matrix.model }}/out/dist/
+          path: ${{ matrix.model }}/artifacts/
           if-no-files-found: error
 
   build-batch-2:
@@ -294,7 +294,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.model }}-kernel
-          path: ${{ matrix.model }}/out/dist/
+          path: ${{ matrix.model }}/artifacts/
           if-no-files-found: error
 
   trigger-release:
@@ -354,16 +354,16 @@ jobs:
           |-------|----------------|
           EOF
           
-          # === Generate table rows ===
+          # Generate table rows
           for file in $(find downloaded-artifacts -name "*.zip" -type f | sort); do
             if [ -f "$file" ]; then
               model=$(basename "$(dirname "$file")" | sed 's/-kernel$//')
-              version="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-              printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
+              kernel_version=$(grep -oP 'android\d+-\d+\.\d+' "$file" || echo "${{ matrix.android_version }}-${{ matrix.kernel_version }}")
+              printf "| %-12s | %-16s |\n" "$model" "$kernel_version" >> release_notes.md
             fi
           done
           
-          # === Add features and finalize ===
+          # Add features and finalize
           cat << 'EOF' >> release_notes.md
           
           ### Features
@@ -380,7 +380,7 @@ jobs:
           - [+] HMBIRD scx support for OnePlus 13 & OnePlus Ace 5 Pro
           EOF
           
-          # === Output for debugging ===
+          # Output for debugging
           echo "--- Final Release Notes ---"
           cat release_notes.md
 
