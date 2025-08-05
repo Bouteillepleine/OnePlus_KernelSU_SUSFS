@@ -331,12 +331,12 @@ runs:
         else
           echo "Clang toolchain directory not found: $CLANG_FULL_PATH"
           echo "Listing available toolchains:"
-          ls -l $GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/ || true
+          ls -l "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/" || true
           echo "Falling back to Bazel build."
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        cd kernel_workspace/kernel_platform/common
+        cd "$KERNEL_WORKSPACE/kernel_platform/common"
         echo "Current directory: $(pwd)"
         if [ ! -f arch/arm64/configs/gki_defconfig ]; then
           echo "Error: gki_defconfig not found at $(pwd)/arch/arm64/configs/gki_defconfig"
@@ -362,7 +362,7 @@ runs:
           exit 1
         fi
         mkdir -p ../out/dist
-        cp out/Image ../out/dist/Image
+        cp out/arch/arm64/boot/Image ../out/dist/Image
         if [ ! -f ../out/dist/Image ]; then
           echo "Error: Kernel image not found at ../out/dist/Image"
           exit 1
@@ -370,13 +370,13 @@ runs:
         echo "✅ Fast kernel compilation completed with ThinLTO"
 
     - name: Build the Kernel
-      if: steps.fast_build.outputs.fallback != 'true'
+      if: steps.fast_build.outputs.fallback == 'true' || inputs.FAST_BUILD != true
       shell: bash
       run: |
         echo "Starting Bazel build..."
         cd "$CONFIG"
         echo "Listing Clang toolchain directory:"
-        ls -l $GITHUB_WORKSPACE/kernel_platform/prebuilts/clang/host/linux-x86/ || true
+        ls -l "$GITHUB_WORKSPACE/kernel_platform/prebuilts/clang/host/linux-x86/" || true
         echo "Clearing system cache..."
         sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
         rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
