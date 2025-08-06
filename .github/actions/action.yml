@@ -406,23 +406,33 @@ runs:
       run: |
         set -euo pipefail
         echo "Fetching latest successful run for branch v1.5.2+..."
-        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+        if [ -z "${{ inputs.github_token }}" ]; then
+          echo "Error: github_token input is empty or not provided"
+          exit 1
+        fi
+        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
           "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
           jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
         if [ -z "$LATEST_RUN_ID" ]; then
           echo "No successful run found for branch v1.5.2+"
+          # Debug: Output raw API response
+          curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | jq .
         else
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
           if [ -n "$ARTIFACT_URL" ]; then
-            curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+            curl -L -H "Authorization: Bearer ${{ inputs.github_token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
             cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
             echo "Successfully downloaded and copied SUSFS module to AnyKernel3"
           else
             echo "Failed to fetch artifact URL"
+            # Debug: Output artifact API response
+            curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq .
           fi
         fi
-        
+
     - name: Create ZIP Files for Different Formats
       id: create_zip
       shell: bash
@@ -442,7 +452,7 @@ runs:
         echo "Creating zip file $ZIP_NAME..."
         zip -r "$ZIP_NAME" ./* || { echo "::error::Failed to create ZIP file"; exit 1; }
         echo "ZIP file created at $GITHUB_WORKSPACE/$ZIP_NAME"
-    
+
     - name: Upload Build Artifacts
       id: upload_ak3_zip
       if: success() && steps.create_zip.conclusion == 'success'
