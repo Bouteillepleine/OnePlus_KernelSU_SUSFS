@@ -440,10 +440,18 @@ runs:
         zip -r "$ZIP_NAME" ./* || { echo "::error::Failed to create ZIP file"; exit 1; }
         echo "ZIP file created at $GITHUB_WORKSPACE/$ZIP_NAME"
 
+    - name: Debug ZIP File
+      shell: bash
+      run: |
+        ls -l /home/runner/work/OnePlus_KernelSU_SUSFS/OnePlus_KernelSU_SUSFS/AnyKernel3/AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip || echo "ZIP file not found"
+        ls -l /home/runner/work/OnePlus_KernelSU_SUSFS/OnePlus_KernelSU_SUSFS/OP13r/out/dist/Image || echo "Kernel Image not found"
+        ls -l /home/runner/work/OnePlus_KernelSU_SUSFS/OnePlus_KernelSU_SUSFS/AnyKernel3/Image || echo "Copied Image not found"
+
     - name: Upload Build Artifacts
       id: upload_ak3_zip
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
-        path: AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip
+        path: AnyKernel3/AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip
+        if-no-files-found: error
