@@ -422,7 +422,6 @@ runs:
   
       - name: Download Latest SUSFS Module from CI
           continue-on-error: true
-          shell: bash
           run: |
             LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
