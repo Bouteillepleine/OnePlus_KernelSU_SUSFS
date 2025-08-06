@@ -304,9 +304,6 @@ runs:
       - name: Add BBR Support
         shell: bash
         run: |
-          set -euo pipefail
-          echo "Changing to configuration database"
-          cd "$CONFIG/kernel_platform"
           CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
@@ -325,10 +322,7 @@ runs:
   
       - name: Add TTL Target Support
         shell: bash
-        run: |
-          set -euo pipefail
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+        run: |          
           CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$CONFIG_FILE"
@@ -336,10 +330,7 @@ runs:
   
       - name: Add Other Configurations
         shell: bash
-        run: |
-          set -euo pipefail
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+        run: |          
           CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
           echo "CONFIG_DEBUG_KERNEL=n" >> "$CONFIG_FILE"
           echo "CONFIG_DYNAMIC_DEBUG=n" >> "$CONFIG_FILE"
@@ -352,10 +343,7 @@ runs:
   
       - name: Disable OnePlus Kernel Modules
         shell: bash
-        run: |
-          set -euo pipefail
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+        run: |          
           CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
           if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
             sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
@@ -374,11 +362,7 @@ runs:
   
       - name: Run sed and perl Commands
         shell: bash
-        run: |
-          set -euo pipefail
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
-          echo "Running sed and perl commands..."
+        run: |          
           CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$CONFIG_FILE"
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$CONFIG_FILE"
