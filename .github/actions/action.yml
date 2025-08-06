@@ -401,24 +401,26 @@ runs:
         fi
 
     - name: Download Latest SUSFS Module from CI
-        continue-on-error: true
-        shell: bash
-        run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Fetching latest successful run for branch v1.5.2+..."
+        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+          jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+        if [ -z "$LATEST_RUN_ID" ]; then
+          echo "No successful run found for branch v1.5.2+"
+        else
+          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+          if [ -n "$ARTIFACT_URL" ]; then
+            curl -L -H "Authorization: Bearer ${{ inputs.github_token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+            cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
           else
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-            if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-            else
-              echo "Failed to fetch artifact URL"
-            fi
+            echo "Failed to fetch artifact URL"
           fi
+        fi
 
     - name: Create ZIP Files for Different Formats
       id: create_zip
