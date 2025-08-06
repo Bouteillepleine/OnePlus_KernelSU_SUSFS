@@ -73,6 +73,12 @@ runs:
         export PATH=$PATH:$GITHUB_WORKSPACE/git-repo
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
 
+    - name: Configure Git Information
+      shell: bash
+        run: |
+          git config --global user.name "0+builder"
+          git config --global user.email "0+builder@yahoo.com"
+
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
@@ -395,30 +401,23 @@ runs:
         fi
 
     - name: Download Latest SUSFS Module from CI
-      continue-on-error: true
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Fetching latest successful run for branch v1.5.2+..."
-        RUNS_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
-          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success")
-        if [[ $(echo "$RUNS_RESPONSE" | jq -r '.workflow_runs | length') -eq 0 ]]; then
-          echo "No successful runs found for branch v1.5.2+"
-          exit 0
-        fi
-        LATEST_RUN_ID=$(echo "$RUNS_RESPONSE" | jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-        if [ -z "$LATEST_RUN_ID" ]; then
-          echo "No successful run found for branch v1.5.2+"
-          exit 0
-        fi
-        ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ inputs.github_token }}" \
-          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-        if [ -z "$ARTIFACT_URL" ] || [ "$ARTIFACT_URL" == "null" ]; then
-          echo "Failed to fetch artifact URL or no artifacts available"
-          exit 0
-        fi
-        curl -L -H "Authorization: Bearer ${{ inputs.github_token }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-        cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
+        continue-on-error: true
+        run: |
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "No successful run found for branch v1.5.2+"
+          else
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+            if [ -n "$ARTIFACT_URL" ]; then
+              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
+            else
+              echo "Failed to fetch artifact URL"
+            fi
+          fi
 
     - name: Create ZIP Files for Different Formats
       id: create_zip
