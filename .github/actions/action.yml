@@ -301,182 +301,182 @@ runs:
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           
-    - name: Add BBR Support
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration database"
-        cd "$CONFIG/kernel_platform"
-        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
-        echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
-        echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
-        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
-        echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
-        echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
-        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$CONFIG_FILE"
-        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$CONFIG_FILE"
-        echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
-        echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
-        echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
-        echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
-        echo "CONFIG_MQ_IOSCHED_SSG=y" >> "$CONFIG_FILE"
-        echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> "$CONFIG_FILE"
-
-    - name: Add TTL Target Support
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$CONFIG_FILE"
-        echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$CONFIG_FILE"
-        echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$CONFIG_FILE"
-
-    - name: Add Other Configurations
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_DEBUG_KERNEL=n" >> "$CONFIG_FILE"
-        echo "CONFIG_DYNAMIC_DEBUG=n" >> "$CONFIG_FILE"
-        echo "CONFIG_DEBUG_INFO=n" >> "$CONFIG_FILE"
-        echo "CONFIG_LTO_CLANG_THIN=y" >> "$CONFIG_FILE"
-        echo "CONFIG_LTO_CLANG=y" >> "$CONFIG_FILE"
-        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> "$CONFIG_FILE"
-        echo "CONFIG_AUTOFDO_CLANG=y" >> "$CONFIG_FILE"
-        echo "CONFIG_LLVM_POLLY=y" >> "$CONFIG_FILE"
-
-    - name: Disable OnePlus Kernel Modules
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-        if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
-          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-        fi
-
-    - name: Run sed and perl Commands
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        echo "Running sed and perl commands..."
-        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$CONFIG_FILE"
-        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$CONFIG_FILE"
-        sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$CONFIG_FILE"
-        sed -i 's/check_defconfig//' ./common/build.config.gki
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./external/dtc/scripts/setlocalversion
-        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl"
-        sed -i 's/-dirty//' ./common/scripts/setlocalversion
-        sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
-        sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
-        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py"
-        sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
-        sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
-        DATESTR=$(date -u '+%a %b %d %T UTC %Y')
-        perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT \$DATESTR\"}" ./common/scripts/mkcompile_h
-        perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT \$DATESTR\"}" ./msm-kernel/scripts/mkcompile_h
-        find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
-
-    - name: Build the Kernel
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG"
-        echo "Building the kernel..."
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-        rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports (common)"
-        rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports (msm-kernel)"
-        BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
-        if [ "${{ inputs.soc }}" == "sun" ]; then
-          BUILD_TYPE="perf"
-          BAZEL_ARGS+=(-g)
-        fi
-        (stdbuf -oL bash -c '
-          while true; do
-            echo "=== $(date) ==="
-            free -h
-            echo "======"
-            df -h
-            echo "======"
-            top -b -n 1 | head -n 15
-            echo ""
-            sleep 60
-          done
-        ') &
-        MONITOR_PID=$!
-        trap "kill $MONITOR_PID" EXIT
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
-          ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
-        else
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
-        fi
-
-    - name: Download Latest SUSFS Module from CI
-        continue-on-error: true
+      - name: Add BBR Support
         shell: bash
         run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-          if [ -n "$LATEST_RUN_ID" ]; then
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-            if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-            fi
+          set -euo pipefail
+          echo "Changing to configuration database"
+          cd "$CONFIG/kernel_platform"
+          CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
+          echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
+          echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$CONFIG_FILE"
+          sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$CONFIG_FILE"
+          echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
+          echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
+          echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
+          echo "CONFIG_MQ_IOSCHED_SSG=y" >> "$CONFIG_FILE"
+          echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> "$CONFIG_FILE"
+  
+      - name: Add TTL Target Support
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+          CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$CONFIG_FILE"
+          echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$CONFIG_FILE"
+          echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$CONFIG_FILE"
+  
+      - name: Add Other Configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+          CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_DEBUG_KERNEL=n" >> "$CONFIG_FILE"
+          echo "CONFIG_DYNAMIC_DEBUG=n" >> "$CONFIG_FILE"
+          echo "CONFIG_DEBUG_INFO=n" >> "$CONFIG_FILE"
+          echo "CONFIG_LTO_CLANG_THIN=y" >> "$CONFIG_FILE"
+          echo "CONFIG_LTO_CLANG=y" >> "$CONFIG_FILE"
+          echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> "$CONFIG_FILE"
+          echo "CONFIG_AUTOFDO_CLANG=y" >> "$CONFIG_FILE"
+          echo "CONFIG_LLVM_POLLY=y" >> "$CONFIG_FILE"
+  
+      - name: Disable OnePlus Kernel Modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+          CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
+          if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
+            sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
+            sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           fi
-          
-    - name: Create ZIP Files for Different Formats
-      id: create_zip
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG"
-        echo "Copying Image"
-        cp ./out/dist/Image ../AnyKernel3/Image || { echo "::error::Failed to copy kernel Image"; exit 1; }
-        echo "Navigating to AnyKernel3 directory..."
-        cd ../AnyKernel3
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/ || true
-          patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
-        fi
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
-        echo "Creating zip file $ZIP_NAME..."
-        zip -r "$ZIP_NAME" ./* || { echo "::error::Failed to create ZIP file"; exit 1; }
-        echo "ZIP file created at $GITHUB_WORKSPACE/$ZIP_NAME"
-
-    - name: Upload Build Artifacts
-      id: upload_ak3_zip
-      if: success() && steps.create_zip.conclusion == 'success'
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-${{ env.CONFIG }}
-        path: AnyKernel3/AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip
-        if-no-files-found: error
+  
+      - name: Run sed and perl Commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+          echo "Running sed and perl commands..."
+          CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$CONFIG_FILE"
+          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$CONFIG_FILE"
+          sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$CONFIG_FILE"
+          sed -i 's/check_defconfig//' ./common/build.config.gki
+          sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion
+          sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion
+          sed -i '$s|echo "\$res"|echo "\$res"|' ./external/dtc/scripts/setlocalversion
+          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl"
+          sed -i 's/-dirty//' ./common/scripts/setlocalversion
+          sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
+          sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
+          sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py"
+          sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
+          sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
+          DATESTR=$(date -u '+%a %b %d %T UTC %Y')
+          perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT \$DATESTR\"}" ./common/scripts/mkcompile_h
+          perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT \$DATESTR\"}" ./msm-kernel/scripts/mkcompile_h
+          find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
+  
+      - name: Build the Kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG"
+          echo "Building the kernel..."
+          sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+          rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports (common)"
+          rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports (msm-kernel)"
+          BUILD_TYPE="gki"
+          BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
+          if [ "${{ inputs.soc }}" == "sun" ]; then
+            BUILD_TYPE="perf"
+            BAZEL_ARGS+=(-g)
+          fi
+          (stdbuf -oL bash -c '
+            while true; do
+              echo "=== $(date) ==="
+              free -h
+              echo "======"
+              df -h
+              echo "======"
+              top -b -n 1 | head -n 15
+              echo ""
+              sleep 60
+            done
+          ') &
+          MONITOR_PID=$!
+          trap "kill $MONITOR_PID" EXIT
+          if [ -f ./kernel_platform/build_with_bazel.py ]; then
+            ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
+            ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
+          else
+            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+          fi
+  
+      - name: Download Latest SUSFS Module from CI
+          continue-on-error: true
+          shell: bash
+          run: |
+            LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+              jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+            if [ -n "$LATEST_RUN_ID" ]; then
+              ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+              if [ -n "$ARTIFACT_URL" ]; then
+                curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+                cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
+              fi
+            fi
+            
+      - name: Create ZIP Files for Different Formats
+        id: create_zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG"
+          echo "Copying Image"
+          cp ./out/dist/Image ../AnyKernel3/Image || { echo "::error::Failed to copy kernel Image"; exit 1; }
+          echo "Navigating to AnyKernel3 directory..."
+          cd ../AnyKernel3
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+            cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/ || true
+            patch -p1 -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch || true
+          fi
+          ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
+          echo "Creating zip file $ZIP_NAME..."
+          zip -r "$ZIP_NAME" ./* || { echo "::error::Failed to create ZIP file"; exit 1; }
+          echo "ZIP file created at $GITHUB_WORKSPACE/$ZIP_NAME"
+  
+      - name: Upload Build Artifacts
+        id: upload_ak3_zip
+        if: success() && steps.create_zip.conclusion == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ env.CONFIG }}
+          path: AnyKernel3/AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip
+          if-no-files-found: error
