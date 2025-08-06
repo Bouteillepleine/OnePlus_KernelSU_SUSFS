@@ -75,9 +75,9 @@ runs:
 
     - name: Configure Git Information
       shell: bash
-        run: |
-          git config --global user.name "0+builder"
-          git config --global user.email "0+builder@yahoo.com"
+      run: |
+        git config --global user.name "0+builder"
+        git config --global user.email "0+builder@yahoo.com"
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
