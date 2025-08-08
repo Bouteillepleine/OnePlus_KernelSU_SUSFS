@@ -1,494 +1,340 @@
-```yaml
-name: Build
+name: Build and Release OnePlus Kernels
+
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
-inputs:
-  model:
-    required: true
-    type: string
-  soc:
-    required: true
-    type: string
-  branch:
-    required: true
-    type: string
-  manifest:
-    required: true
-    type: string
-  android_version:
-    required: true
-    type: string
-  kernel_version:
-    required: true
-    type: string
-  ksun_branch:
-    required: true
-    type: string
-    default: stable
-  susfs_branch:
-    required: true
-    type: string
-    default: ""
+on:
+  workflow_dispatch:
+    inputs:
+      make_release:
+        description: 'Do you want to create a release?'
+        required: true
+        type: boolean
+        default: false
+      ksun_branch:
+        description: "Choose KernelSU Next Branch"
+        required: true
+        type: choice
+        options:
+          - stable
+          - next
+        default: next
+#      android12-5_10_susfs_branch:
+#        description: "Choose SusFS Branch for android12-5.10"
+#        type: string
+#        default: "gki-android12-5.10"
+#      android13-5_10_susfs_branch:
+#        description: "Choose SusFS Branch for android13-5.10"
+#        type: string
+#        default: "gki-android13-5.10"
+#      android13-5_15_susfs_branch:
+#        description: "Choose SusFS Branch for android13-5.15"
+#        type: string
+#        default: "gki-android13-5.15"
+#      android14-5_15_susfs_branch:
+#        description: "Choose SusFS Branch for android14-5.15"
+#        type: string
+#        default: "gki-android14-5.15"
+#      android14-6_1_susfs_branch:
+#        description: "Choose SusFS Branch for android14-6.1"
+#        type: string
+#        default: "gki-android14-6.1"
+#      android15-6_6_susfs_branch:
+#        description: "Choose SusFS Branch for android15-6.6"
+#        type: string
+#        default: "gki-android15-6.6"
 
-runs:
-  using: "composite"
-  steps:
-    - name: Setup Build System
-      shell: bash
-      run: |
-        export DEBIAN_FRONTEND=noninteractive
-        echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
-        
-        df -h
-        
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
-        sudo docker image prune --all --force
-        echo "some directories deleted"
-        
-        # Remove large unwanted packages
-        sudo apt-get purge -y \
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync \
-          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
-          google-cloud-sdk imagemagick \
-          libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
-          mercurial apt-transport-https mono-complete libmysqlclient \
-          unixodbc-dev yarn chrpath libssl-dev libxft-dev \
-          libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
-          snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-          sphinxsearch subversion mongodb-org microsoft-edge-stable || true
-        
-        # Regex-based purges (for bulk families like mysql, php, dotnet)
-        sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
-        
-        # Clean up
-        sudo apt-get autoremove -y
-        sudo apt-get autoclean -y
-        echo "some packages purged"
-        
-        df -h
-        
-        # Install dependencies including Clang 19
-        echo "Installing Repo, Python, and Clang 19"
-        sudo apt update
-        sudo apt install -y python3 python-is-python3 clang-19 lld-19
-        echo "CC=clang-19" >> $GITHUB_ENV
-        echo "CXX=clang++-19" >> $GITHUB_ENV
-        
-        mkdir -p ./git-repo
-        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-        chmod a+rx ./git-repo/repo
-        echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
-        
-        # Set CONFIG Environment Variable
-        echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+jobs:
+#  build-batch-1: # Non Bazel Builds
+#    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        include:
+#          - model: OP11
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_11_v.xml
+#            android_version: android13
+#            kernel_version: "5.15"
+#          - model: OP11r
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_11r_v.xml
+#            android_version: android12
+#            kernel_version: "5.10"
+#          - model: OP-OPEN
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_open_v.xml
+#            android_version: android13
+#            kernel_version: "5.15"
+#          - model: OP-ACE-2
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_ace2_v.xml
+#            android_version: android12
+#            kernel_version: "5.10"
+#          - model: OP10t
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_10t_v.xml
+#            android_version: android12
+#            kernel_version: "5.10"
+#          - model: OP10pro
+#            soc: waipio
+#            branch: oneplus/sm8450
+#            manifest: oneplus_10_pro_v.xml
+#            android_version: android12
+#            kernel_version: "5.10"
+#          - model: OP-ACE-2-PRO
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_ace2_pro_v.xml
+#            android_version: android13
+#            kernel_version: "5.15"
+#          - model: OP12r
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_12r_v.xml
+#            android_version: android13
+#            kernel_version: "5.15"
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Select Appropriate SusFS Branch
+#        id: get-susfs-branch
+#        run: |
+#          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          
+#          case "$KERNEL_STRING" in
+#            "android12-5.10")
+#              SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
+#              ;;
+#            "android13-5.10")
+#              SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}"
+#              ;;
+#            "android13-5.15")
+#              SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}"
+#              ;;
+#            "android14-5.15")
+#              SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}"
+#              ;;
+#            "android14-6.1")
+#              SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}"
+#              ;;
+#            "android15-6.6")
+#              SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}"
+#              ;;
+#            *)
+#              echo "Invalid kernel version or unsupported: $KERNEL_STRING"
+#              exit 1
+#              ;;
+#          esac
+          
+#          if [[ -z "$SUSFS_BRANCH" ]]; then
+#            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+#          fi
+          
+#          echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
 
-    - name: Clone AnyKernel3 and Other Dependencies
-      shell: bash
-      run: |
-        echo "Cloning AnyKernel3 and other dependencies..."
-        
-        ANYKERNEL_BRANCH="gki-2.0"
-        if [[ -z "${{ inputs.susfs_branch }}" ]]; then
-          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-        else
-          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
-        fi
-        
-        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
-        echo "Using branch for SUSFS: $SUSFS_BRANCH"
-        
-        git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone https://github.com/TheWildJames/kernel_patches.git
-        
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
-        cd susfs4ksu || exit 1
-        
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
-          git checkout "$SUSFS_BRANCH"
-        else
-          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
-          exit 1
-        fi
+#      - name: Checkout Code
+#        uses: actions/checkout@v3
 
-    - name: Initialize and Sync Kernel Source
-      shell: bash
-      run: |
-        echo "Creating folder for configuration: $CONFIG..."
-        mkdir -p "$CONFIG"
-        cd "$CONFIG"
-        
-        echo "Initializing and syncing kernel source..."
-        if [[ "${{ inputs.manifest }}" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        fi
-        
-        $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
-        
-        # Remove old Clang version if it exists
-        rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928" || true
-        
-        # Check for build.config.constants and update Clang version to Clang 19 (r565012 or similar)
-        if [ -f "$CONFIG/kernel_platform/common/build.config.constants" ]; then
-          echo "Found build.config.constants, updating Clang version to r565012 (Clang 19)..."
-          sed -i 's/r510928/r565012/g' "$CONFIG/kernel_platform/common/build.config.constants"
-          sed -i 's/r536225/r565012/g' "$CONFIG/kernel_platform/common/build.config.constants"
-        else
-          echo "Warning: build.config.constants not found in $CONFIG/kernel_platform/common/"
-          constants_file=$(find "$CONFIG/kernel_platform" -name "build.config.constants" 2>/dev/null)
-          if [ -n "$constants_file" ]; then
-            echo "Found build.config.constants at $constants_file, updating Clang version to r565012 (Clang 19)..."
-            sed -i 's/r510928/r565012/g' "$constants_file"
-            sed -i 's/r536225/r565012/g' "$constants_file"
-          else
-            echo "Warning: build.config.constants not found in kernel_platform. Using system Clang 19."
+#      - name: Build Kernel
+#        uses: ./.github/actions/
+#        with:
+#          model: ${{ matrix.model }}
+#          soc: ${{ matrix.soc }}
+#          branch: ${{ matrix.branch }}
+#          manifest: ${{ matrix.manifest }}
+#          android_version: ${{ matrix.android_version }}
+#          kernel_version: ${{ matrix.kernel_version }}
+#          ksun_branch: ${{ inputs.ksun_branch }}
+#          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+
+  build-batch-2:
+    # needs: build-batch-1
+    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: OP13
+            soc: sun
+            branch: oneplus/sm8750
+            manifest: oneplus_13.xml
+            android_version: android15
+            kernel_version: "6.6"
+#          - model: OPAce5Pro
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_ace5_pro.xml
+#            android_version: android15
+#            kernel_version: "6.6"
+#          - model: OP12
+#            soc: pineapple
+#            branch: oneplus/sm8650
+#            manifest: oneplus12_v.xml
+#            android_version: android14
+#            kernel_version: "6.1"
+          - model: OP13r
+            soc: pineapple
+            branch: oneplus/sm8650
+            manifest: oneplus_13r.xml
+            android_version: android14
+            kernel_version: "6.1"
+          - model: OP-ACE-5
+            soc: pineapple
+            branch: oneplus/sm8650
+            manifest: oneplus_ace5.xml
+            android_version: android14
+            kernel_version: "6.1"
+#          - model: OP-ACE-3V
+#            soc: pineapple
+#            branch: oneplus/sm7675
+#            manifest: oneplus_ace_3v_v.xml
+#            android_version: android14
+#            kernel_version: "6.1"
+#          - model: OP-NORD-4
+#            soc: pineapple
+#            branch: oneplus/sm7675
+#            manifest: oneplus_nord_4_v.xml
+#            android_version: android14
+#            kernel_version: "6.1"
+#          - model: OP-PAD-2
+#            soc: pineapple
+#            branch: oneplus/sm8650
+#            manifest: oneplus_pad2_v.xml
+#            android_version: android14
+#            kernel_version: "6.1"
+#          - model: OP13S
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_13s.xml
+#            android_version: android15
+#            kernel_version: "6.6"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select Appropriate SusFS Branch
+        id: get-susfs-branch
+        run: |
+          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          
+          case "$KERNEL_STRING" in
+            "android12-5.10")
+              SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
+              ;;
+            "android13-5.10")
+              SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}"
+              ;;
+            "android13-5.15")
+              SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}"
+              ;;
+            "android14-5.15")
+              SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}"
+              ;;
+            "android14-6.1")
+              SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}"
+              ;;
+            "android15-6.6")
+              SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}"
+              ;;
+            *)
+              echo "Invalid kernel version or unsupported: $KERNEL_STRING"
+              exit 1
+              ;;
+          esac
+          
+          if [[ -z "$SUSFS_BRANCH" ]]; then
+            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           fi
-        fi
-        
-        echo "DEFCONFIG=$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
-        
-        # Debug: List contents of common directory and Clang version
-        echo "Listing contents of $CONFIG/kernel_platform/common/"
-        ls -l "$CONFIG/kernel_platform/common/" || true
-        clang-19 --version
-        # Dump manifest for debugging
-        $REPO manifest -r > manifest_output.xml
-        echo "Manifest dumped to manifest_output.xml for debugging"
+          
+          echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
 
-    - name: Add KernelSU Next
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "Adding KernelSU Next..."
-        
-        if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-        else
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
-        fi
-        
-        git submodule update --init --recursive
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-    - name: Apply SUSFS Patches
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "Applying SUSFS patches..."
-        
-        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
-        cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
-        cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-        
-        cd ./KernelSU-Next
-        
-        echo "Applying next SUSFS patches..."
-        susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
-        echo "SUSVER=$susfs_version" >> $GITHUB_ENV
-        BASE_VERSION=10200
-        cd ./kernel
-        KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
-        sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
-        cd ..
-        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-        echo "KernelSU Next Version: $KSU_VERSION"
-        echo "SusFS Version: $susfs_version"
-        
-        case "$susfs_version" in
-          "v1.5.5"|"v1.5.6"|"v1.5.7")
-            cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
-            ;;
-          "v1.5.8")
-            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
-            ;;
-          "v1.5.9")
-            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
-            
-            for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-              echo "Patching file: $file.c with fix_$file.c.patch"
-              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
-            done
-            
-            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
-            ;;
-          *)
-            echo "Invalid version: $susfs_version"
-            exit 1
-            ;;
-        esac
-        patch -p1 --forward < ksun_susfs_latest.patch || true
-        
-        cd ../common
-        
-        if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
-          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-          else
-            echo "Line already present. Skipping insert."
-          fi
-        fi
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-        
-        KERNEL_VERSION="${{ inputs.kernel_version }}"
-        MIN_VERSION="5.16"
-        
-        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
-        else
-          echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
-        fi
-        
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          echo "Patching hmbird!"
-          echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
-          echo "Patching hmbird files!"
-          cd ./kernel/sched
-          rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
-        else
-          echo "Not OPAce5Pro / OP13, skipping hmbird patch"
-        fi
+      - name: Build Kernel
+        uses: ./.github/actions
+        with:
+          model: ${{ matrix.model }}
+          soc: ${{ matrix.soc }}
+          branch: ${{ matrix.branch }}
+          manifest: ${{ matrix.manifest }}
+          android_version: ${{ matrix.android_version }}
+          kernel_version: ${{ matrix.kernel_version }}
+          ksun_branch: ${{ inputs.ksun_branch }}
+          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
 
-    - name: Apply KSUN Hooks
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform/common"
-        echo "Applying KSUN Hooks..."
-        cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-        patch -p1 < ./manual_hooks.patch
+  trigger-release:
+    needs:
+ #     - build-batch-1
+      - build-batch-2
+    runs-on: ubuntu-latest
+    if: ${{ inputs.make_release }}
+    env:
+      REPO_OWNER: ${{ github.repository_owner }}
+      REPO_NAME: ${{ github.event.repository.name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS v1.5.9 *TEST BUILD*"
+      RELEASE_NOTES: |
+        This release contains KernelSU Next and SUSFS v1.5.9
+        
+        Module: 
+        -> https://github.com/sidex15/ksu_module_susfs
 
-    - name: Apply Hide Stuff Patches
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform/common"
-        cp ../../../kernel_patches/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch
+        Non-Official Managers:
+        -> https://github.com/KernelSU-Next/KernelSU-Next        
 
-    - name: Add KernelSU-Next and SUSFS Configuration Settings
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "Adding configuration settings to gki_defconfig..."
-        
-        echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
-        
-        echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        
-        echo "CONFIG_ZRAM_DEF_COMP_LZORLE=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZO=n IOLITE=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_ZSTD=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZ4HC=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_842=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZ4=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo 'CONFIG_ZRAM_DEF_COMP="lz4"' >> ./common/arch/arm64/configs/gki_defconfig
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Add BBR Support
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
-        
-        echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
+      - name: Generate and Create New Tag
+        run: |
+            BASE_TAG="v1.5.9-r0"
+            LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name')
+            if [ -z "$LATEST_TAG" ]; then
+              LATEST_TAG="$BASE_TAG"
+            else
+              LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
+            fi
+            NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
+            echo "New tag: $NEW_TAG"
+            echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
+            git tag $NEW_TAG
+            git push origin $NEW_TAG
 
-    - name: Add TTL Target Support
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded-artifacts
 
-    - name: Other Configurations
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ env.NEW_TAG }}
+          prerelease: true
+          release_name: ${{ env.RELEASE_NAME }}
+          body: ${{ env.RELEASE_NOTES }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Disable OnePlus Kernel Module
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
-          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-        fi
-
-    - name: Run sed and perl Commands
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        
-        echo "Running sed commands..."
-        
-        sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
-        
-        sed -i 's/check_defconfig//' ./common/build.config.gki
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./external/dtc/scripts/setlocalversion
-        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
-        sed -i 's/-dirty//' ./common/scripts/setlocalversion
-        sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
-        sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
-        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
-        
-        sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
-        sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
-        
-        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
-        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
-        
-        find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
-
-    - name: Build the Kernel
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG"
-        
-        echo "Building the kernel..."
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-        
-        rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
-        rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
-        
-        BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
-        if [ "${{ inputs.soc }}" == "sun" ]; then
-          BUILD_TYPE="perf"
-          BAZEL_ARGS+=(-g)
-        fi
-        
-        (stdbuf -oL bash -c '
-          while true; do
-            echo "=== $(date) ==="
-            free -h
-            echo "======"
-            df -h
-            echo "======"
-            top -b -n 1 | head -n 15
-            echo ""
-            sleep 60
+      - name: Upload Release Assets Dynamically
+        run: |
+          for file in ./downloaded-artifacts/kernel-*/*; do
+              if [ -d "$file" ]; then
+                  continue
+              fi
+              echo "Uploading $file..."
+              gh release upload ${{ env.NEW_TAG }} "$file"
           done
-        ') &
-        MONITOR_PID=$!
-        trap "kill $MONITOR_PID" EXIT
-        
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
-          ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
-        else
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
-        fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ env.NEW_TAG }}
 
-    - name: Create ZIP Files for Different Formats
-      shell: bash
-      run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG"
-        
-        echo "Copying Image"
-        cp ./out/dist/Image ../AnyKernel3/Image
-        
-        echo "Navigating to AnyKernel3 directory..."
-        cd ../AnyKernel3
-        
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
-          patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
-        fi
-        
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
-        echo "Creating zip file $ZIP_NAME..."
-        zip -r "../$ZIP_NAME" ./*
-
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-${{ env.CONFIG }}
-        path: |
-          *.zip
-```
+      - name: Display Files Uploaded
+        run: |
+          echo "GitHub release created with the following files:"
+          ls ./downloaded-artifacts/**/*
