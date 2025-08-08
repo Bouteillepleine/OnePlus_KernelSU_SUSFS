@@ -1,4 +1,3 @@
-```yaml
 inputs:
   model:
     required: true
