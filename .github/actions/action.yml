@@ -132,6 +132,7 @@ runs:
         
         # Remove old Clang version if it exists
         rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928" || true
+        rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r536225" || true
         
         # Check for build.config.constants and update Clang version to Clang 19 (r565012 or similar)
         if [ -f "$CONFIG/kernel_platform/common/build.config.constants" ]; then
@@ -317,7 +318,7 @@ runs:
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
         
         echo "CONFIG_ZRAM_DEF_COMP_LZORLE=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZO=n IOLITE=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZRAM_DEF_COMP_LZO=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_ZRAM_DEF_COMP_ZSTD=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_ZRAM_DEF_COMP_LZ4HC=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_ZRAM_DEF_COMP_842=n" >> ./common/arch/arm64/configs/gki_defconfig
