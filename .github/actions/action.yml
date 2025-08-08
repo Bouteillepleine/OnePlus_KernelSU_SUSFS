@@ -34,34 +34,19 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Configure APTC
+    - name: Set up ccache environment
       shell: bash
       run: |
-        APT_CACHE_DIR="$HOME/apt-cache"
-        mkdir -p "$APT_CACHE_DIR"/{archives,lists/partial}
-        echo "Dir::Cache \"$APT_CACHE_DIR\";" | sudo tee /etc/apt/apt.conf.d/90user-cache
-        echo "Dir::Cache::archives \"$APT_CACHE_DIR/archives\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
-        echo "Dir::State::lists \"$APT_CACHE_DIR/lists\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
-        echo "Acquire::Check-Valid-Until \"false\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
-        echo "Acquire::Languages \"none\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
-        sudo chown -R $USER:$USER "$APT_CACHE_DIR"
-
-    - name: Set APT Cache
-      uses: actions/cache@v3
-      with:
-        path: ${{ env.HOME }}/apt-cache
-        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/action.yml') }}
-        restore-keys: |
-          ${{ runner.os }}-apt-
+        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
+        mkdir -p "$GITHUB_WORKSPACE/.ccache"
 
     - name: Install Dependencies
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
-        APT_CACHE_DIR="$HOME/apt-cache"
-        mkdir -p "$APT_CACHE_DIR/lists/partial"
-        sudo apt -o Dir::Cache="$APT_CACHE_DIR" update -qq
-        sudo DEBIAN_FRONTEND=noninteractive apt -o Dir::Cache="$APT_CACHE_DIR" install -yq --no-install-recommends \
+        sudo apt update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
           python3 git curl ccache libelf-dev \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
@@ -71,7 +56,10 @@ runs:
       uses: actions/cache@v3
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-15
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-15
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-
 
     - name: Initialize Ccache
       shell: bash
@@ -80,7 +68,6 @@ runs:
         if command -v ccache >/dev/null 2>&1; then
           if [ ! -f "$INIT_FLAG" ]; then
             echo "Initializing ccache (${{ env.CCACHE_DIR }})..."
-            mkdir -p "${{ env.CCACHE_DIR }}"
             ccache -M ${{ env.CCACHE_MAXSIZE }}
             touch "$INIT_FLAG"
             echo "✅ ccache initialization complete"
@@ -456,6 +443,7 @@ runs:
         fi
         
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
+        echo "Creating zip file $ZIP_NAME..."
         zip -r "../$ZIP_NAME" ./*
 
     - name: Upload Artifacts
