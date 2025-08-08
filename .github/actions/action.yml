@@ -29,6 +29,27 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Cache apt packages
+    - name: Cache APT Packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/apt-cache
+        key: apt-cache-${{ runner.os }}-${{ hashFiles('**/build.yml') }}
+        restore-keys: |
+          apt-cache-${{ runner.os }}-
+
+    # Cache ccache
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.ccache
+        key: ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ hashFiles('**/build.yml') }}
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-
+
     - name: Setup Build System
       shell: bash
       run: |
@@ -90,6 +111,13 @@ runs:
           build-essential libelf-dev flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip llvm clang lld
+
+    - name: Save APT Cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/apt-cache
+        key: apt-cache-${{ runner.os }}-${{ hashFiles('**/build.yml') }}
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -192,7 +220,7 @@ runs:
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
             ;;
-          "v1.5.8")
+          "v1.5.8 chair")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
@@ -361,6 +389,7 @@ runs:
           sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST-ja/ksun_branch
           sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
