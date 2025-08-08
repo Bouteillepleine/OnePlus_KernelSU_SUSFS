@@ -91,7 +91,7 @@ runs:
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
         echo "CCACHE_DIR=$HOME/.ccache_${{ inputs.model }}" >> $GITHUB_ENV
 
-    - name: 📦 Install dependencies (安装依赖)
+    - name: 📦 Install dependencies (Install dependencies)
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
@@ -104,9 +104,9 @@ runs:
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip
           
-        echo "✅ 依赖安装完成"
+        echo "✅ Dependencies installed successfully"
 
-    - name: 📥 Restore ccache (载入 机型：${{ inputs.model }}的 ccache 缓存)
+    - name: 📥 Restore ccache (Restore ccache for model: ${{ inputs.model }})
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
@@ -115,7 +115,7 @@ runs:
           ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.model }}-
           ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
 
-    - name: 📥 Init ccache (如果是第一次运行则初始化Cceche)
+    - name: 📥 Init ccache (Initialize ccache if running for the first time)
       shell: bash
       run: |
         export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -127,25 +127,25 @@ runs:
         INIT_FLAG="$CCACHE_DIR/.ccache_initialized"
         if command -v ccache >/dev/null 2>&1; then
           if [ ! -f "$INIT_FLAG" ]; then
-            echo "初始化 ccache ($CCACHE_DIR)..."
+            echo "Initializing ccache ($CCACHE_DIR)..."
             mkdir -p "$CCACHE_DIR"
             ccache -M "$CCACHE_MAXSIZE"
             touch "$INIT_FLAG"
           else
-            echo "ccache 已初始化，跳过"
+            echo "ccache already initialized, skipping"
           fi
         else
-          echo "未安装 ccache，跳过"
+          echo "ccache not installed, skipping"
         fi
 
-    - name: 📥 Install repo tool (下载repo工具)
+    - name: 📥 Install repo tool (Install repo tool)
       shell: bash
       run: |
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
         chmod a+x ~/repo
         sudo mv ~/repo /usr/local/bin/repo
 
-    - name: 📥 Initialize repo and sync (初始化repo并同步内核源码)
+    - name: 📥 Initialize repo and sync (Initialize repo and sync kernel source)
       shell: bash
       run: |
         echo "Creating folder for configuration: $CONFIG..."
@@ -164,6 +164,16 @@ runs:
         repo --trace sync -c -j$(nproc --all) --no-tags
         rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
         rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+
+    - name: Download Clang Toolchain
+      shell: bash
+      run: |
+        echo "Downloading Clang toolchain (clang-r510928)..."
+        cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts"
+        curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android14-release.tar.gz
+        tar -xzf android14-release.tar.gz
+        rm android14-release.tar.gz
+        echo "Clang toolchain downloaded and extracted"
 
     - name: Debug Kernel Source Contents
       shell: bash
@@ -188,7 +198,7 @@ runs:
         CLANG_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin"
         if [ ! -d "$CLANG_PATH" ]; then
           echo "❌ Clang toolchain (clang-r510928) not found at $CLANG_PATH"
-          echo "Please ensure the kernel manifest (${{ inputs.manifest }}) includes the prebuilt clang-r510928 toolchain or consider adding download logic."
+          echo "Download may have failed or extracted to an unexpected location. Check the 'Download Clang Toolchain' step logs."
           exit 1
         else
           echo "Clang toolchain found at $CLANG_PATH"
@@ -493,9 +503,10 @@ runs:
         echo "Please wait patiently..."
         make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 gki_defconfig > /dev/null 2>&1
         make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 Image > /dev/null 2>&1
+        
         echo "Disk space after build:"
         df -h
-          
+
     - name: Create ZIP Files
       shell: bash
       run: |
