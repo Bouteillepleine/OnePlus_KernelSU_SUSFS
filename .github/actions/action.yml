@@ -68,20 +68,22 @@ runs:
         
         df -h
         
-        # Install dependencies including Clang 19
-        echo "Installing Repo, Python, and Clang 19"
+        # Install dependencies including Clang 19 and ccache
+        echo "Installing Repo, Python, Clang 19, and ccache"
         sudo apt update
-        sudo apt install -y python3 python-is-python3 clang-19 lld-19
+        sudo apt install -y python3 python-is-python3 clang-19 lld-19 ccache
         echo "CC=clang-19" >> $GITHUB_ENV
         echo "CXX=clang++-19" >> $GITHUB_ENV
+        echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache" >> $GITHUB_ENV
         
         mkdir -p ./git-repo
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
-        # Set CONFIG Environment Variable
+        # Set CONFIG and KERNEL_TIME Environment Variables
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+        echo "KERNEL_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -130,7 +132,7 @@ runs:
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
         
-        # Remove old Clang version if it exists
+        # Remove old Clang versions if they exist
         rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928" || true
         rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r536225" || true
         
@@ -435,34 +437,39 @@ runs:
         rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
         rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
         
-        BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
-        if [ "${{ inputs.soc }}" == "sun" ]; then
-          BUILD_TYPE="perf"
-          BAZEL_ARGS+=(-g)
-        fi
+        # Set up ccache and toolchain
+        export PATH="/usr/lib/ccache:$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r565012/bin:$PATH"
+        export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
+        export CCACHE_NOHASHDIR="true"
+        export CCACHE_HARDLINK="true"
+        export CCACHE_DIR="$GITHUB_WORKSPACE/ccache"
+        export CCACHE_MAXSIZE="8G"
+        export KBUILD_BUILD_TIMESTAMP="${KERNEL_TIME}"
         
-        (stdbuf -oL bash -c '
-          while true; do
-            echo "=== $(date) ==="
-            free -h
-            echo "======"
-            df -h
-            echo "======"
-            top -b -n 1 | head -n 15
-            echo ""
-            sleep 60
-          done
-        ') &
-        MONITOR_PID=$!
-        trap "kill $MONITOR_PID" EXIT
-        
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
-          ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
+        # Use system Clang 19 if prebuilt Clang 19 is unavailable
+        if [ ! -d "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r565012" ]; then
+          echo "Prebuilt Clang 19 (r565012) not found, using system Clang 19..."
+          export PATH="/usr/lib/ccache:/usr/bin:$PATH"
+          export CC="ccache clang-19"
         else
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+          export CC="ccache clang"
         fi
+        
+        cd kernel_platform/common
+        echo "Configuring kernel with gki_defconfig..."
+        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$CC" \
+          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 gki_defconfig > /dev/null 2>&1
+        
+        echo "正在编译中...."
+        echo "编译输出已静默..."
+        echo "只要本步骤没有意外退出就是在编译中"
+        echo "请耐心等待...."
+        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$CC" \
+          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 Image > /dev/null 2>&1
 
     - name: Create ZIP Files for Different Formats
       shell: bash
@@ -471,7 +478,7 @@ runs:
         cd "$CONFIG"
         
         echo "Copying Image"
-        cp ./out/dist/Image ../AnyKernel3/Image
+        cp ./kernel_platform/common/out/arch/arm64/boot/Image ../AnyKernel3/Image
         
         echo "Navigating to AnyKernel3 directory..."
         cd ../AnyKernel3
