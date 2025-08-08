@@ -50,7 +50,7 @@ runs:
           python3 git curl ccache libelf-dev \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip
+          libxml2-utils rsync unzip lld
 
     - name: Restore Ccache
       uses: actions/cache@v3
@@ -131,6 +131,12 @@ runs:
         
         # Set build config
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+
+    - name: Verify ld.lld
+      shell: bash
+      run: |
+        which ld.lld || { echo "ld.lld not found"; exit 1; }
+        ld.lld --version
 
     - name: Clone AnyKernel3 and Dependencies
       shell: bash
@@ -410,14 +416,12 @@ runs:
           exit 0
         fi
         
-        # Corrected path - use CONFIG environment variable
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         
         export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH"
         export PATH="/usr/lib/ccache:$PATH"
         export CC="ccache clang"
         
-        # Go to kernel source directory
         cd "$KERNEL_PATH/common"
         
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
@@ -432,23 +436,23 @@ runs:
         make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
         make -j$(nproc --all) O=out $MAKE_ARGS
         ccache -s
+
+    - name: Create Kernel ZIP
+      shell: bash
+      run: |
+        cd "$CONFIG"
+        cp ./out/dist/Image ../AnyKernel3/Image
         
-      - name: Create Kernel ZIP
-        shell: bash
-        run: |
-          cd "$CONFIG"
-          cp ./out/dist/Image ../AnyKernel3/Image
-            
-          cd ../AnyKernel3
-            
-          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-           cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
-            patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
-          fi
-            
-          ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
-          echo "Creating zip file $ZIP_NAME..."
-          zip -r "../$ZIP_NAME" ./*
+        cd ../AnyKernel3
+        
+        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+          cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
+          patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
+        fi
+        
+        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
+        echo "Creating zip file $ZIP_NAME..."
+        zip -r "../$ZIP_NAME" ./*
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
