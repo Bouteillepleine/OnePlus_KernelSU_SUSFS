@@ -35,7 +35,7 @@ runs:
   using: "composite"
   steps:
     - name: Configure APTC
-      run: |
+      
         APT_CACHE_DIR="$HOME/apt-cache"
         mkdir -p "$APT_CACHE_DIR"/{archives,lists/partial}
         echo "Dir::Cache \"$APT_CACHE_DIR\";" | sudo tee /etc/apt/apt.conf.d/90user-cache
@@ -66,12 +66,14 @@ runs:
           libxml2-utils rsync unzip
 
     - name: Restore Ccache
+     shell: bash
       uses: actions/cache@v3
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-15
 
     - name: Initialize Ccache
+      shell: bash
       run: |
         INIT_FLAG="${{ env.CCACHE_DIR }}/.ccache_initialized"
         if command -v ccache >/dev/null 2>&1; then
@@ -90,6 +92,7 @@ runs:
         ccache -s
 
     - name: Install Repo Tool
+      shell: bash
       run: |
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
         chmod a+x ~/repo
@@ -468,7 +471,7 @@ runs:
           CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-          CLANG_PATH="clang-r487747c"
+          CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
           CLANG_PATH="clang-r450784e"
