@@ -1,3 +1,4 @@
+```yaml
 name: Build
 permissions:
   contents: write  # Allow writing to repository contents (for pushing tags)
@@ -490,3 +491,4 @@ runs:
         name: kernel-${{ env.CONFIG }}
         path: |
           *.zip
+```
