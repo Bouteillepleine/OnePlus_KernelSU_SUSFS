@@ -44,9 +44,10 @@ runs:
       uses: actions/cache@v4
       with:
         path: |
-          ~/.ccache
-        key: ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ hashFiles('**/build.yml') }}
+          ~/.ccache_${{ inputs.model }}
+        key: ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.model }}-${{ hashFiles('**/build.yml') }}
         restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.model }}-
           ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
           ccache-${{ runner.os }}-
 
@@ -56,11 +57,12 @@ runs:
         export DEBIAN_FRONTEND=noninteractive
         echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
         
+        echo "Disk space before setup:"
         df -h
         
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
         sudo docker image prune --all --force
-        echo "some directories deleted"
+        echo "Some directories deleted"
         
         # Remove large unwanted packages
         sudo apt-get purge -y \
@@ -74,50 +76,87 @@ runs:
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         
-        # Regex-based purges (for bulk families like mysql, php, dotnet)
+        # Regex-based purges
         sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
         
         # Clean up
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
-        echo "some packages purged"
+        echo "Some packages purged"
         
+        echo "Disk space after cleanup:"
         df -h
         
-        # Install dependencies
-        echo "Installing Repo and Python"
-        sudo apt update
-        sudo apt -y upgrade
-        sudo apt install -y python3 python-is-python3 ccache
-        
-        mkdir -p ./git-repo
-        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-        chmod a+rx ./git-repo/repo
-        echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
-        
-        # Set CONFIG Environment Variable
+        # Set CONFIG and CCACHE_DIR
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+        echo "CCACHE_DIR=$HOME/.ccache_${{ inputs.model }}" >> $GITHUB_ENV
 
-    - name: 📦 Install Dependencies
+    - name: 📦 Install dependencies (安装依赖)
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
         APT_CACHE_DIR="$HOME/apt-cache"
         mkdir -p "$APT_CACHE_DIR/lists/partial"
-        
         sudo apt -o Dir::Cache="$APT_CACHE_DIR" update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt -o Dir::Cache="$APT_CACHE_DIR" install -yq --no-install-recommends \
-          python3 p7zip-full git curl libelf-dev \
+          python3 p7zip-full git curl ccache libelf-dev \
           build-essential libelf-dev flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip llvm clang lld
+          libxml2-utils rsync unzip
+          
+        echo "✅ 依赖安装完成"
 
-    - name: Save APT Cache
+    - name: 📥 Restore ccache (载入 机型：${{ inputs.model }}的 ccache 缓存)
       uses: actions/cache@v4
       with:
-        path: |
-          ~/apt-cache
-        key: apt-cache-${{ runner.os }}-${{ hashFiles('**/build.yml') }}
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.model }}
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.model }}-
+          ccache-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+
+    - name: 📥 Init ccache (如果是第一次运行则初始化Cceche)
+      shell: bash
+      run: |
+        export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
+        export CCACHE_NOHASHDIR="true"
+        export CCACHE_HARDLINK="true"
+        export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+        export CCACHE_MAXSIZE="8G"
+
+        INIT_FLAG="$CCACHE_DIR/.ccache_initialized"
+        if command -v ccache >/dev/null 2>&1; then
+          if [ ! -f "$INIT_FLAG" ]; then
+            echo "初始化 ccache ($CCACHE_DIR)..."
+            mkdir -p "$CCACHE_DIR"
+            ccache -M "$CCACHE_MAXSIZE"
+            touch "$INIT_FLAG"
+          else
+            echo "ccache 已初始化，跳过"
+          fi
+        else
+          echo "未安装 ccache，跳过"
+        fi
+
+    - name: 📥 Install repo tool (下载repo工具)
+      shell: bash
+      run: |
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+        chmod a+x ~/repo
+        sudo mv ~/repo /usr/local/bin/repo
+
+    - name: Verify Clang Toolchain
+      shell: bash
+      run: |
+        echo "Checking for Clang toolchain..."
+        CLANG_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin"
+        if [ ! -d "$CLANG_PATH" ]; then
+          echo "❌ Clang toolchain not found at $CLANG_PATH"
+          exit 1
+        else
+          echo "Clang toolchain found at $CLANG_PATH"
+          echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
+        fi
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -131,47 +170,41 @@ runs:
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
         
-        # Debug print the branches
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        # Clone repositories using the branch names
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
         
-        # Clone the repo with all branches and history
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
         
-        # Try to check if TARGET_REF is a valid branch or tag
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          # It's a branch or commit hash
           git checkout "$SUSFS_BRANCH"
         else
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
 
-    - name: Initialize and Sync Kernel Source
+    - name: 📥 Initialize repo and sync (初始化repo并同步内核源码)
       shell: bash
       run: |
         echo "Creating folder for configuration: $CONFIG..."
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         
-        # Initialize and sync kernel source
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         
-        # Sync repo and apply patches
-        $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        repo --trace sync -c -j$(nproc --all) --no-tags
+        rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+        rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
     - name: Add KernelSU Next
       shell: bash
@@ -197,7 +230,6 @@ runs:
         
         echo "Applying SUSFS patches..."
         
-        # Copy SUSFS patches
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -383,7 +415,7 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-        if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
+        if [ "${{ inputs.android_version }}" = "android14" ]; then
           sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
@@ -395,31 +427,6 @@ runs:
           sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-        fi
-
-    - name: Download Clang Toolchain if Missing
-      shell: bash
-      run: |
-        echo "Checking for Clang toolchain..."
-        CLANG_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/bin"
-        if [ ! -d "$CLANG_PATH" ]; then
-          echo "Clang toolchain not found at $CLANG_PATH. Downloading..."
-          mkdir -p "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86"
-          cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86"
-          curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master.tar.gz
-          tar -xzf master.tar.gz
-          rm master.tar.gz
-          # Adjust CLANG_PATH to point to the extracted directory
-          CLANG_DIR=$(find . -type d -name "clang-*" | head -n 1)
-          if [ -z "$CLANG_DIR" ]; then
-            echo "❌ Failed to find extracted Clang directory"
-            exit 1
-          fi
-          mv "$CLANG_DIR" clang
-          echo "CLANG_PATH=$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang/bin" >> $GITHUB_ENV
-        else
-          echo "Clang toolchain found at $CLANG_PATH"
-          echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
         fi
 
     - name: Run sed and perl Commands
@@ -452,84 +459,26 @@ runs:
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
 
-    - name: Build the Kernel with Clang
+    - name: 🔨 Build Kernel (构建内核)
       shell: bash
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform/common"
-        
-        echo "Building the kernel with Clang..."
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-        
-        # Setup environment variables
-        export PATH="/usr/lib/ccache:$PATH"
-        export KBUILD_BUILD_TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-        export ARCH=arm64
-        export SUBARCH=arm64
-        
-        # Setup ccache
+        export PATH="/usr/lib/ccache:${{ env.CLANG_PATH }}:$PATH"
         export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
         export CCACHE_NOHASHDIR="true"
         export CCACHE_HARDLINK="true"
-        export CCACHE_DIR="$HOME/.ccache"
+        export CCACHE_DIR="${{ env.CCACHE_DIR }}"
         export CCACHE_MAXSIZE="8G"
+        export KBUILD_BUILD_TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        cd "$CONFIG/kernel_platform/common"
+        echo "正在编译中...."
+        echo "编译输出已静默..."
+        echo "只要本步骤没有意外退出就是在编译中"
+        echo "请耐心等待...."
+        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 gki_defconfig > /dev/null 2>&1
+        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 Image > /dev/null 2>&1
         
-        # Create ccache directory
-        mkdir -p "$CCACHE_DIR"
-        ccache -M $CCACHE_MAXSIZE
-        ccache -z  # Reset stats
-        
-        # Setup toolchain paths
-        export CLANG_PATH="${{ env.CLANG_PATH }}"
-        export TOOLCHAIN_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin"
-        
-        # Verify toolchain existence
-        if [ ! -d "$CLANG_PATH" ]; then
-          echo "❌ Clang toolchain not found at $CLANG_PATH"
-          exit 1
-        fi
-        
-        if [ ! -d "$TOOLCHAIN_PATH" ]; then
-          echo "❌ GCC toolchain not found at $TOOLCHAIN_PATH"
-          exit 1
-        fi
-        
-        export PATH="$CLANG_PATH:$TOOLCHAIN_PATH:$PATH"
-        
-        # Setup build variables
-        export CLANG_TRIPLE="aarch64-linux-gnu-"
-        export CROSS_COMPILE="aarch64-linux-android-"
-        export CROSS_COMPILE_ARM32="arm-linux-androideabi-"
-        export LLVM=1
-        
-        # Resource monitoring
-        (stdbuf -oL bash -c '
-          while true; do
-            echo "=== $(date) ==="
-            free -h
-            echo "======"
-            df -h
-            echo "======"
-            top -b -n 1 | head -n 15
-            echo "======"
-            ccache -s
-            echo ""
-            sleep 60
-          done
-        ') &
-        MONITOR_PID=$!
-        trap "kill $MONITOR_PID" EXIT
-        
-        # Build configuration
-        make O=out ARCH=arm64 CC="ccache clang" LD=ld.lld gki_defconfig
-        
-        # Build kernel
-        make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" LD=ld.lld \
-          CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 \
-          CLANG_TRIPLE=$CLANG_TRIPLE KCFLAGS="-O2 -Wno-error"
-        
-        # Show ccache stats
-        ccache -s
+        echo "Disk space after build:"
+        df -h
 
     - name: Create ZIP Files
       shell: bash
