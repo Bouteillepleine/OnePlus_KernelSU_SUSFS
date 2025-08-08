@@ -1,3 +1,4 @@
+```yaml
 inputs:
   model:
     required: true
@@ -145,13 +146,50 @@ runs:
         chmod a+x ~/repo
         sudo mv ~/repo /usr/local/bin/repo
 
+    - name: 📥 Initialize repo and sync (初始化repo并同步内核源码)
+      shell: bash
+      run: |
+        echo "Creating folder for configuration: $CONFIG..."
+        mkdir -p "$CONFIG"
+        cd "$CONFIG"
+        
+        echo "Initializing and syncing kernel source..."
+        if [[ "${{ inputs.manifest }}" == https://* ]]; then
+          mkdir -p .repo/manifests
+          curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        else
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        fi
+        
+        repo --trace sync -c -j$(nproc --all) --no-tags
+        rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+        rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+
+    - name: Debug Kernel Source Contents
+      shell: bash
+      run: |
+        echo "Inspecting kernel source directory: $GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        if [ -d "$GITHUB_WORKSPACE/$CONFIG/kernel_platform" ]; then
+          ls -la "$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+          echo "Checking for prebuilts directory..."
+          if [ -d "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts" ]; then
+            find "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts" -maxdepth 3 -type d
+          else
+            echo "❌ Prebuilts directory not found at $GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts"
+          fi
+        else
+          echo "❌ Kernel platform directory not found at $GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        fi
+
     - name: Verify Clang Toolchain
       shell: bash
       run: |
         echo "Checking for Clang toolchain..."
         CLANG_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin"
         if [ ! -d "$CLANG_PATH" ]; then
-          echo "❌ Clang toolchain not found at $CLANG_PATH"
+          echo "❌ Clang toolchain (clang-r510928) not found at $CLANG_PATH"
+          echo "Please ensure the kernel manifest (${{ inputs.manifest }}) includes the prebuilt clang-r510928 toolchain or consider adding download logic."
           exit 1
         else
           echo "Clang toolchain found at $CLANG_PATH"
@@ -185,26 +223,6 @@ runs:
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
-
-    - name: 📥 Initialize repo and sync (初始化repo并同步内核源码)
-      shell: bash
-      run: |
-        echo "Creating folder for configuration: $CONFIG..."
-        mkdir -p "$CONFIG"
-        cd "$CONFIG"
-        
-        echo "Initializing and syncing kernel source..."
-        if [[ "${{ inputs.manifest }}" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        fi
-        
-        repo --trace sync -c -j$(nproc --all) --no-tags
-        rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
-        rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
     - name: Add KernelSU Next
       shell: bash
@@ -459,7 +477,7 @@ runs:
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
 
-    - name: 🔨 Build Kernel (构建内核)
+    - name: 🔨 Build Kernel (Build Kernel)
       shell: bash
       run: |
         export PATH="/usr/lib/ccache:${{ env.CLANG_PATH }}:$PATH"
@@ -470,16 +488,15 @@ runs:
         export CCACHE_MAXSIZE="8G"
         export KBUILD_BUILD_TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         cd "$CONFIG/kernel_platform/common"
-        echo "正在编译中...."
-        echo "编译输出已静默..."
-        echo "只要本步骤没有意外退出就是在编译中"
-        echo "请耐心等待...."
+        echo "Compiling..."
+        echo "Compilation output has been silenced..."
+        echo "As long as this step does not exit unexpectedly, compilation is in progress"
+        echo "Please wait patiently..."
         make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 gki_defconfig > /dev/null 2>&1
         make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 Image > /dev/null 2>&1
-        
         echo "Disk space after build:"
         df -h
-
+          
     - name: Create ZIP Files
       shell: bash
       run: |
