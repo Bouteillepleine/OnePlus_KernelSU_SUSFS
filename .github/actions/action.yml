@@ -397,6 +397,31 @@ runs:
           sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
         fi
 
+    - name: Download Clang Toolchain if Missing
+      shell: bash
+      run: |
+        echo "Checking for Clang toolchain..."
+        CLANG_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/bin"
+        if [ ! -d "$CLANG_PATH" ]; then
+          echo "Clang toolchain not found at $CLANG_PATH. Downloading..."
+          mkdir -p "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86"
+          cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86"
+          curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master.tar.gz
+          tar -xzf master.tar.gz
+          rm master.tar.gz
+          # Adjust CLANG_PATH to point to the extracted directory
+          CLANG_DIR=$(find . -type d -name "clang-*" | head -n 1)
+          if [ -z "$CLANG_DIR" ]; then
+            echo "❌ Failed to find extracted Clang directory"
+            exit 1
+          fi
+          mv "$CLANG_DIR" clang
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang/bin" >> $GITHUB_ENV
+        else
+          echo "Clang toolchain found at $CLANG_PATH"
+          echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
+        fi
+
     - name: Run sed and perl Commands
       shell: bash
       run: |
@@ -455,7 +480,7 @@ runs:
         ccache -z  # Reset stats
         
         # Setup toolchain paths
-        export CLANG_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/bin"
+        export CLANG_PATH="${{ env.CLANG_PATH }}"
         export TOOLCHAIN_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin"
         
         # Verify toolchain existence
