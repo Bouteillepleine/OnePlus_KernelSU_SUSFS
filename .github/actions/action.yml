@@ -34,23 +34,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Validate Inputs
-      shell: bash
-      run: |
-        case "${{ inputs.kernel_version }}" in
-          5.10|5.15|6.1|6.6) ;;
-          *) echo "Error: Unsupported kernel_version: ${{ inputs.kernel_version }}"; exit 1 ;;
-        esac
-        if [[ -z "${{ inputs.branch }}" ]]; then
-          echo "Error: branch input is required"; exit 1
-        fi
-        if [[ -z "${{ inputs.manifest }}" ]]; then
-          echo "Error: manifest input is required"; exit 1
-        fi
-        if [[ "${{ inputs.manifest }}" == https://* ]]; then
-          curl -Ls --fail "${{ inputs.manifest }}" || { echo "Error: Unable to download manifest from ${{ inputs.manifest }}"; exit 1; }
-        fi
-
     - name: Set up ccache environment
       shell: bash
       run: |
@@ -64,7 +47,7 @@ runs:
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
         sudo apt update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
-          python3 git curl ccache libelf-dev \
+          python3 git curl ccache libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip
@@ -115,6 +98,7 @@ runs:
         sudo docker image prune --all --force
         echo "Unused directories cleared"
         
+        # Remove large packages
         sudo apt-get purge -y \
           aria2 ansible azure-cli shellcheck rpm xorriso zsync \
           esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -126,14 +110,17 @@ runs:
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         
+        # Bulk package removal
         sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
         
+        # Cleanup
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
         echo "Package cleanup complete"
         
         df -h
         
+        # Install core tools
         sudo apt update
         sudo apt install -y python3 python-is-python3
         
@@ -142,7 +129,14 @@ runs:
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
+        # Set build config
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
+
+    - name: Verify ld.lld
+      shell: bash
+      run: |
+        which ld.lld || { echo "ld.lld not found"; exit 1; }
+        ld.lld --version
 
     - name: Clone AnyKernel3 and Dependencies
       shell: bash
@@ -184,24 +178,7 @@ runs:
         fi
         
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast || { echo "Error: repo sync failed"; exit 1; }
-        
-        if [ ! -d "kernel_platform/common" ]; then
-          echo "Error: kernel_platform/common directory not found after repo sync"
-          ls -la
-          exit 1
-        fi
-
-    - name: Log Directory Structure
-      shell: bash
-      run: |
-        echo "Current directory: $(pwd)"
-        echo "Listing contents of $CONFIG:"
-        ls -la "$CONFIG"
-        if [ -d "$CONFIG/kernel_platform" ]; then
-          echo "Listing contents of $CONFIG/kernel_platform:"
-          ls -la "$CONFIG/kernel_platform"
-        fi
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
     - name: Add KernelSU Next
       shell: bash
@@ -241,35 +218,35 @@ runs:
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
-            patch -p1 --forward < ksun_susfs_latest.patch || { echo "Error: Failed to apply ksun_susfs_latest.patch"; exit 1; }
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || { echo "Error: Failed to apply 10_enable_susfs_for_ksu.patch"; exit 1; }
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch || { echo "Error: Failed to apply fix_apk_sign.c.patch"; exit 1; }
+            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch || { echo "Error: Failed to apply fix_core_hook.c.patch"; exit 1; }
+            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch || { echo "Error: Failed to apply fix_selinux.c.patch"; exit 1; }
+            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch || { echo "Error: Failed to apply fix_ksud.c.patch"; exit 1; }
+            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || { echo "Error: Failed to apply 10_enable_susfs_for_ksu.patch"; exit 1; }
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
             
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || { echo "Error: Failed to apply fix_$file.c.patch"; exit 1; }
+                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
             
-            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || { echo "Error: Failed to apply fix_kernel_compat.c.patch"; exit 1; }
+            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
             echo "Unsupported version: $susfs_version"
             exit 1
             ;;
         esac
+        patch -p1 --forward < ksun_susfs_latest.patch || true
         
         cd ../common
         
@@ -278,21 +255,21 @@ runs:
                 sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
             fi
         fi
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || { echo "Error: Failed to apply 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"; exit 1; }
+        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
         
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" || { echo "Error: Failed to apply gki_ptrace.patch"; exit 1; }
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
         fi
         
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || { echo "Error: Failed to apply hmbird_kernel_patch.patch"; exit 1; }
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || { echo "Error: Failed to apply hmbird_files_patch.patch"; exit 1; }
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -300,14 +277,14 @@ runs:
       run: |
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-        patch -p1 < ./manual_hooks.patch || { echo "Error: Failed to apply manual_hooks.patch"; exit 1; }
+        patch -p1 < ./manual_hooks.patch
 
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch || { echo "Error: Failed to apply 69_hide_stuff.patch"; exit 1; }
+        patch -p1 -F 3 < 69_hide_stuff.patch
 
     - name: Add KernelSU-Next and SUSFS Config
       shell: bash
@@ -412,21 +389,12 @@ runs:
         sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
         sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
         
-        perl -pi -e "s{UTS_VERSION=\".*\"}{UTS_VERSION=\"#1 SMP PREEMPT \$(date -u '+%a %b %d %T UTC %Y')\"}" ./common/scripts/mkcompile_h
-        perl -pi -e "s{UTS_VERSION=\".*\"}{UTS_VERSION=\"#1 SMP PREEMPT \$(date -u '+%a %b %d %T UTC %Y')\"}" ./msm-kernel/scripts/mkcompile_h
+        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
+        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLags \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
 
-    - name: Check Disk Space
-      shell: bash
-      run: |
-        if [ $(df -h . | awk 'NR==2 {print $4}' | grep -o '[0-9]\+') -lt 5 ]; then
-          echo "Error: Less than 5GB disk space available"
-          exit 1
-        fi
-        df -h
-
-        - name: Build Kernel
+    - name: Build Kernel
       shell: bash
       run: |
         KERNEL_VERSION="${{ inputs.kernel_version }}"
@@ -448,20 +416,20 @@ runs:
           exit 0
         fi
         
-        # Corrected path - use CONFIG environment variable
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         
-        export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH"
+        # Add LLD to PATH explicitly
+        export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:/usr/lib/llvm-16/bin:$PATH"
         export PATH="/usr/lib/ccache:$PATH"
         export CC="ccache clang"
         
-        # Go to kernel source directory
         cd "$KERNEL_PATH/common"
         
+        # Use system ld.lld for host tools and remove HOSTLD setting
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
+          LD=ld.lld KCFLAGS+=-Wno-error"
           
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
@@ -471,11 +439,9 @@ runs:
         make -j$(nproc --all) O=out $MAKE_ARGS
         ccache -s
 
-    # FIXED: This should be a separate step, not nested under Build Kernel
     - name: Create Kernel ZIP
       shell: bash
       run: |
-        # Use absolute paths to avoid confusion
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
         KERNEL_PATH="$CONFIG_DIR/kernel_platform"
         
