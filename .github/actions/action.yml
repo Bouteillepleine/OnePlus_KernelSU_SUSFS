@@ -68,22 +68,31 @@ runs:
         
         df -h
         
-        # Install dependencies including Clang 19 and ccache
-        echo "Installing Repo, Python, Clang 19, and ccache"
+        # Install dependencies
+        echo "Installing Repo and Python"
         sudo apt update
-        sudo apt install -y python3 python-is-python3 clang-19 lld-19 ccache
-        echo "CC=clang-19" >> $GITHUB_ENV
-        echo "CXX=clang++-19" >> $GITHUB_ENV
-        echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache" >> $GITHUB_ENV
+        sudo apt install -y python3 python-is-python3
         
         mkdir -p ./git-repo
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         
-        # Set CONFIG and KERNEL_TIME Environment Variables
+        # Set CONFIG Environment Variable
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
-        echo "KERNEL_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
+
+    - name: 📦 Install dependencies
+      shell: bash
+      run: |
+        sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
+        APT_CACHE_DIR="$HOME/apt-cache"
+        mkdir -p "$APT_CACHE_DIR/lists/partial"
+        sudo apt -o Dir::Cache="$APT_CACHE_DIR" update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt -o Dir::Cache="$APT_CACHE_DIR" install -yq --no-install-recommends \
+          python3 p7zip-full git curl ccache libelf-dev \
+          build-essential libelf-dev flex bison libssl-dev \
+          libncurses-dev liblz4-tool zlib1g-dev \
+          libxml2-utils rsync unzip
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -97,16 +106,21 @@ runs:
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
         
+        # Debug print the branches
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
+        # Clone repositories using the branch names
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
         
+        # Clone the repo with all branches and history (can optimize later if needed)
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
         
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
+        # Try to check if TARGET_REF is a valid branch or tag
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
+          # It's a branch or commit hash
           git checkout "$SUSFS_BRANCH"
         else
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
@@ -120,6 +134,7 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         
+        # Initialize and sync kernel source
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
@@ -129,39 +144,9 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         
+        # Sync repo and apply patches
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
-        
-        # Remove old Clang versions if they exist
-        rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928" || true
-        rm -rf "$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r536225" || true
-        
-        # Check for build.config.constants and update Clang version to Clang 19 (r565012 or similar)
-        if [ -f "$CONFIG/kernel_platform/common/build.config.constants" ]; then
-          echo "Found build.config.constants, updating Clang version to r565012 (Clang 19)..."
-          sed -i 's/r510928/r565012/g' "$CONFIG/kernel_platform/common/build.config.constants"
-          sed -i 's/r536225/r565012/g' "$CONFIG/kernel_platform/common/build.config.constants"
-        else
-          echo "Warning: build.config.constants not found in $CONFIG/kernel_platform/common/"
-          constants_file=$(find "$CONFIG/kernel_platform" -name "build.config.constants" 2>/dev/null)
-          if [ -n "$constants_file" ]; then
-            echo "Found build.config.constants at $constants_file, updating Clang version to r565012 (Clang 19)..."
-            sed -i 's/r510928/r565012/g' "$constants_file"
-            sed -i 's/r536225/r565012/g' "$constants_file"
-          else
-            echo "Warning: build.config.constants not found in kernel_platform. Using system Clang 19."
-          fi
-        fi
-        
-        echo "DEFCONFIG=$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
-        
-        # Debug: List contents of common directory and Clang version
-        echo "Listing contents of $CONFIG/kernel_platform/common/"
-        ls -l "$CONFIG/kernel_platform/common/" || true
-        clang-19 --version
-        # Dump manifest for debugging
-        $REPO manifest -r > manifest_output.xml
-        echo "Manifest dumped to manifest_output.xml for debugging"
 
     - name: Add KernelSU Next
       shell: bash
@@ -187,6 +172,7 @@ runs:
         
         echo "Applying SUSFS patches..."
         
+        # Copy SUSFS patches
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -211,42 +197,44 @@ runs:
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
+            patch -p1 --ahead --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
+            patch -p1 --ahead --fuzz=3 < fix_apk_sign.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+            patch -p1 --ahead --fuzz=3 < fix_core_hook.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
+            patch -p1 --ahead --fuzz=3 < fix_selinux.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
+            patch -p1 --ahead --fuzz=3 < fix_ksud.c.patch
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+            patch -p1 --ahead < 10_enable_susfs_for_ksu.patch  || true
             
-            for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-              echo "Patching file: $file.c with fix_$file.c.patch"
-              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+            for file in $(find ./kernel -maxdepth 2 -name *.rej -printf "%f\n" | cut -d'.' -f1); do
+                echo "Patching file: $file.c with fix_$file.c.patch"
+                patch -p1 --ahead < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
             
-            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+            # Fix build errors (no rejects; Still giving errors)
+            patch -p1 --ahead < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
             echo "Invalid version: $susfs_version"
             exit 1
             ;;
         esac
-        patch -p1 --forward < ksun_susfs_latest.patch || true
+        patch -p1 --ahead < ksun_susfs_latest.patch || true
         
+        # Change to common directory and apply SUSFS patch
         cd ../common
         
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
-          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-          else
-            echo "Line already present. Skipping insert."
-          fi
+            if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+                sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
+            else
+                echo "Line already present. Skipping insert."
+            fi
         fi
         patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
         
@@ -277,7 +265,7 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
-        echo "Applying KSUN Hooks..."
+        echo Upper KSUN Hooks...
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
         patch -p1 < ./manual_hooks.patch
 
@@ -286,6 +274,7 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
+        # Apply additional patch
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
 
@@ -297,8 +286,11 @@ runs:
         
         echo "Adding configuration settings to gki_defconfig..."
         
+        # Add KSU configuration settings
         echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
+        # Add SUSFS configuration settings
         echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -316,16 +308,9 @@ runs:
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
         
+        # Add additional tmpfs config setting
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        
-        echo "CONFIG_ZRAM_DEF_COMP_LZORLE=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZO=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_ZSTD=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZ4HC=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_842=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_LZ4=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo 'CONFIG_ZRAM_DEF_COMP="lz4"' >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Add BBR Support
       shell: bash
@@ -337,7 +322,7 @@ runs:
         echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/ARM64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
         
         echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -361,17 +346,18 @@ runs:
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    - name: Other Configurations
+    - name: Others configurations
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-        
+    
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig                    
+        # lto thin，O2 
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig          
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -382,6 +368,7 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
+          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
@@ -419,57 +406,33 @@ runs:
         
         sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
         sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
-        
+       
+        # Run perl command to modify UTS_VERSION
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
 
-    - name: Build the Kernel
+    - name: 🔨 Build Kernel (构建内核)
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG"
+        cd "$CONFIG/kernel_platform/common"
         
-        echo "Building the kernel..."
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-        
-        rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
-        rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
-        
-        # Set up ccache and toolchain
-        export PATH="/usr/lib/ccache:$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r565012/bin:$PATH"
+        export PATH="/usr/lib/ccache:$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
         export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
         export CCACHE_NOHASHDIR="true"
         export CCACHE_HARDLINK="true"
-        export CCACHE_DIR="$GITHUB_WORKSPACE/ccache"
+        export CCACHE_DIR="${{ env.CCACHE_DIR }}"
         export CCACHE_MAXSIZE="8G"
         export KBUILD_BUILD_TIMESTAMP="${KERNEL_TIME}"
         
-        # Use system Clang 19 if prebuilt Clang 19 is unavailable
-        if [ ! -d "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/prebuilts/clang/host/linux-x86/clang-r565012" ]; then
-          echo "Prebuilt Clang 19 (r565012) not found, using system Clang 19..."
-          export PATH="/usr/lib/ccache:/usr/bin:$PATH"
-          export CC="ccache clang-19"
-        else
-          export CC="ccache clang"
-        fi
-        
-        cd kernel_platform/common
-        echo "Configuring kernel with gki_defconfig..."
-        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$CC" \
-          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 gki_defconfig > /dev/null 2>&1
-        
-        echo "正在编译中...."
-        echo "编译输出已静默..."
-        echo "只要本步骤没有意外退出就是在编译中"
-        echo "请耐心等待...."
-        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$CC" \
-          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 Image > /dev/null 2>&1
+        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 gki_defconfig > /dev/null 2>&1
+        echo "Compiling in progress..."
+        echo "Compilation output has been silenced..."
+        echo "As long as this step does not exit unexpectedly, it is compiling."
+        echo "Please wait patiently..."
+        make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 Image > /dev/null 2>&1
 
     - name: Create ZIP Files for Different Formats
       shell: bash
@@ -478,7 +441,7 @@ runs:
         cd "$CONFIG"
         
         echo "Copying Image"
-        cp ./kernel_platform/common/out/arch/arm64/boot/Image ../AnyKernel3/Image
+        cp ./kernel_platform/common/out/Image ../AnyKernel3/Image
         
         echo "Navigating to AnyKernel3 directory..."
         cd ../AnyKernel3
@@ -488,6 +451,7 @@ runs:
           patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
         fi
         
+        # Zip the files in the AnyKernel3 directory with a new naming convention
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
         zip -r "../$ZIP_NAME" ./*
