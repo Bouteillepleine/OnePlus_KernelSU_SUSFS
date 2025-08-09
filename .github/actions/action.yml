@@ -537,5 +537,6 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.CONFIG }}-kernel
-        path: ${{ env.CONFIG }}/artifacts/   
-   
+        path: ${{ env.CONFIG }}/artifacts/
+        if-no-files-found: warn
+     
