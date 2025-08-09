@@ -495,6 +495,51 @@ runs:
         make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
         ccache -s
 
+    - name: Build Kernel
+      shell: bash
+      run: |
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          CLANG_PATH="clang-r510928"
+          CLANG_DIR="prebuilts"
+        elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
+          CLANG_PATH="clang-r487747c"
+          CLANG_DIR="prebuilts"
+        elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
+          CLANG_PATH="clang-r450784e"
+          CLANG_DIR="prebuilts"
+        elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
+          CLANG_PATH="clang-r416183b"
+          CLANG_DIR="prebuilts-master"
+          USE_LLVM_IAS=true
+        else
+          echo "fallback=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        
+        # Add LLD to PATH explicitly
+        export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:/usr/lib/llvm-16/bin:$PATH"
+        export PATH="/usr/lib/ccache:$PATH"
+        export CC="ccache clang"
+        
+        cd "$KERNEL_PATH/common" || exit 1
+        
+        # Use system ld.lld for host tools
+        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
+          
+        if [[ -v USE_LLVM_IAS ]]; then
+          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+        fi
+        
+        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
+        ccache -s
+
     - name: Create Kernel ZIP
       shell: bash
       run: |
