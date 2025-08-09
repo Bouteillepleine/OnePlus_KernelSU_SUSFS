@@ -1,7 +1,7 @@
 name: Build
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 inputs:
   model:
@@ -54,12 +54,12 @@ runs:
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
-        sudo apt update -qq
+        sudo apt update -qq >/dev/null 2>&1
         sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
           python3 git curl ccache libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip
+          libxml2-utils rsync unzip >/dev/null 2>&1
 
     - name: Restore Ccache
       uses: actions/cache@v3
@@ -107,7 +107,6 @@ runs:
         sudo docker image prune --all --force
         echo "Unused directories cleared"
         
-        # Remove large packages
         sudo apt-get purge -y \
           aria2 ansible azure-cli shellcheck rpm xorriso zsync \
           esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -118,51 +117,46 @@ runs:
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         
-        # Bulk package removal
         sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
         
-        # Cleanup
-        sudo apt-get autoremove -y
-        sudo apt-get autoclean -y
+        sudo apt-get autoremove -y >/dev/null 2>&1
+        sudo apt-get autoclean -y >/dev/null 2>&1
         echo "Package cleanup complete"
         
         df -h
         
-        # Install core tools
-        sudo apt update
-        sudo apt install -y python3 python-is-python3
+        sudo apt update >/dev/null 2>&1
+        sudo apt install -y python3 python-is-python3 >/dev/null 2>&1
         
         mkdir -p ./git-repo
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> "$GITHUB_ENV"
         
-        # Set build config
         echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
 
-    - name: Clone Dependencies
+    - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
-        echo "Cloning dependencies..."
+        echo "Cloning AnyKernel3 and other dependencies..."
         
+        ANYKERNEL_BRANCH="gki-2.0"
         if [[ -z "${{ inputs.susfs_branch }}" ]]; then
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         else
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
         
-        # Debug print the branch
+        # Debug print the branches
+        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        # Clone repositories
-        git clone https://github.com/TheWildJames/kernel_patches.git || { echo "Failed to clone kernel_patches"; exit 1; }
+        # Clone repositories using the branch names
+        git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone https://github.com/TheWildJames/kernel_patches.git
         
-        # Clone the SukiSU Ultra repository, with or without authentication
-        if [[ -n "${{ inputs.github_token }}" ]]; then
-          git clone https://${{ inputs.github_token }}@github.com/sidex15/susfs4ksu.git || { echo "Failed to clone susfs4ksu with token. Ensure the repository exists and the token has access."; exit 1; }
-        else
-          git clone https://github.com/sidex15/susfs4ksu.git || { echo "Failed to clone susfs4ksu. Ensure the repository is public and exists."; exit 1; }
-        fi
+        # Clone the repo with all branches and history (can optimize later if needed)
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
         
         # Try to check if TARGET_REF is a valid branch or tag
@@ -180,17 +174,15 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         
-        # Initialize and sync kernel source
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8550 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         
-        # Sync repo
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
@@ -218,7 +210,6 @@ runs:
         
         echo "Menerapkan patch SUSFS..."
         
-        # Copy SUSFS patches
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -330,11 +321,9 @@ runs:
         
         echo "Adding configuration settings to gki_defconfig..."
         
-        # Add SukiSU Ultra configuration settings
         echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
         
-        # Add SUSFS configuration settings
         echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -352,7 +341,6 @@ runs:
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
         
-        # Add additional tmpfs config setting
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -381,7 +369,7 @@ runs:
         echo "Adding configuration settings to gki_defconfig..."
         echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig    
 
     - name: Run sed and perl Commands
       shell: bash
@@ -395,7 +383,6 @@ runs:
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         
-        # Run sed commands for modifications
         sed -i 's/check_defconfig//' ./common/build.config.gki
         sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion
         sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion
@@ -409,7 +396,6 @@ runs:
         sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
         sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
          
-        # Run perl command to modify UTS_VERSION
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
         
@@ -446,45 +432,37 @@ runs:
         cd "$KERNEL_PATH/common" || exit 1
         
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
-          
-        if [[ -v USE_LLVM_IAS ]]; then
-          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73/bin/rustc \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          LD=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin/ld.lld"
+        
+        if [[ -n "$USE_LLVM_IAS" ]]; then
+          MAKE_ARGS="$MAKE_ARGS LLVM_IAS=1"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
-        ccache -s
+        make $MAKE_ARGS O=out -j$(nproc) gki_defconfig
+        make $MAKE_ARGS O=out -j$(nproc)
+        
+        if [ $? -ne 0 ]; then
+          echo "Kernel build failed!"
+          exit 1
+        fi
+        
+        echo "Kernel build completed successfully"
 
-    - name: Create Kernel ZIP
+    - name: Package Kernel with AnyKernel3
       shell: bash
       run: |
-        CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
-        KERNEL_PATH="$CONFIG_DIR/kernel_platform"
+        echo "Packaging kernel with AnyKernel3..."
+        cd "$GITHUB_WORKSPACE"
         
-        # Clone AnyKernel3
-        git clone https://github.com/Numbersf/AnyKernel3 --depth=1
-        rm -rf ./AnyKernel3/.git
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"
         
-        cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+        cp "$KERNEL_PATH/out/arch/arm64/boot/Image" "$ANYKERNEL_DIR/"
         
-        cd "$GITHUB_WORKSPACE/AnyKernel3"
+        cd "$ANYKERNEL_DIR"
+        zip -r9 "kernel-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.zip" . -x .git* *.md
+        mv "kernel-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.zip" "$GITHUB_WORKSPACE"
         
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
-          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
-        fi
-        
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_SukiSUUltra_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        mkdir -p "$ARTIFACTS_DIR"
-        echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
-        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-${{ env.CONFIG }}
-        path: ${{ env.CONFIG }}/artifacts/*.zip
+        echo "Kernel package created: kernel-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.zip"
