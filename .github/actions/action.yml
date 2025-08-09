@@ -35,6 +35,10 @@ inputs:
     description: "susfs-main/⚡Ultra⚡"
     required: false
     default: "susfs-main/⚡Ultra⚡"
+  github_token:
+    description: "GitHub token for repository access"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -153,8 +157,12 @@ runs:
         # Clone repositories
         git clone https://github.com/TheWildJames/kernel_patches.git || { echo "Failed to clone kernel_patches"; exit 1; }
         
-        # Clone the SukiSU Ultra repository with authentication
-        git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/sidex15/susfs4ksu.git || { echo "Failed to clone susfs4ksu. Ensure the repository exists and is accessible."; exit 1; }
+        # Clone the SukiSU Ultra repository, with or without authentication
+        if [[ -n "${{ inputs.github_token }}" ]]; then
+          git clone https://${{ inputs.github_token }}@github.com/sidex15/susfs4ksu.git || { echo "Failed to clone susfs4ksu with token. Ensure the repository exists and the token has access."; exit 1; }
+        else
+          git clone https://github.com/sidex15/susfs4ksu.git || { echo "Failed to clone susfs4ksu. Ensure the repository is public and exists."; exit 1; }
+        fi
         cd susfs4ksu || exit 1
         
         # Try to check if TARGET_REF is a valid branch or tag
