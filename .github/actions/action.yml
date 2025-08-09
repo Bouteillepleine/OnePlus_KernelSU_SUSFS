@@ -34,50 +34,16 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Set up ccache environment
-      shell: bash
-      run: |
-        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
-        echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
-        mkdir -p "$GITHUB_WORKSPACE/.ccache"
-
     - name: Install Dependencies
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
         sudo apt update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
-          python3 git curl ccache libelf-dev lld \
+          python3 git curl libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip
-
-    - name: Restore Ccache
-      uses: actions/cache@v3
-      with:
-        path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-15
-        restore-keys: |
-          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
-          ccache-${{ runner.os }}-
-
-    - name: Initialize Ccache
-      shell: bash
-      run: |
-        INIT_FLAG="${{ env.CCACHE_DIR }}/.ccache_initialized"
-        if command -v ccache >/dev/null 2>&1; then
-          if [ ! -f "$INIT_FLAG" ]; then
-            echo "Initializing ccache (${{ env.CCACHE_DIR }})..."
-            ccache -M ${{ env.CCACHE_MAXSIZE }}
-            touch "$INIT_FLAG"
-            echo "ccache initialization complete"
-          else
-            echo "ccache already initialized, skipping"
-          fi
-        else
-          echo "ccache not installed, skipping"
-        fi
-        ccache -s
 
     - name: Install Repo Tool
       shell: bash
@@ -475,9 +441,7 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         
         # Add LLD to PATH explicitly
-        export PATH=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH        
-        export PATH="/usr/lib/ccache:$PATH"
-        export CC="ccache clang"
+        export PATH=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH
         
         cd "$KERNEL_PATH/common" || exit 1
         
@@ -493,7 +457,6 @@ runs:
         
         make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
-        ccache -s
 
     - name: Create Kernel ZIP
       shell: bash
@@ -523,4 +486,3 @@ runs:
       with:
         name: kernel-${{ env.CONFIG }}
         path: ${{ env.CONFIG }}/artifacts/*.zip
-     
