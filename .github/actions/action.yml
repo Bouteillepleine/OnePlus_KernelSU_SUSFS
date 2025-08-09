@@ -489,7 +489,7 @@ runs:
         # Add LLD to PATH explicitly
         export PATH=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH
         export PATH="/usr/lib/ccache:$PATH"
-        export CC="ccache clang"
+        export CC="clang"
     
         cd "$KERNEL_PATH/common" || exit 1
     
@@ -555,4 +555,3 @@ runs:
       with:
         name: kernel-${{ env.CONFIG }}
         path: ${{ env.CONFIG }}/artifacts/*.zip
-     
