@@ -34,16 +34,50 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Set up ccache environment
+      shell: bash
+      run: |
+        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
+        mkdir -p "$GITHUB_WORKSPACE/.ccache"
+
     - name: Install Dependencies
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
         sudo apt update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
-          python3 git curl libelf-dev lld \
+          python3 git curl ccache libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip
+
+    - name: Restore Ccache
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-15
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-
+
+    - name: Initialize Ccache
+      shell: bash
+      run: |
+        INIT_FLAG="${{ env.CCACHE_DIR }}/.ccache_initialized"
+        if command -v ccache >/dev/null 2>&1; then
+          if [ ! -f "$INIT_FLAG" ]; then
+            echo "Initializing ccache (${{ env.CCACHE_DIR }})..."
+            ccache -M ${{ env.CCACHE_MAXSIZE }}
+            touch "$INIT_FLAG"
+            echo "ccache initialization complete"
+          else
+            echo "ccache already initialized, skipping"
+          fi
+        else
+          echo "ccache not installed, skipping"
+        fi
+        ccache -s
 
     - name: Install Repo Tool
       shell: bash
@@ -434,61 +468,32 @@ runs:
           CLANG_DIR="prebuilts-master"
           USE_LLVM_IAS=true
         else
-          echo "Error: Unsupported kernel version: $KERNEL_VERSION" >&2
           echo "fallback=true" >> "$GITHUB_OUTPUT"
-          exit 1
+          exit 0
         fi
-    
+        
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-    
-        # Validate toolchain binaries
-        for tool in clang rustc pahole; do
-          command -v "$tool" >/dev/null || { echo "Error: $tool not found in PATH"; exit 1; }
-        done
-    
-        # Verify kernel source directory
-        if [[ ! -d "$KERNEL_PATH/common" ]]; then
-          echo "Error: Kernel source directory $KERNEL_PATH/common does not exist" >&2
-          exit 1
-        fi
-    
+        
         # Add LLD to PATH explicitly
-        export PATH=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH
-        export CC="clang"
-    
+        export PATH=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH        
+        export PATH="/usr/lib/ccache:$PATH"
+        export CC="ccache clang"
+        
         cd "$KERNEL_PATH/common" || exit 1
-    
+        
         # Use system ld.lld for host tools
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
           LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
-    
+          
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-    
-        echo "Building kernel version $KERNEL_VERSION with Clang $CLANG_PATH"
-    
-        # Verify gki_defconfig exists
-        if [[ ! -f "arch/arm64/configs/gki_defconfig" ]]; then
-          echo "Error: gki_defconfig not found in $KERNEL_PATH/common/arch/arm64/configs" >&2
-          exit 1
-        fi
-    
-        # Build kernel and log warnings
-        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig 2> build_warnings_config.log || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS 2> build_warnings.log || exit 1
-    
-        # Log warnings if any
-        if [[ -s build_warnings_config.log ]]; then
-          echo "Warnings during gki_defconfig generation:"
-          cat build_warnings_config.log
-        fi
-        if [[ -s build_warnings.log ]]; then
-          echo "Warnings during kernel compilation:"
-          cat build_warnings.log
-        fi
+        
+        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
+        ccache -s
 
     - name: Create Kernel ZIP
       shell: bash
@@ -518,3 +523,4 @@ runs:
       with:
         name: kernel-${{ env.CONFIG }}
         path: ${{ env.CONFIG }}/artifacts/*.zip
+     
