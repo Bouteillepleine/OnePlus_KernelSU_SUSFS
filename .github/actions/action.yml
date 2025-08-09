@@ -458,7 +458,7 @@ runs:
           CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-          CLANG_PATH="clang-r487747c"
+          CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
           CLANG_PATH="clang-r450784e"
@@ -479,7 +479,7 @@ runs:
         export PATH="/usr/lib/ccache:$PATH"
         export CC="ccache clang"
         
-        cd "$KERNEL_PATH/common" || exit 1
+        cd "$KERNEL_PATH/common"
         
         # Use system ld.lld for host tools and remove HOSTLD setting
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
@@ -491,8 +491,8 @@ runs:
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+        make -j$(nproc --all) O=out $MAKE_ARGS
         ccache -s
 
     - name: Create Kernel ZIP
@@ -515,65 +515,8 @@ runs:
         echo "Creating zip file $ZIP_NAME..."
         zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" ./*
 
-    - name: Save Build Metadata
-      shell: bash
-      if: success() && steps.create_zip.conclusion == 'success'
-      id: save_metadata
-      run: |
-        cd "$GITHUB_WORKSPACE"
-        if [ -z "$(ls *.zip 2>/dev/null)" ]; then
-          echo "No kernel zip found! Artifact upload might be fake."
-          exit 1
-        fi
-        
-        cd "$CONFIG/kernel_platform/common"
-        CONFIG_FILES=("build.config.common" "build.config.constants")
-        BRANCH_LINE=""
-        
-        for file in "${CONFIG_FILES[@]}"; do
-          if [ -f "$file" ]; then
-            line=$(grep '^[[:space:]]*BRANCH=' "$file" | head -n1 || true)
-            if [ -n "$line" ]; then
-              BRANCH_LINE="$line"
-              echo "Found BRANCH in: $file"
-              break  # Found it — exit loop
-            else
-              echo "File exists but no BRANCH= found: $file"
-            fi
-          else
-            echo "File not found: $file"
-          fi
-        done
-        
-        if [ -z "$BRANCH_LINE" ]; then
-          echo "Error: No BRANCH= found in any of: ${CONFIG_FILES[*]}"
-          exit 1
-        fi
-        
-        BRANCH_VALUE="${BRANCH_LINE#*=}"
-        ANDROID_VERSION="${BRANCH_VALUE%-*}"
-        
-        if [ -z "$ANDROID_VERSION" ]; then
-          echo "Error: Could not extract 'androidXX' from BRANCH='$BRANCH_VALUE'"
-          exit 1
-        fi
-        
-        # Extract values using grep and awk
-        VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
-        PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
-        FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
-        
-        echo "Kernel Version: $ANDROID_VERSION-$FULL_VERSION"
-        
-        cd "$GITHUB_WORKSPACE"
-        echo "$ANDROID_VERSION-$FULL_VERSION" > ${{ inputs.model }}.txt
-
-    - name: Upload Build Artifacts
-      id: upload_ak3_zip
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
-        path: |
-          ${{ inputs.model }}.txt
-          *.zip
+        path: '${{ github.workspace }}/*.zip'
