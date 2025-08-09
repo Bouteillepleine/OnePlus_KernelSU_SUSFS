@@ -14,7 +14,7 @@ on:
         default: false
       ksun_branch:
         description: "Choose SukiSU Ultra Branch"
-        required: true
+        required: false
         type: choice
         options:
           - stable
