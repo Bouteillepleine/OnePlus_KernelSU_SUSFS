@@ -44,12 +44,7 @@ on:
         description: "Choose SusFS Branch for android15-6.6"
         type: string
         default: "gki-android15-6.6"
-      FAST_BUILD:
-        description: "Use Fast Build (Clang with ThinLTO) instead of Bazel Build?"
-        required: true
-        type: boolean
-        default: false
-
+      
 jobs:
   build-batch-1:
     name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
