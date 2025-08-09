@@ -534,8 +534,8 @@ runs:
         fi
 
     - name: Upload Kernel Artifact
-       uses: actions/upload-artifact@v4
-       with:
-         name: ${{ env.CONFIG }}-kernel
-         path: ${{ env.CONFIG }}/artifacts/   
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.CONFIG }}-kernel
+        path: ${{ env.CONFIG }}/artifacts/   
    
