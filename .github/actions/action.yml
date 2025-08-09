@@ -558,23 +558,11 @@ runs:
         
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
-        
-        # Create artifacts directory
-        mkdir -p "$GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts"
-        
-        # Create ZIP file
-        zip -r "$ZIP_NAME" ./* || { echo "Failed to create ZIP file"; exit 1; }
-        
-        # Move ZIP file to artifacts directory
-        mv "$ZIP_NAME" "$GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/$ZIP_NAME"
-        
-        echo "ZIP file moved to $GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/$ZIP_NAME"
-        
-        # Verify ZIP file exists
-        if [ -f "$GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/$ZIP_NAME" ]; then
-          echo "ZIP file exists and is ready for upload."
-        else
-          echo "Error: ZIP file not found in $GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/"
-          exit 1
-        fi
+        zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" ./*
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-${{ env.CONFIG }}
+        path: '${{ github.workspace }}/*.zip'
      
