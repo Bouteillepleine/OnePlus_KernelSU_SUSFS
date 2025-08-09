@@ -151,10 +151,10 @@ runs:
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
         # Clone repositories
-        git clone https://github.com/TheWildJames/kernel_patches.git
+        git clone https://github.com/TheWildJames/kernel_patches.git || { echo "Failed to clone kernel_patches"; exit 1; }
         
-        # Clone the SukiSU Ultra repository
-        git clone https://github.com/sidex15/susfs4ksu.git
+        # Clone the SukiSU Ultra repository with authentication
+        git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/sidex15/susfs4ksu.git || { echo "Failed to clone susfs4ksu. Ensure the repository exists and is accessible."; exit 1; }
         cd susfs4ksu || exit 1
         
         # Try to check if TARGET_REF is a valid branch or tag
