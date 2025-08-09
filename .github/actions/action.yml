@@ -70,12 +70,12 @@ runs:
             echo "Initializing ccache (${{ env.CCACHE_DIR }})..."
             ccache -M ${{ env.CCACHE_MAXSIZE }}
             touch "$INIT_FLAG"
-            echo "✅ ccache initialization complete"
+            echo "ccache initialization complete"
           else
-            echo "✅ ccache already initialized, skipping"
+            echo "ccache already initialized, skipping"
           fi
         else
-          echo "❌ ccache not installed, skipping"
+          echo "ccache not installed, skipping"
         fi
         ccache -s
 
