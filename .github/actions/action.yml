@@ -577,11 +577,4 @@ runs:
           echo "Error: ZIP file not found in $GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/"
           exit 1
         fi
-
-    - name: Upload Kernel Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.CONFIG }}-kernel
-        path: ${{ env.CONFIG }}/artifacts/
-        if-no-files-found: warn
      
