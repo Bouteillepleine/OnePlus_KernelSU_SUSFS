@@ -30,17 +30,23 @@ inputs:
     required: true
     type: string
     default: ""
-  FAST_BUILD:
-    required: false
-    type: boolean
-    default: false
 
 runs:
   using: "composite"
   steps:
+    - name: Setup Cache Env
+      shell: bash
+      run: |
+        echo "🔧 Setting up model-specific cache directory..."
+        echo "CCACHE_DIR=$HOME/.ccache_${{ env.CONFIG }}" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
+        mkdir -p "$HOME/.ccache_${{ env.CONFIG }}"
+        echo "✅ Cache directory set: $HOME/.ccache_${{ env.CONFIG }}"
+
     - name: Configure APT Cache
       shell: bash
       run: |
+        echo "🔧 Setting up APT cache directory..."
         APT_CACHE_DIR="$HOME/apt-cache"
         mkdir -p "$APT_CACHE_DIR"/{archives,lists/partial}
         echo "Dir::Cache \"$APT_CACHE_DIR\";" | sudo tee /etc/apt/apt.conf.d/90user-cache
@@ -49,31 +55,20 @@ runs:
         echo "Acquire::Check-Valid-Until \"false\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
         echo "Acquire::Languages \"none\";" | sudo tee -a /etc/apt/apt.conf.d/90user-cache
         sudo chown -R $USER:$USER "$APT_CACHE_DIR"
+        echo "✅ APT cache configuration complete"
 
-    - name: Set APT Cache
+    - name: Restore APT Cache
       uses: actions/cache@v3
       with:
         path: ${{ env.HOME }}/apt-cache
-        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/action.yml') }}
+        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/build.yml') }}
         restore-keys: |
           ${{ runner.os }}-apt-
 
-    - name: Set up ccache and Install Dependencies
+    - name: Install Dependencies
       shell: bash
       run: |
-        # Configure ccache directory and settings
-        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
-        echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
-        echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV  # Improve cache hit rate
-        mkdir -p "$GITHUB_WORKSPACE/.ccache"
-        chmod -R 775 "$GITHUB_WORKSPACE/.ccache"
-        # Add ccache to PATH
-        echo "/usr/lib/ccache" >> $GITHUB_PATH
-        # Set compiler to use ccache
-        echo "CC=ccache clang" >> $GITHUB_ENV
-        echo "CXX=ccache clang++" >> $GITHUB_ENV
-
-        # Install dependencies using APT cache
+        echo "🔧 Installing build dependencies..."
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
         APT_CACHE_DIR="$HOME/apt-cache"
         mkdir -p "$APT_CACHE_DIR/lists/partial"
@@ -83,36 +78,36 @@ runs:
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip
-        ccache -s  # Show initial ccache stats
+        echo "✅ All dependencies installed successfully"
 
-    - name: Restore Ccache
+    - name: Restore ccache
       uses: actions/cache@v3
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.branch }}-${{ hashFiles(inputs.manifest) }}-${{ inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-15
+        key: ccache-${{ runner.os }}-${{ github.ref }}-${{ env.CONFIG }}
         restore-keys: |
-          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-${{ env.CONFIG }}-
           ccache-${{ runner.os }}-
 
-    - name: Initialize Ccache
+    - name: Initialize ccache
       shell: bash
       run: |
+        echo "🔧 Initializing ccache..."
         INIT_FLAG="${{ env.CCACHE_DIR }}/.ccache_initialized"
         if command -v ccache >/dev/null 2>&1; then
           if [ ! -f "$INIT_FLAG" ]; then
-            echo "Initializing ccache (${{ env.CCACHE_DIR }})..."
             mkdir -p "${{ env.CCACHE_DIR }}"
             ccache -M ${{ env.CCACHE_MAXSIZE }}
             touch "$INIT_FLAG"
-            echo "ccache initialization complete"
+            echo "🆕 ccache initialization complete"
           else
-            echo "ccache already initialized, skipping"
+            echo "ℹ️ ccache already initialized, skipping"
           fi
         else
-          echo "ccache not installed, failing"
-          exit 1
+          echo "⚠️ ccache not installed, skipping"
         fi
-        ccache -s  # Show ccache stats after initialization
+        ccache -s
+        echo "✅ ccache initialization process complete"
 
     - name: Install Repo Tool
       shell: bash
@@ -129,21 +124,55 @@ runs:
         
         df -h
         
-        # Clean up unused directories to free space
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
         sudo docker image prune --all --force
         echo "Unused directories cleared"
         
         # Remove large packages
         sudo apt-get purge -y \
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync \
-          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
-          google-cloud-sdk imagemagick libmagickcore-dev libmagickwand-dev \
-          libmagic-dev ant ant-optional kubectl mercurial apt-transport-https \
-          mono-complete libmysqlclient unixodbc-dev yarn chrpath libssl-dev \
-          libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
-          snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-          sphinxsearch subversion mongodb-org microsoft-edge-stable || true
+          aria2 \
+          ansible \
+          azure-cli \
+          shellcheck \
+          rpm \
+          xorriso \
+          zsync \
+          esl-erlang \
+          firefox \
+          gfortran-8 \
+          gfortran-9 \
+          google-chrome-stable \
+          google-cloud-sdk \
+          imagemagick \
+          libmagickcore-dev \
+          libmagickwand-dev \
+          libmagic-dev \
+          ant \
+          ant-optional \
+          kubectl \
+          mercurial \
+          apt-transport-https \
+          mono-complete \
+          libmysqlclient \
+          unixodbc-dev \
+          yarn \
+          chrpath \
+          libssl-dev \
+          libxft-dev \
+          libfreetype6 \
+          libfreetype6-dev \
+          libfontconfig1 \
+          libfontconfig1-dev \
+          snmp \
+          pollinate \
+          libpq-dev \
+          postgresql-client \
+          powershell \
+          ruby-full \
+          sphinxsearch \
+          subversion \
+          mongodb-org \
+          microsoft-edge-stable || true
         
         # Bulk package removal
         sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
@@ -183,14 +212,17 @@ runs:
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        # Clone repositories
+        # Clone repositories using the branch names
         git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
+        
+        # Clone the repo with all branches and history (can optimize later if needed)
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
         
-        # Verify and checkout SUSFS branch
+        # Try to check if TARGET_REF is a valid branch or tag
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
+          # It's a branch or commit hash
           git checkout "$SUSFS_BRANCH"
         else
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
@@ -214,7 +246,7 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         
-        # Sync repo
+        # Sync repo and apply patches
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
@@ -225,11 +257,13 @@ runs:
         cd "$CONFIG/kernel_platform"
         
         echo "Adding KernelSU Next..."
+        
         if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         else
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
         fi
+        
         git submodule update --init --recursive
 
     - name: Apply SUSFS Patches
@@ -239,11 +273,15 @@ runs:
         cd "$CONFIG/kernel_platform"
         
         echo "Applying SUSFS patches..."
+        
+        # Copy SUSFS patches
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
         
         cd ./KernelSU-Next
+        
+        echo "Applying next SUSFS patches..."
         susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
         BASE_VERSION=10200
@@ -274,10 +312,13 @@ runs:
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
+            
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
                 echo "Patching file: $file.c with fix_$file.c.patch"
                 patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
+            
+            # Fix build errors (no rejects; Still giving errors)
             patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
@@ -287,7 +328,9 @@ runs:
         esac
         patch -p1 --forward < ksun_susfs_latest.patch || true
         
+        # Change to common directory and apply SUSFS patch
         cd ../common
+        
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
             if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
                 sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
@@ -299,6 +342,7 @@ runs:
         
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
+        
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
           patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
@@ -307,14 +351,13 @@ runs:
         fi
         
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          echo "Patching hmbird!"
-          echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
+-windows -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
+          echo "Patching hmbird files!"
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13, skipping hmbird patch"
+          echo "Not OPAce5Pro / OP13, skipping fengchi patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -331,6 +374,7 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
+        # Apply additional patch
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
 
@@ -341,8 +385,12 @@ runs:
         cd "$CONFIG/kernel_platform"
         
         echo "Adding configuration settings to gki_defconfig..."
+        
+        # Add KSU configuration settings
         echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
+        # Add SUSFS configuration settings
         echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -359,6 +407,8 @@ runs:
         echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
+        # Add additional tmpfs config setting
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -370,9 +420,11 @@ runs:
         
         echo "Adding configuration settings to gki_defconfig..."
         echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
         echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -394,9 +446,12 @@ runs:
         cd "$CONFIG/kernel_platform"
         
         echo "Running sed commands..."
+        
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+        
+        # Run sed commands for modifications
         sed -i 's/check_defconfig//' ./common/build.config.gki
         # For Old setlocalversion Script
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
@@ -414,6 +469,7 @@ runs:
         sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
         sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
         sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
+        
         sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
         sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
        
@@ -430,7 +486,7 @@ runs:
           CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-          CLANG_PATH="clang-r510928"
+          CLANG_PATH="clang-r487747c"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
           CLANG_PATH="clang-r450784e"
@@ -446,24 +502,26 @@ runs:
         
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         
-        # Add LLD and ccache to PATH
-        export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:/usr/lib/ccache:/usr/lib/llvm-16/bin:$PATH"
+        # Add LLD to PATH explicitly
+        export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:/usr/lib/llvm-16/bin:$PATH"
+        export PATH="/usr/lib/ccache:$PATH"
+        export CC="ccache clang"
         
-        cd "$KERNEL_PATH/common"
+        cd "$KERNEL_PATH/common" || exit 1
         
-        # Configure make arguments with ccache
+        # Use system ld.lld for host tools
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld CC=\"${{ env.CC }}\" CXX=\"${{ env.CXX }}\" KCFLAGS+=-Wno-error"
+          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
           
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-        make -j$(nproc --all) O=out $MAKE_ARGS
-        ccache -s  # Show ccache stats after build
+        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
+        ccache -s
 
     - name: Create Kernel ZIP
       shell: bash
@@ -483,13 +541,29 @@ runs:
         
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         echo "Creating zip file $ZIP_NAME..."
-        zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" ./*
+        
+        # Create artifacts directory
+        mkdir -p "$GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts"
+        
+        # Create ZIP file
+        zip -r "$ZIP_NAME" ./* || { echo "Failed to create ZIP file"; exit 1; }
+        
+        # Move ZIP file to artifacts directory
+        mv "$ZIP_NAME" "$GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/$ZIP_NAME"
+        
+        echo "ZIP file moved to $GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/$ZIP_NAME"
+        
+        # Verify ZIP file exists
+        if [ -f "$GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/$ZIP_NAME" ]; then
+          echo "ZIP file exists and is ready for upload."
+        else
+          echo "Error: ZIP file not found in $GITHUB_WORKSPACE/${{ env.CONFIG }}/artifacts/"
+          exit 1
+        fi
 
-    - name: Upload Artifacts (Primary)
+    - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-${{ env.CONFIG }}
-        path: ${{ github.workspace }}/*.zip
-        if-no-files-found: warn    
-
-  
+        name: ${{ env.CONFIG }}-kernel
+        path: ${{ env.CONFIG }}/artifacts/
+        if-no-files-found: warn
