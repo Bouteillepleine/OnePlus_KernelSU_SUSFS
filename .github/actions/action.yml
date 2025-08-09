@@ -458,7 +458,7 @@ runs:
           CLANG_PATH="clang-r510928"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-          CLANG_PATH="clang-r487747c
+          CLANG_PATH="clang-r487747c"
           CLANG_DIR="prebuilts"
         elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
           CLANG_PATH="clang-r450784e"
@@ -479,7 +479,7 @@ runs:
         export PATH="/usr/lib/ccache:$PATH"
         export CC="ccache clang"
         
-        cd "$KERNEL_PATH/common"
+        cd "$KERNEL_PATH/common" || exit 1
         
         # Use system ld.lld for host tools and remove HOSTLD setting
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
@@ -491,8 +491,8 @@ runs:
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-        make -j$(nproc --all) O=out $MAKE_ARGS
+        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
         ccache -s
 
     - name: Create Kernel ZIP
