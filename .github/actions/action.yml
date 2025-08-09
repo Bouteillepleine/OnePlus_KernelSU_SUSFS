@@ -136,24 +136,21 @@ runs:
         # Set build config
         echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
 
-    - name: Clone AnyKernel3 and Other Dependencies
+    - name: Clone Dependencies
       shell: bash
       run: |
-        echo "Cloning AnyKernel3 and other dependencies..."
+        echo "Cloning dependencies..."
         
-        ANYKERNEL_BRANCH="gki-2.0"
         if [[ -z "${{ inputs.susfs_branch }}" ]]; then
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         else
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
         
-        # Debug print the branches
-        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
+        # Debug print the branch
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
         # Clone repositories
-        git clone https://github.com/Numbersf/AnyKernel3.git -b "$ANYKERNEL_BRANCH" --depth=1
         git clone https://github.com/TheWildJames/kernel_patches.git
         
         # Clone the SukiSU Ultra repository
