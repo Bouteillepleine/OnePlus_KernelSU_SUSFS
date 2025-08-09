@@ -30,13 +30,26 @@ inputs:
     required: true
     type: string
     default: ""
+  FAST_BUILD:  # Added to handle unexpected input warning
+    required: false
+    type: boolean
+    default: false
 
 runs:
   using: "composite"
   steps:
-    - name: Set up ccache environment
+    - name: Set up ccache and Install Dependencies
       shell: bash
       run: |
+        # Install dependencies including ccache
+        sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
+        sudo apt update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
+          python3 git curl ccache libelf-dev lld \
+          build-essential flex bison libssl-dev \
+          libncurses-dev liblz4-tool zlib1g-dev \
+          libxml2-utils rsync unzip
+
         # Configure ccache directory and settings
         echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
         echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
@@ -49,17 +62,6 @@ runs:
         echo "CC=ccache clang" >> $GITHUB_ENV
         echo "CXX=ccache clang++" >> $GITHUB_ENV
         ccache -s  # Show initial ccache stats
-
-    - name: Install Dependencies
-      shell: bash
-      run: |
-        sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
-        sudo apt update -qq
-        sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
-          python3 git curl ccache libelf-dev lld \
-          build-essential flex bison libssl-dev \
-          libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip
 
     - name: Restore Ccache
       uses: actions/cache@v3
@@ -84,7 +86,8 @@ runs:
             echo "ccache already initialized, skipping"
           fi
         else
-          echo "ccache not installed, skipping"
+          echo "ccache not installed, failing"
+          exit 1
         fi
         ccache -s  # Show ccache stats after initialization
 
@@ -465,4 +468,4 @@ runs:
       with:
         name: kernel-${{ env.CONFIG }}
         path: ${{ github.workspace }}/*.zip
-        if-no-files-found: warn       
+        if-no-files-found: warn
