@@ -475,7 +475,7 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         
         # Add LLD to PATH explicitly
-        export PATH="$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:/usr/lib/llvm-16/bin:$PATH"
+        export PATH=$KERNEL_PATH/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH        
         export PATH="/usr/lib/ccache:$PATH"
         export CC="ccache clang"
         
