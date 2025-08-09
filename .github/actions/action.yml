@@ -32,7 +32,7 @@ inputs:
     default: ""
   ksu_meta:
     type: string
-    description: susfs-main/⚡Ultra⚡"
+    description: "susfs-main/⚡Ultra⚡"
     required: false
     default: "susfs-main/⚡Ultra⚡"
 
@@ -187,7 +187,7 @@ runs:
         
         # Sync repo
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) -- wronged
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
     - name: Add SukiSU Ultra
       shell: bash
@@ -335,7 +335,7 @@ runs:
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm J64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -458,6 +458,10 @@ runs:
       run: |
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
         KERNEL_PATH="$CONFIG_DIR/kernel_platform"
+        
+        # Clone AnyKernel3
+        git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+        rm -rf ./AnyKernel3/.git
         
         cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         
