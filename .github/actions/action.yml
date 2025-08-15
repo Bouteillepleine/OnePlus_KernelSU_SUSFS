@@ -1,7 +1,7 @@
 name: Build
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 inputs:
   model:
@@ -34,6 +34,13 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Cache Repo Tool
+      uses: actions/cache@v4
+      with:
+        path: ./git-repo/repo
+        key: ${{ runner.os }}-repo-tool-v2.16
+        restore-keys: ${{ runner.os }}-repo-tool-
+    
     - name: Setup Build System
       shell: bash
       run: |
@@ -43,9 +50,7 @@ runs:
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
         sudo docker image prune --all --force
         echo "Unused directories cleared"
-        sudo apt-get purge -y \
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full sphinxsearch subversion mongodb-org microsoft-edge-stable || true
-        sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
+        sudo apt-get purge -y ...
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
         echo "Package cleanup complete"
@@ -53,11 +58,15 @@ runs:
         sudo apt update
         sudo apt install -y python3 python-is-python3
         mkdir -p ./git-repo
-        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-        chmod a+rx ./git-repo/repo
+        if [ ! -f ./git-repo/repo ]; then
+          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
+          chmod a+rx ./git-repo/repo
+        else
+          echo "Repo tool already cached"
+        fi
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> "$GITHUB_ENV"
         echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
-
+    
     - name: Install Dependencies
       shell: bash
       run: |
@@ -67,7 +76,7 @@ runs:
           python3 git curl libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip ccache
+          libxml2-utils rsync unzip
 
     - name: Install Repo Tool
       shell: bash
@@ -75,13 +84,6 @@ runs:
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
         chmod a+x ~/repo
         sudo mv ~/repo /usr/local/bin/repo
-
-    - name: Cache Prebuilt Tools
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CONFIG }}/kernel_platform/prebuilts
-        key: ${{ runner.os }}-prebuilts-${{ hashFiles('**/prebuilts/**') }}
-        restore-keys: ${{ runner.os }}-prebuilts-
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
@@ -121,7 +123,7 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j4 --fail-fast
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
     - name: Clean Up ABI Protected Exports
       shell: bash
@@ -230,6 +232,7 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
+        echo "Applying KSUN Hooks..."
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
         patch -p1 < ./manual_hooks.patch
 
@@ -247,34 +250,26 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        for opt in \
-          "CONFIG_KSU=y" \
-          "CONFIG_KSU_KPROBES_HOOK=n" \
-          "CONFIG_KSU_SUSFS=y" \
-          "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" \
-          "CONFIG_KSU_SUSFS_SUS_PATH=y" \
-          "CONFIG_KSU_SUSFS_SUS_MOUNT=y" \
-          "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" \
-          "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" \
-          "CONFIG_KSU_SUSFS_SUS_KSTAT=y" \
-          "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" \
-          "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" \
-          "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" \
-          "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" \
-          "CONFIG_KSU_SUSFS_ENABLE_LOG=y" \
-          "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" \
-          "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" \
-          "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" \
-          "CONFIG_KSU_SUSFS_SUS_SU=n" \
-          "CONFIG_TMPFS_XATTR=y" \
-          "CONFIG_TMPFS_POSIX_ACL=y"; do
-          if ! grep -Fx "$opt" "$DEFCONFIG" > /dev/null; then
-            echo "$opt" >> "$DEFCONFIG"
-          else
-            echo "Config $opt already exists, skipping."
-          fi
-        done
+        echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Add BBR Support
       shell: bash
@@ -282,21 +277,13 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        for opt in \
-          "CONFIG_TCP_CONG_ADVANCED=y" \
-          "CONFIG_TCP_CONG_BBR=y" \
-          "CONFIG_TCP_CONG_BIC=n" \
-          "CONFIG_TCP_CONG_WESTWOOD=n" \
-          "CONFIG_TCP_CONG_HTCP=n" \
-          "CONFIG_NET_SCH_FQ=y" \
-          "CONFIG_NET_SCH_FQ_CODEL=y"; do
-          if ! grep -Fx "$opt" "$DEFCONFIG" > /dev/null; then
-            echo "$opt" >> "$DEFCONFIG"
-          else
-            echo "Config $opt already exists, skipping."
-          fi
-        done
+        echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Add TTL Target Support
       shell: bash
@@ -304,17 +291,9 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        for opt in \
-          "CONFIG_IP_NF_TARGET_TTL=y" \
-          "CONFIG_IP6_NF_TARGET_HL=y" \
-          "CONFIG_IP6_NF_MATCH_HL=y"; do
-          if ! grep -Fx "$opt" "$DEFCONFIG" > /dev/null; then
-            echo "$opt" >> "$DEFCONFIG"
-          else
-            echo "Config $opt already exists, skipping."
-          fi
-        done
+        echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Save Build Metadata
       shell: bash
@@ -334,7 +313,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break
+              break  # Found it — exit loop
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -356,6 +335,7 @@ runs:
           exit 1
         fi
         
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
@@ -448,66 +428,58 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
 
-    - name: Mount tmpfs for Output Directory
-      shell: bash
-      run: |
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-        mkdir -p "$KERNEL_PATH/common/out"
-        sudo mount -t tmpfs tmpfs "$KERNEL_PATH/common/out" || echo "tmpfs mount failed, proceeding with disk"
-
     - name: Build Kernel
       shell: bash
       run: |
-      KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-      CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
-      CLANG_VERSION="${{ env.CLANG_VERSION }}"
-      if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
-        echo "Adding Clang to PATH: $CLANG_BIN_PATH"
-        export PATH="$CLANG_BIN_PATH:$PATH"
-        SELECTED_CLANG="$CLANG_BIN_PATH/clang"
-      elif command -v clang >/dev/null 2>&1; then
-        SELECTED_CLANG="$(command -v clang)"
-        echo "Using system Clang: $SELECTED_CLANG"
-        exit 1
-      else
-        echo "Error: No valid Clang binary found"
-        exit 1
-      fi
-      echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-      LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
-      MISSING_TOOLS=""
-      for tool in $LLVM_TOOLS; do
-        if ! command -v $tool >/dev/null 2>&1; then
-          MISSING_TOOLS="$MISSING_TOOLS $tool"
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
+        CLANG_VERSION="${{ env.CLANG_VERSION }}"
+        if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
+          echo "Adding Clang to PATH: $CLANG_BIN_PATH"
+          export PATH="$CLANG_BIN_PATH:$PATH"
+          SELECTED_CLANG="$CLANG_BIN_PATH/clang"
+        elif command -v clang >/dev/null 2>&1; then
+          SELECTED_CLANG="$(command -v clang)"
+          echo "Using system Clang: $SELECTED_CLANG"
+          exit 1
+        else
+          echo "Error: No valid Clang binary found"
+          exit 1
         fi
-      done
-      if [ -n "$MISSING_TOOLS" ]; then
-        echo "Installing missing LLVM tools:$MISSING_TOOLS"
-        sudo apt-get update
-        sudo apt-get install -yq --no-install-recommends llvm
-        for tool in $MISSING_TOOLS; do
+        echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
+        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
+        MISSING_TOOLS=""
+        for tool in $LLVM_TOOLS; do
           if ! command -v $tool >/dev/null 2>&1; then
-            echo "Error: Failed to install $tool"
-            exit 1
+            MISSING_TOOLS="$MISSING_TOOLS $tool"
           fi
         done
-      fi
-      KERNEL_VERSION="${{ inputs.kernel_version }}"
-      if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-        USE_LLVM_IAS=true
-      fi
-      cd "$KERNEL_PATH/common" || exit 1
-      MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-        RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-        PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-        LD=ld.lld HOSTLD=ld.lld"
-      if [[ -v USE_LLVM_IAS ]]; then
-        MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
-      fi
-      export CC="ccache clang" CXX="ccache clang++"
-      make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
-      make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" || exit 1
-      sudo umount "$KERNEL_PATH/common/out" || true
+        if [ -n "$MISSING_TOOLS" ]; then
+          echo "Installing missing LLVM tools:$MISSING_TOOLS"
+          sudo apt-get update
+          sudo apt-get install -yq --no-install-recommends llvm
+          for tool in $MISSING_TOOLS; do
+            if ! command -v $tool >/dev/null 2>&1; then
+              echo "Error: Failed to install $tool"
+              exit 1
+            fi
+          done
+        fi
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+        if [[ "$KERNEL_VERSION" == "5.10" ]]; then
+          USE_LLVM_IAS=true
+        fi
+        cd "$KERNEL_PATH/common" || exit 1
+        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld"
+        if [[ -v USE_LLVM_IAS ]]; then
+          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+        fi
+        
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2"|| exit 1
 
     - name: Create Kernel ZIP
       id: create_zip
@@ -515,12 +487,7 @@ runs:
       run: |
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
         KERNEL_PATH="$CONFIG_DIR/kernel_platform"
-        KERNEL_IMAGE="$KERNEL_PATH/common/out/arch/arm64/boot/Image"
-        if [ ! -f "$KERNEL_IMAGE" ]; then
-          echo "Error: Kernel image $KERNEL_IMAGE not found. Build failed."
-          exit 1
-        fi
-        cp "$KERNEL_IMAGE" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+        cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
@@ -530,7 +497,6 @@ runs:
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
         zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
-        echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
