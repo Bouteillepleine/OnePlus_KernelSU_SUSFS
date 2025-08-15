@@ -247,26 +247,34 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+        for opt in \
+          "CONFIG_KSU=y" \
+          "CONFIG_KSU_KPROBES_HOOK=n" \
+          "CONFIG_KSU_SUSFS=y" \
+          "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" \
+          "CONFIG_KSU_SUSFS_SUS_PATH=y" \
+          "CONFIG_KSU_SUSFS_SUS_MOUNT=y" \
+          "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" \
+          "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" \
+          "CONFIG_KSU_SUSFS_SUS_KSTAT=y" \
+          "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" \
+          "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" \
+          "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" \
+          "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" \
+          "CONFIG_KSU_SUSFS_ENABLE_LOG=y" \
+          "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" \
+          "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" \
+          "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" \
+          "CONFIG_KSU_SUSFS_SUS_SU=n" \
+          "CONFIG_TMPFS_XATTR=y" \
+          "CONFIG_TMPFS_POSIX_ACL=y"; do
+          if ! grep -Fx "$opt" "$DEFCONFIG" > /dev/null; then
+            echo "$opt" >> "$DEFCONFIG"
+          else
+            echo "Config $opt already exists, skipping."
+          fi
+        done
 
     - name: Add BBR Support
       shell: bash
@@ -274,13 +282,21 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+        for opt in \
+          "CONFIG_TCP_CONG_ADVANCED=y" \
+          "CONFIG_TCP_CONG_BBR=y" \
+          "CONFIG_TCP_CONG_BIC=n" \
+          "CONFIG_TCP_CONG_WESTWOOD=n" \
+          "CONFIG_TCP_CONG_HTCP=n" \
+          "CONFIG_NET_SCH_FQ=y" \
+          "CONFIG_NET_SCH_FQ_CODEL=y"; do
+          if ! grep -Fx "$opt" "$DEFCONFIG" > /dev/null; then
+            echo "$opt" >> "$DEFCONFIG"
+          else
+            echo "Config $opt already exists, skipping."
+          fi
+        done
 
     - name: Add TTL Target Support
       shell: bash
@@ -288,9 +304,17 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+        for opt in \
+          "CONFIG_IP_NF_TARGET_TTL=y" \
+          "CONFIG_IP6_NF_TARGET_HL=y" \
+          "CONFIG_IP6_NF_MATCH_HL=y"; do
+          if ! grep -Fx "$opt" "$DEFCONFIG" > /dev/null; then
+            echo "$opt" >> "$DEFCONFIG"
+          else
+            echo "Config $opt already exists, skipping."
+          fi
+        done
 
     - name: Save Build Metadata
       shell: bash
@@ -310,7 +334,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break  # Found it — exit loop
+              break
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -332,7 +356,6 @@ runs:
           exit 1
         fi
         
-        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
@@ -477,14 +500,14 @@ runs:
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld KBUILD_BUILD_TIMESTAMP=''"
+          LD=ld.lld HOSTLD=ld.lld"
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         export CC="ccache clang" CXX="ccache clang++"
         time make -j3 -l2.0 -s O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
         time make -j3 -l2.0 -s O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" || exit 1
-        sudo umount out || true
+        sudo umount "$KERNEL_PATH/common/out" || true
 
     - name: Create Kernel ZIP
       id: create_zip
@@ -492,7 +515,12 @@ runs:
       run: |
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
         KERNEL_PATH="$CONFIG_DIR/kernel_platform"
-        cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+        KERNEL_IMAGE="$KERNEL_PATH/common/out/arch/arm64/boot/Image"
+        if [ ! -f "$KERNEL_IMAGE" ]; then
+          echo "Error: Kernel image $KERNEL_IMAGE not found. Build failed."
+          exit 1
+        fi
+        cp "$KERNEL_IMAGE" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
@@ -502,6 +530,7 @@ runs:
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
         zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
+        echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
