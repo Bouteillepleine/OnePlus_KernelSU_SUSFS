@@ -83,6 +83,16 @@ runs:
         ccache --zero-stats
         ccache --show-config
 
+    - name: Install Rust Toolchain
+      shell: bash
+      run: |
+        echo "Installing Rust toolchain..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.78.0
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        source "$HOME/.cargo/env"
+        rustc --version
+        echo "RUSTC=$(which rustc)" >> "$GITHUB_ENV"
+
     - name: Install Repo Tool
       shell: bash
       run: |
@@ -318,7 +328,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break  # Found it — exit loop
+              break
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -340,7 +350,6 @@ runs:
           exit 1
         fi
         
-        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
@@ -366,13 +375,23 @@ runs:
         
         sed -i 's/check_defconfig//' ./common/build.config.gki
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
-        tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
+        if [ -d "./msm-kernel/scripts" ]; then
+          tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
+        else
+          echo "msm-kernel/scripts directory not found, skipping setlocalversion modification"
+        fi
         tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./common/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
+        if [ -d "./msm-kernel/scripts" ]; then
+          sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
+        else
+          echo "msm-kernel/scripts directory not found, skipping setlocalversion sed"
+        fi
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
-        chmod +x ./msm-kernel/scripts/setlocalversion
+        if [ -d "./msm-kernel/scripts" ]; then
+          chmod +x ./msm-kernel/scripts/setlocalversion
+        fi
         chmod +x ./external/dtc/scripts/setlocalversion
         if [ -f ./build/kernel/kleaf/impl/stamp.bzl ]; then
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
@@ -380,7 +399,11 @@ runs:
           echo "No stamp.bzl!"
         fi
         sed -i 's/-dirty//' ./common/scripts/setlocalversion
-        sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
+        if [ -d "./msm-kernel/scripts" ]; then
+          sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
+        else
+          echo "msm-kernel/scripts directory not found, skipping dirty sed"
+        fi
         sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
         if [ -f ./build/kernel/kleaf/workspace_status_stamp.py ]; then
           sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py
@@ -390,7 +413,11 @@ runs:
         
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
-        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
+        if [ -d "./msm-kernel/scripts" ]; then
+          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
+        else
+          echo "msm-kernel/scripts directory not found, skipping mkcompile_h modification"
+        fi
 
     - name: Detect Clang Version from Configs
       shell: bash
@@ -463,7 +490,7 @@ runs:
           echo "Installing missing LLVM tools:$MISSING_TOOLS"
           sudo apt-get update
           sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $MISSING_TOOLS; do
+          for tool in $LLVM_TOOLS; do
             if ! command -v $tool >/dev/null 2>&1; then
               echo "Error: Failed to install $tool"
               exit 1
@@ -473,11 +500,14 @@ runs:
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
+          RUSTC="$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc"
+        else
+          RUSTC="${{ env.RUSTC }}"
         fi
         cd "$KERNEL_PATH/common" || exit 1
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           CC=$CCACHE_EXEC clang \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          RUSTC=$RUSTC \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
           LD=ld.lld HOSTLD=ld.lld"
         if [[ -v USE_LLVM_IAS ]]; then
