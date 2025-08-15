@@ -67,31 +67,7 @@ runs:
           python3 git curl libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip ccache
-
-    - name: Configure ccache
-      shell: bash
-      run: |
-        echo "Configuring ccache..."
-        sudo apt install -yq --no-install-recommends ccache
-        ccache --set-config=cache_dir="$GITHUB_WORKSPACE/.ccache"
-        ccache --set-config=max_size=2.0G
-        ccache --set-config=compression=true
-        echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
-        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
-        echo "PATH=/usr/lib/ccache:$PATH" >> "$GITHUB_ENV"
-        ccache --zero-stats
-        ccache --show-config
-
-    - name: Install Rust Toolchain
-      shell: bash
-      run: |
-        echo "Installing Rust toolchain..."
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.78.0
-        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-        source "$HOME/.cargo/env"
-        rustc --version
-        echo "RUSTC=$(which rustc)" >> "$GITHUB_ENV"
+          libxml2-utils rsync unzip
 
     - name: Install Repo Tool
       shell: bash
@@ -328,7 +304,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break
+              break  # Found it — exit loop
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -350,6 +326,7 @@ runs:
           exit 1
         fi
         
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
@@ -375,23 +352,13 @@ runs:
         
         sed -i 's/check_defconfig//' ./common/build.config.gki
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
-        if [ -d "./msm-kernel/scripts" ]; then
-          tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
-        else
-          echo "msm-kernel/scripts directory not found, skipping setlocalversion modification"
-        fi
+        tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
         tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./common/scripts/setlocalversion
-        if [ -d "./msm-kernel/scripts" ]; then
-          sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
-        else
-          echo "msm-kernel/scripts directory not found, skipping setlocalversion sed"
-        fi
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
-        if [ -d "./msm-kernel/scripts" ]; then
-          chmod +x ./msm-kernel/scripts/setlocalversion
-        fi
+        chmod +x ./msm-kernel/scripts/setlocalversion
         chmod +x ./external/dtc/scripts/setlocalversion
         if [ -f ./build/kernel/kleaf/impl/stamp.bzl ]; then
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
@@ -399,11 +366,7 @@ runs:
           echo "No stamp.bzl!"
         fi
         sed -i 's/-dirty//' ./common/scripts/setlocalversion
-        if [ -d "./msm-kernel/scripts" ]; then
-          sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
-        else
-          echo "msm-kernel/scripts directory not found, skipping dirty sed"
-        fi
+        sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
         sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
         if [ -f ./build/kernel/kleaf/workspace_status_stamp.py ]; then
           sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py
@@ -413,11 +376,7 @@ runs:
         
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
-        if [ -d "./msm-kernel/scripts" ]; then
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
-        else
-          echo "msm-kernel/scripts directory not found, skipping mkcompile_h modification"
-        fi
+        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
 
     - name: Detect Clang Version from Configs
       shell: bash
@@ -490,7 +449,7 @@ runs:
           echo "Installing missing LLVM tools:$MISSING_TOOLS"
           sudo apt-get update
           sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $LLVM_TOOLS; do
+          for tool in $MISSING_TOOLS; do
             if ! command -v $tool >/dev/null 2>&1; then
               echo "Error: Failed to install $tool"
               exit 1
@@ -500,14 +459,10 @@ runs:
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
-          RUSTC="$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc"
-        else
-          RUSTC="${{ env.RUSTC }}"
         fi
         cd "$KERNEL_PATH/common" || exit 1
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC=$CCACHE_EXEC clang \
-          RUSTC=$RUSTC \
+          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
           LD=ld.lld HOSTLD=ld.lld"
         if [[ -v USE_LLVM_IAS ]]; then
@@ -515,9 +470,7 @@ runs:
         fi
         
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" || exit 1
-        echo "ccache stats:"
-        ccache --show-stats
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2"|| exit 1
 
     - name: Create Kernel ZIP
       id: create_zip
