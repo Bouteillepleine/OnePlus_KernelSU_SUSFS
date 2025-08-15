@@ -458,70 +458,56 @@ runs:
     - name: Build Kernel
       shell: bash
       run: |
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-        CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
-        CLANG_VERSION="${{ env.CLANG_VERSION }}"
-        if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
-          echo "Adding Clang to PATH: $CLANG_BIN_PATH"
-          export PATH="$CLANG_BIN_PATH:$PATH"
-          SELECTED_CLANG="$CLANG_BIN_PATH/clang"
-        elif command -v clang >/dev/null 2>&1; then
-          SELECTED_CLANG="$(command -v clang)"
-          echo "Using system Clang: $SELECTED_CLANG"
-          exit 1
-        else
-          echo "Error: No valid Clang binary found"
-          exit 1
+      KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+      CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
+      CLANG_VERSION="${{ env.CLANG_VERSION }}"
+      if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
+        echo "Adding Clang to PATH: $CLANG_BIN_PATH"
+        export PATH="$CLANG_BIN_PATH:$PATH"
+        SELECTED_CLANG="$CLANG_BIN_PATH/clang"
+      elif command -v clang >/dev/null 2>&1; then
+        SELECTED_CLANG="$(command -v clang)"
+        echo "Using system Clang: $SELECTED_CLANG"
+        exit 1
+      else
+        echo "Error: No valid Clang binary found"
+        exit 1
+      fi
+      echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
+      LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
+      MISSING_TOOLS=""
+      for tool in $LLVM_TOOLS; do
+        if ! command -v $tool >/dev/null 2>&1; then
+          MISSING_TOOLS="$MISSING_TOOLS $tool"
         fi
-        echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
-        MISSING_TOOLS=""
-        for tool in $LLVM_TOOLS; do
+      done
+      if [ -n "$MISSING_TOOLS" ]; then
+        echo "Installing missing LLVM tools:$MISSING_TOOLS"
+        sudo apt-get update
+        sudo apt-get install -yq --no-install-recommends llvm
+        for tool in $MISSING_TOOLS; do
           if ! command -v $tool >/dev/null 2>&1; then
-            MISSING_TOOLS="$MISSING_TOOLS $tool"
+            echo "Error: Failed to install $tool"
+            exit 1
           fi
         done
-        if [ -n "$MISSING_TOOLS" ]; then
-          echo "Installing missing LLVM tools:$MISSING_TOOLS"
-          sudo apt-get update
-          sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $MISSING_TOOLS; do
-            if ! command -v $tool >/dev/null 2>&1; then
-              echo "Error: Failed to install $tool"
-              exit 1
-            fi
-          done
-        fi
-        KERNEL_VERSION="${{ inputs.kernel_version }}"
-        if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-          USE_LLVM_IAS=true
-        fi
-        # Fix bpf_doc.py syntax warnings
-        BPF_DOC_PY="$KERNEL_PATH/common/scripts/bpf_doc.py"
-        if [ -f "$BPF_DOC_PY" ]; then
-          sed -i 's/re.compile(\('\''\w\+ \)/re.compile(r'\''\w\+ /g' "$BPF_DOC_PY"
-          sed -i 's/re.compile(\('\''\*\)/re.compile(r'\''\*/g' "$BPF_DOC_PY"
-          sed -i 's/re.compile(\('\'' \)/re.compile(r'\'' /g' "$BPF_DOC_PY"
-          sed -i 's/re.compile(\('\''\t\| \)/re.compile(r'\''\t\| /g' "$BPF_DOC_PY"
-        fi
-        cd "$KERNEL_PATH/common" || exit 1
-        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld"
-        if [[ -v USE_LLVM_IAS ]]; then
-          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
-        fi
-        export CC="ccache clang" CXX="ccache clang++"
-        time make -j3 -l2.0 -s O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
-        time make -j3 -l2.0 -s O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" || exit 1
-        # Check for kernel image
-        KERNEL_IMAGE="$KERNEL_PATH/common/out/arch/arm64/boot/Image"
-        if [ ! -f "$KERNEL_IMAGE" ]; then
-          echo "Error: Kernel image $KERNEL_IMAGE not found. Build failed."
-          exit 1
-        fi
-        sudo umount "$KERNEL_PATH/common/out" || true
+      fi
+      KERNEL_VERSION="${{ inputs.kernel_version }}"
+      if [[ "$KERNEL_VERSION" == "5.10" ]]; then
+        USE_LLVM_IAS=true
+      fi
+      cd "$KERNEL_PATH/common" || exit 1
+      MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+        RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+        PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+        LD=ld.lld HOSTLD=ld.lld"
+      if [[ -v USE_LLVM_IAS ]]; then
+        MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+      fi
+      export CC="ccache clang" CXX="ccache clang++"
+      make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
+      make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" || exit 1
+      sudo umount "$KERNEL_PATH/common/out" || true
 
     - name: Create Kernel ZIP
       id: create_zip
