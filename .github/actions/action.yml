@@ -496,6 +496,14 @@ runs:
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
         fi
+        # Fix bpf_doc.py syntax warnings
+        BPF_DOC_PY="$KERNEL_PATH/common/scripts/bpf_doc.py"
+        if [ -f "$BPF_DOC_PY" ]; then
+          sed -i 's/re.compile(\('\''\w\+ \)/re.compile(r'\''\w\+ /g' "$BPF_DOC_PY"
+          sed -i 's/re.compile(\('\''\*\)/re.compile(r'\''\*/g' "$BPF_DOC_PY"
+          sed -i 's/re.compile(\('\'' \)/re.compile(r'\'' /g' "$BPF_DOC_PY"
+          sed -i 's/re.compile(\('\''\t\| \)/re.compile(r'\''\t\| /g' "$BPF_DOC_PY"
+        fi
         cd "$KERNEL_PATH/common" || exit 1
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
@@ -507,6 +515,12 @@ runs:
         export CC="ccache clang" CXX="ccache clang++"
         time make -j3 -l2.0 -s O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" gki_defconfig || exit 1
         time make -j3 -l2.0 -s O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2" || exit 1
+        # Check for kernel image
+        KERNEL_IMAGE="$KERNEL_PATH/common/out/arch/arm64/boot/Image"
+        if [ ! -f "$KERNEL_IMAGE" ]; then
+          echo "Error: Kernel image $KERNEL_IMAGE not found. Build failed."
+          exit 1
+        fi
         sudo umount "$KERNEL_PATH/common/out" || true
 
     - name: Create Kernel ZIP
