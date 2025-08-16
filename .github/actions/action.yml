@@ -106,9 +106,13 @@ runs:
         $CCACHE_EXEC -s
         
         echo "[INFO] Downloading repo binary..."
-        mkdir -p "$GITHUB_WORKSPACE/git-repo"
-        if ! curl -sSL -o "$GITHUB_WORKSPACE/git-repo/repo" "${{ env.REPO_BINARY_URL }}"; then
-          echo "[ERROR] Failed to download repo binary from ${{ env.REPO_BINARY_URL }}"
+        REPO_URL="https://storage.googleapis.com/git-repo-downloads/repo"
+        if ! curl -sSL -o "$GITHUB_WORKSPACE/git-repo/repo" "$REPO_URL"; then
+          echo "[ERROR] Failed to download repo binary from $REPO_URL"
+          exit 1
+        fi
+        if [ ! -s "$GITHUB_WORKSPACE/git-repo/repo" ]; then
+          echo "[ERROR] Downloaded repo binary is empty or invalid"
           exit 1
         fi
         chmod a+rx "$GITHUB_WORKSPACE/git-repo/repo"
