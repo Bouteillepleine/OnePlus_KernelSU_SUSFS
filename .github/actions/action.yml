@@ -518,8 +518,8 @@ runs:
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-O2 -Wall -march=armv8-a -fno-strict-aliasing -flto" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-O2 -Wall -march=armv8-a -fno-strict-aliasing -flto"|| exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-O2 -Wall -flto" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-O2 -Wall -flto"|| exit 1
 
     - name: Create Kernel ZIP
       id: create_zip
