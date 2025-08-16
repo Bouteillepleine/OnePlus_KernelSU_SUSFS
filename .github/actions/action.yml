@@ -4,8 +4,8 @@ permissions:
   actions: write   # Allows triggering actions
 
 env:
-  CONFIG_DIR: ${{ inputs.model }}
-  KERNEL_PLATFORM_DIR: ${{ inputs.model }}/kernel_platform
+  CONFIG_DIR: model  # Static placeholder, will prepend inputs.model in steps
+  KERNEL_PLATFORM_DIR: model/kernel_platform
   ANYKERNEL_DIR: AnyKernel3
   SUSFS_DIR: susfs4ksu
   KERNEL_PATCHES_DIR: kernel_patches
@@ -128,7 +128,7 @@ runs:
       shell: bash
       run: |
         echo "[INFO] Creating working directories..."
-        mkdir -p "$GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}" "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}" "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}" "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}" "$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}"
+        mkdir -p "$GITHUB_WORKSPACE/${{ inputs.model }}" "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}" "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}" "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}" "$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}"
         echo "[INFO] Directories created successfully"
         ls -la "$GITHUB_WORKSPACE"
 
@@ -182,9 +182,9 @@ runs:
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
-        echo "[INFO] Creating configuration directory: $GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}..."
-        mkdir -p "$GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}"; exit 1; }
+        echo "[INFO] Creating configuration directory: $GITHUB_WORKSPACE/${{ inputs.model }}..."
+        mkdir -p "$GITHUB_WORKSPACE/${{ inputs.model }}"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -204,12 +204,12 @@ runs:
     - name: Add KernelSU Next
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        if [ ! -d "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" ]; then
-          echo "[ERROR] Directory $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }} does not exist"
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        if [ ! -d "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" ]; then
+          echo "[ERROR] Directory $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform does not exist"
           exit 1
         fi
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -225,12 +225,12 @@ runs:
     - name: Apply SUSFS Patches
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        if [ ! -d "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" ]; then
-          echo "[ERROR] Directory $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }} does not exist"
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        if [ ! -d "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" ]; then
+          echo "[ERROR] Directory $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform does not exist"
           exit 1
         fi
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -319,8 +319,8 @@ runs:
     - name: Apply KSUN Hooks
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}/common"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}/common" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}/common"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -332,8 +332,8 @@ runs:
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}/common"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}/common" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}/common"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -345,8 +345,8 @@ runs:
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -376,8 +376,8 @@ runs:
     - name: Add BBR Support
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -401,8 +401,8 @@ runs:
     - name: Add TTL Target Support
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -415,8 +415,8 @@ runs:
     - name: Others configurations
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -434,8 +434,8 @@ runs:
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -458,8 +458,8 @@ runs:
     - name: Run sed and perl Commands
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.KERNEL_PLATFORM_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -491,8 +491,8 @@ runs:
     - name: Build the Kernel
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -544,8 +544,8 @@ runs:
     - name: Create ZIP Files for Different Formats
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.CONFIG_DIR }}"; exit 1; }
+        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}"
+        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}"; exit 1; }
         echo "[DEBUG] Directory contents:"
         ls -la
         
@@ -593,7 +593,7 @@ runs:
         
         # Clean up temporary directories (exclude ccache to preserve cache)
         echo "[INFO] Cleaning up temporary directories..."
-        for dir in "${{ env.CONFIG_DIR }}" "${{ env.ANYKERNEL_DIR }}" "${{ env.SUSFS_DIR }}" "${{ env.KERNEL_PATCHES_DIR }}"; do
+        for dir in "${{ inputs.model }}" "${{ env.ANYKERNEL_DIR }}" "${{ env.SUSFS_DIR }}" "${{ env.KERNEL_PATCHES_DIR }}"; do
           if [ -d "$GITHUB_WORKSPACE/$dir" ]; then
             sudo rm -rf "$GITHUB_WORKSPACE/$dir" && echo "[INFO] Removed $GITHUB_WORKSPACE/$dir"
           else
@@ -608,6 +608,6 @@ runs:
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-${{ env.CONFIG }}
+        name: kernel-${{ inputs.model }}
         path: |
           *.zip
