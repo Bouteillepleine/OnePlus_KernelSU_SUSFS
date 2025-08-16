@@ -3,22 +3,6 @@ permissions:
   contents: write
   actions: write
 
-env:
-  CONFIG_DIR: model
-  KERNEL_PLATFORM_DIR: model/kernel_platform
-  ANYKERNEL_DIR: AnyKernel3
-  SUSFS_DIR: susfs4ksu
-  KERNEL_PATCHES_DIR: kernel_patches
-  CCACHE_DIR: .ccache
-  ANYKERNEL_REPO: https://github.com/Bouteillepleine/AnyKernel3.git
-  KERNEL_PATCHES_REPO: https://github.com/TheWildJames/kernel_patches.git
-  SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
-  KERNEL_MANIFEST_REPO: https://github.com/OnePlusOSS/kernel_manifest.git
-  REPO_BINARY_URL: https://storage.googleapis.com/git-repo-downloads/repo
-  DEFAULT_ANYKERNEL_BRANCH: gki-2.0
-  DEFAULT_SUSFS_BRANCH: ""
-  REPO_VERSION: v2.16
-
 inputs:
   model:
     required: true
@@ -50,307 +34,260 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.run_id }}
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ runner.os }}-${{ inputs.model }}-
+          ccache-${{ runner.os }}-
     - name: Setup Build System
       shell: bash
       run: |
-        echo "[INFO] Setting up build system..."
         export DEBIAN_FRONTEND=noninteractive
         echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
         
-        echo "[INFO] Initial disk usage:"
         df -h
         
-        echo "[INFO] Removing unnecessary directories..."
-        for dir in /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift; do
-          if [ -d "$dir" ]; then
-            sudo rm -rf "$dir" && echo "[INFO] Removed $dir"
-          else
-            echo "[INFO] $dir not found, skipping"
-          fi
-        done
-        sudo docker image prune --all --force || echo "[INFO] Docker prune failed, continuing"
-        echo "[INFO] Some directories deleted"
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
+        sudo docker image prune --all --force
+        echo "some directories deleted"
         
-        echo "[INFO] Removing unwanted packages..."
-        PACKAGES_TO_REMOVE=(
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync
-          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable
-          google-cloud-sdk imagemagick libmagickcore-dev libmagickwand-dev
-          libmagic-dev ant ant-optional kubectl mercurial apt-transport-https
-          mono-complete libmysqlclient unixodbc-dev yarn chrpath libssl-dev
-          libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev
-          snmp pollinate libpq-dev postgresql-client powershell ruby-full
-          sphinxsearch subversion mongodb-org microsoft-edge-stable
-        )
-        sudo apt-get purge -y "${PACKAGES_TO_REMOVE[@]}" || true
-        sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true) || true
+        sudo apt-get purge -y \
+          aria2 ansible azure-cli shellcheck rpm xorriso zsync \
+          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
+          google-cloud-sdk imagemagick \
+          libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
+          mercurial apt-transport-https mono-complete libmysqlclient \
+          unixodbc-dev yarn chrpath libssl-dev libxft-dev \
+          libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
+          snmp pollinate libpq-dev postgresql-client powershell ruby-full \
+          sphinxsearch subversion mongodb-org microsoft-edge-stable || true
+        
+        sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
         
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
-        echo "[INFO] Some packages purged"
+        echo "some packages purged"
         
-        echo "[INFO] Installing dependencies..."
-        sudo apt-get update
-        sudo apt-get install -y python3 python-is-python3 ccache
+        df -h
         
-        echo "[INFO] Setting up ccache..."
-        mkdir -p "$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}"
-        export CCACHE_EXEC=/usr/bin/ccache
+        echo "Installing Repo, Python, and ccache"
+        sudo apt update
+        sudo apt install -y python3 python-is-python3 ccache
+        
+        mkdir -p ~/.ccache
+        chmod -R u+w ~/.ccache
         echo "CCACHE_EXEC=/usr/bin/ccache" >> $GITHUB_ENV
-        echo "CCACHE_DIR=$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-        $CCACHE_EXEC --max-size=5G
-        $CCACHE_EXEC --set-config=cache_dir="$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}"
-        echo "[INFO] ccache version:"
-        $CCACHE_EXEC --version
-        echo "[INFO] ccache initial stats:"
-        $CCACHE_EXEC -s
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
+        ccache --set-config=cache_dir=$HOME/.ccache
+        ccache --set-config=max_size=5.0G
+        ccache -z
+        echo "ccache initial stats:"
+        ccache -s
         
-        echo "[INFO] Downloading repo binary..."
+        mkdir -p ./git-repo
+        chmod -R u+w ./git-repo
         REPO_URL="https://storage.googleapis.com/git-repo-downloads/repo"
-        if ! curl -sSL -o "$GITHUB_WORKSPACE/git-repo/repo" "$REPO_URL"; then
+        if ! curl -sSL -o ./git-repo/repo "$REPO_URL"; then
           echo "[ERROR] Failed to download repo binary from $REPO_URL"
           exit 1
         fi
-        if [ ! -s "$GITHUB_WORKSPACE/git-repo/repo" ]; then
+        if [ ! -s ./git-repo/repo ]; then
           echo "[ERROR] Downloaded repo binary is empty or invalid"
           exit 1
         fi
-        chmod a+rx "$GITHUB_WORKSPACE/git-repo/repo"
-        echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> $GITHUB_ENV
-        
+        chmod a+rx ./git-repo/repo
+        echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
-        echo "[INFO] Post-cleanup disk usage:"
-        df -h
-    - name: Cache ccache Directory
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.sha }}
-        restore-keys: |
-          ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
-          ccache-${{ inputs.model }}-${{ inputs.android_version }}-
-          ccache-${{ inputs.model }}-
-    - name: Create Working Directories
-      shell: bash
-      run: |
-        echo "[INFO] Creating working directories..."
-        mkdir -p "$GITHUB_WORKSPACE/${{ inputs.model }}" "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}" "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}" "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}" "$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}"
-        echo "[INFO] Directories created successfully"
-        ls -la "$GITHUB_WORKSPACE"
-    - name: Optimize Memory Management
-      shell: bash
-      run: |
-        echo "[INFO] Optimizing memory management..."
-        sudo -E sysctl vm.swappiness=1
-        sudo -E sysctl vm.min_free_kbytes=32768
-        sudo -E sysctl vm.watermark_scale_factor=100
-        sudo -E sysctl vm.watermark_boost_factor=15000
-        sudo -E sysctl vm.overcommit_memory=1
-        sudo -E sysctl vm.page-cluster=0
-        sudo -E modprobe zram
-        echo "0" | sudo -E tee /sys/class/block/zram0/mem_limit
-        echo "zstd" | sudo -E tee /sys/class/block/zram0/comp_algorithm
-        echo "$(awk 'NR==1{print $2*1000}' </proc/meminfo)" | sudo -E tee /sys/class/block/zram0/disksize
-        sudo -E mkswap /dev/zram0
-        sudo -E swapon -p 100 /dev/zram0
-        echo "Y" | sudo -E tee /sys/kernel/mm/lru_gen/enabled
-        echo "1000" | sudo -E tee /sys/kernel/mm/lru_gen/min_ttl_ms
-        echo "1" | sudo -E tee /sys/kernel/mm/swap/vma_ra_enabled
+
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
-        echo "[INFO] Cloning AnyKernel3 and other dependencies..."
-        ANYKERNEL_BRANCH="${{ env.DEFAULT_ANYKERNEL_BRANCH }}"
+        echo "Cloning AnyKernel3 and other dependencies..."
+        
+        ANYKERNEL_BRANCH="gki-2.0"
         if [[ -z "${{ inputs.susfs_branch }}" ]]; then
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         else
           SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
         
-        echo "[INFO] Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
-        echo "[INFO] Using branch for SUSFS: $SUSFS_BRANCH"
+        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
+        echo "Using branch for SUSFS: $SUSFS_BRANCH"
         
-        git clone ${{ env.ANYKERNEL_REPO }} -b "$ANYKERNEL_BRANCH" "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}"
-        git clone ${{ env.KERNEL_PATCHES_REPO }} "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}"
+        git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone https://github.com/TheWildJames/kernel_patches.git
         
-        git clone ${{ env.SUSFS_REPO }} "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}"
-        pushd "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}"; exit 1; }
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        cd susfs4ksu || exit 1
+        
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
-          echo "[ERROR] '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
+          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
-        popd
+
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
-        echo "[INFO] Creating configuration directory: $GITHUB_WORKSPACE/${{ inputs.model }}..."
-        mkdir -p "$GITHUB_WORKSPACE/${{ inputs.model }}"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Creating folder for configuration: $CONFIG..."
+        mkdir -p "$CONFIG"
+        cd "$CONFIG"
         
-        echo "[INFO] Initializing and syncing kernel source..."
+        echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u ${{ env.KERNEL_MANIFEST_REPO }} -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=${{ env.REPO_VERSION }} --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
-          $REPO init -u ${{ env.KERNEL_MANIFEST_REPO }} -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=${{ env.REPO_VERSION }} --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
-        popd
+    
     - name: Add KernelSU Next
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        if [ ! -d "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" ]; then
-          echo "[ERROR] Directory $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform does not exist"
-          exit 1
-        fi
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         
-        echo "[INFO] Adding KernelSU Next..."
+        echo "Adding KernelSU Next..."
+        
         if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         else
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
         fi
+        
         git submodule update --init --recursive
-        popd
+
     - name: Apply SUSFS Patches
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        if [ ! -d "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" ]; then
-          echo "[ERROR] Directory $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform does not exist"
-          exit 1
-        fi
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         
-        echo "[INFO] Applying SUSFS patches..."
-        cp "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch" ./common/
-        cp "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}/kernel_patches/fs/*" ./common/fs/
-        cp "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}/kernel_patches/include/linux/*" ./common/include/linux/
+        echo "Applying SUSFS patches..."
         
-        pushd ./KernelSU-Next || { echo "[ERROR] Failed to change to KernelSU-Next"; exit 1; }
+        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
+        cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        
+        cd ./KernelSU-Next
+        
+        echo "Applying next SUSFS patches..."
         susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
         BASE_VERSION=10200
-        pushd ./kernel || { echo "[ERROR] Failed to change to kernel"; exit 1; }
+        cd ./kernel
         KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
         sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
-        popd
+        cd ..
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-        echo "[INFO] KernelSU Next Version: $KSU_VERSION"
-        echo "[INFO] SusFS Version: $susfs_version"
+        echo "KernelSU Next Version: $KSU_VERSION"
+        echo "SusFS Version: $susfs_version"
         
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
-            cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
-            patch -p1 --forward < ksun_susfs_latest.patch || { echo "[ERROR] Failed to apply ksun_susfs_latest.patch"; exit 1; }
+            cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
             ;;
           "v1.5.8")
-            cp "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || { echo "[ERROR] Failed to apply 10_enable_susfs_for_ksu.patch"; exit 1; }
-            cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch || { echo "[ERROR] Failed to apply fix_apk_sign.c.patch"; exit 1; }
-            cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch || { echo "[ERROR] Failed to apply fix_core_hook.c.patch"; exit 1; }
-            cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch || { echo "[ERROR] Failed to apply fix_selinux.c.patch"; exit 1; }
-            cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch || { echo "[ERROR] Failed to apply fix_ksud.c.patch"; exit 1; }
+            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
           "v1.5.9")
-            cp "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || { echo "[ERROR] Failed to apply 10_enable_susfs_for_ksu.patch"; exit 1; }
+            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
+            
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-              echo "[INFO] Patching file: $file.c with fix_$file.c.patch"
-              patch -p1 --forward < "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || { echo "[ERROR] Failed to apply fix_$file.c.patch"; exit 1; }
+              echo "Patching file: $file.c with fix_$file.c.patch"
+              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
-            patch -p1 --forward < "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || { echo "[ERROR] Failed to apply fix_kernel_compat.c.patch"; exit 1; }
+            
+            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
-            echo "[ERROR] Invalid version: $susfs_version"
+            echo "Invalid version: $susfs_version"
             exit 1
             ;;
         esac
-        popd
+        patch -p1 --forward < ksun_susfs_latest.patch || true
         
-        pushd ./common || { echo "[ERROR] Failed to change to common"; exit 1; }
+        cd ../common
+        
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
           else
-            echo "[INFO] Line already present. Skipping insert."
+            echo "Line already present. Skipping insert."
           fi
         fi
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || { echo "[ERROR] Failed to apply SUSFS GKI patch"; exit 1; }
+        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
         
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
+        
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          echo "[INFO] Patching ptrace!"
-          patch -p1 -F 3 < "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/gki_ptrace.patch" || { echo "[ERROR] Failed to apply gki_ptrace.patch"; exit 1; }
+          echo "Patching ptrace!"
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
         else
-          echo "[INFO] Kernel >= $MIN_VERSION, skipping ptrace patch"
+          echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
         
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          echo "[INFO] Patching hmbird!"
+          echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/oneplus/hmbird/hmbird_kernel_patch.patch" || { echo "[ERROR] Failed to apply hmbird_kernel_patch.patch"; exit 1; }
-          pushd ./kernel/sched || { echo "[ERROR] Failed to change to kernel/sched"; exit 1; }
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
+          echo "Patching hmbird files!"
+          cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/oneplus/hmbird/hmbird_files_patch.patch" || { echo "[ERROR] Failed to apply hmbird_files_patch.patch"; exit 1; }
-          popd
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "[INFO] Not OPAce5Pro / OP13, skipping hmbird patch"
+          echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
         fi
-        popd
+
     - name: Apply KSUN Hooks
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform/common"
+        echo "Applying KSUN Hooks..."
+        cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
+        patch -p1 < ./manual_hooks.patch
         
-        echo "[INFO] Applying KSUN Hooks..."
-        cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/scope_min_manual_hooks_v1.4.patch" ./manual_hooks.patch
-        patch -p1 < ./manual_hooks.patch || { echo "[ERROR] Failed to apply manual_hooks.patch"; exit 1; }
-        popd
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform/common"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
-        
-        echo "[INFO] Applying Hide Stuff patches..."
-        cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/69_hide_stuff.patch" ./
-        patch -p1 -F 3 < 69_hide_stuff.patch || { echo "[ERROR] Failed to apply 69_hide_stuff.patch"; exit 1; }
-        popd
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform/common"
+        cp ../../../kernel_patches/69_hide_stuff.patch ./
+        patch -p1 -F 3 < 69_hide_stuff.patch
+
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         
-        echo "[INFO] Adding configuration settings to gki_defconfig..."
+        echo "Adding configuration settings to gki_defconfig..."
+        
         echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
         echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -367,23 +304,23 @@ runs:
         echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        popd
+
     - name: Add BBR Support
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         
-        echo "[INFO] Adding BBR support to gki_defconfig..."
+        echo "Adding configuration settings to gki_defconfig..."
         echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
         echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
         sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
@@ -393,29 +330,24 @@ runs:
         echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-        popd
+    
     - name: Add TTL Target Support
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         
-        echo "[INFO] Adding TTL target support to gki_defconfig..."
+        echo "Adding configuration settings to gki_defconfig..."
         echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-        popd
+    
     - name: Others configurations
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
-        
-        echo "[INFO] Adding other configurations to gki_defconfig..."
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+    
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
@@ -424,17 +356,14 @@ runs:
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
-        popd
+    
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
-        
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
-          echo "[INFO] Disabling OnePlus kernel modules..."
+          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
@@ -447,16 +376,15 @@ runs:
           sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
           sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
         fi
-        popd
+    
     - name: Run sed and perl Commands
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
         
-        echo "[INFO] Running sed commands..."
+        echo "Running sed commands..."
+        
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
@@ -465,34 +393,31 @@ runs:
         sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion
         sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion
         sed -i '$s|echo "\$res"|echo "\$res"|' ./external/dtc/scripts/setlocalversion
-        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "[INFO] No stamp.bzl!"
+        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
         sed -i 's/-dirty//' ./common/scripts/setlocalversion
         sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
         sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
-        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "[INFO] No workspace_status_stamp.py!"
+        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
         
         sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
         sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
         
-        echo "[INFO] Running perl commands..."
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
-        popd
+
     - name: Build the Kernel
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG"
         
-        echo "[INFO] Building the kernel with ccache..."
+        echo "Building the kernel with ccache..."
         sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
         
-        rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "[INFO] No protected exports!"
-        rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "[INFO] No protected exports!"
+        rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+        rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
         
         BUILD_TYPE="gki"
         BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
@@ -501,20 +426,17 @@ runs:
           BAZEL_ARGS+=(-g)
         fi
         
-        export CCACHE_EXEC=/usr/bin/ccache
-        export CC="ccache clang"
-        export CXX="ccache clang++"
+        export CC="ccache gcc"
+        export CXX="ccache g++"
         
         (stdbuf -oL bash -c '
           while true; do
-            echo "[INFO] === $(date) ==="
+            echo "=== $(date) ==="
             free -h
-            echo "[INFO] ======"
+            echo "======"
             df -h
-            echo "[INFO] ======"
+            echo "======"
             top -b -n 1 | head -n 15
-            echo "[INFO] ccache stats:"
-            $CCACHE_EXEC -s
             echo ""
             sleep 60
           done
@@ -524,66 +446,74 @@ runs:
         
         if [ -f ./kernel_platform/build_with_bazel.py ]; then
           ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
+          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" --cc=ccache -o "$(pwd)/out"
         else
-          LTO=thin CC="$CC" CXX="$CXX" ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+          LTO=thin CC="ccache gcc" CXX="ccache g++" ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
         fi
-        
-        echo "[INFO] Final ccache stats:"
-        $CCACHE_EXEC -s
-        popd
+
+    - name: Log ccache Statistics
+      shell: bash
+      run: |
+        echo "ccache final stats:"
+        ccache -s
+
     - name: Create ZIP Files for Different Formats
       shell: bash
       run: |
-        echo "[NAVIGATE] Entering directory: $GITHUB_WORKSPACE/${{ inputs.model }}"
-        pushd "$GITHUB_WORKSPACE/${{ inputs.model }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ inputs.model }}"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG"
         
-        echo "[INFO] Copying Image..."
-        cp ./out/dist/Image "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}/Image"
+        echo "Copying Image"
+        cp ./out/dist/Image ../AnyKernel3/Image
         
-        echo "[NAVIGATE] Entering AnyKernel3 directory..."
-        pushd "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}" || { echo "[ERROR] Failed to change to $GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}"; exit 1; }
-        echo "[DEBUG] Directory contents:"
-        ls -la
+        echo "Navigating to AnyKernel3 directory..."
+        cd ../AnyKernel3
         
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/oneplus/hmbird/bins/*" ./tools/
-          patch -F 3 < "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/oneplus/hmbird/ak3_hmbird_patch.patch" || { echo "[ERROR] Failed to apply ak3_hmbird_patch.patch"; exit 1; }
+          cp ../kernel_patches/oneplus/hmbird/bins/* ./tools/
+          patch -F 3 < ../kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch
         fi
         
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
-        echo "[INFO] Creating zip file $ZIP_NAME..."
-        zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" ./*
-        popd
+        echo "Creating zip file $ZIP_NAME..."
+        zip -r "../$ZIP_NAME" ./*
+
+    - name: Upload Build Artifacts
+      shell: bash
+      run: |
+        echo "Uploading build artifacts..."
+        for file in *.zip; do
+          if [ -f "$file" ]; then
+            echo "Uploading $file..."
+            actions/upload-artifact@v4 --name kernel-${{ env.CONFIG }} --path "$file"
+          else
+            echo "[WARNING] No zip files found to upload"
+          fi
+        done
+
     - name: Cleanup Resources
       if: always()
       shell: bash
       run: |
         echo "[INFO] Cleaning up resources..."
-        
-        # Disable and remove zram
-        if [ -e /dev/zram0 ]; then
-          echo "[INFO] Disabling zram swap..."
-          sudo swapoff /dev/zram0 || echo "[ERROR] Failed to disable zram swap, continuing"
-          sudo rmmod zram || echo "[ERROR] Failed to remove zram module, continuing"
+        if [ -d /dev/zram0 ]; then
+          echo "[INFO] Disabling zram..."
+          sudo swapoff /dev/zram0 || true
+          sudo rmmod zram || true
         else
           echo "[INFO] zram not active, skipping"
         fi
         
-        # Reset sysctl settings to reasonable defaults
         echo "[INFO] Resetting sysctl settings..."
-        sudo sysctl vm.swappiness=60 || echo "[ERROR] Failed to reset vm.swappiness"
-        sudo sysctl vm.min_free_kbytes=67584 || echo "[ERROR] Failed to reset vm.min_free_kbytes"
-        sudo sysctl vm.watermark_scale_factor=10 || echo "[ERROR] Failed to reset vm.watermark_scale_factor"
-        sudo sysctl vm.watermark_boost_factor=0 || echo "[ERROR] Failed to reset vm.watermark_boost_factor"
-        sudo sysctl vm.overcommit_memory=0 || echo "[ERROR] Failed to reset vm.overcommit_memory"
-        sudo sysctl vm.page-cluster=3 || echo "[ERROR] Failed to reset vm.page-cluster"
+        sudo sysctl -w vm.swappiness=60
+        sudo sysctl -w vm.min_free_kbytes=67584
+        sudo sysctl -w vm.watermark_scale_factor=10
+        sudo sysctl -w vm.watermark_boost_factor=0
+        sudo sysctl -w vm.overcommit_memory=0
+        sudo sysctl -w vm.page-cluster=3
         
-        # Clean up temporary directories (exclude ccache to preserve cache)
         echo "[INFO] Cleaning up temporary directories..."
-        for dir in "${{ inputs.model }}" "${{ env.ANYKERNEL_DIR }}" "${{ env.SUSFS_DIR }}" "${{ env.KERNEL_PATCHES_DIR }}"; do
+        for dir in "${{ inputs.model }}" "AnyKernel3" "susfs4ksu" "kernel_patches"; do
           if [ -d "$GITHUB_WORKSPACE/$dir" ]; then
             sudo rm -rf "$GITHUB_WORKSPACE/$dir" && echo "[INFO] Removed $GITHUB_WORKSPACE/$dir"
           else
@@ -591,12 +521,5 @@ runs:
           fi
         done
         
-        # Final disk usage
         echo "[INFO] Final disk usage:"
         df -h
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-${{ inputs.model }}
-        path: |
-          *.zip
