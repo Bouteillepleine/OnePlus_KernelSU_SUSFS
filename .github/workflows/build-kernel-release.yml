@@ -100,8 +100,12 @@ jobs:
             manifest: oneplus_12r_v.xml
             android_version: android13
             kernel_version: "5.15"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          path: .  # Explicitly set checkout path to repository root
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
         run: |
@@ -136,10 +140,6 @@ jobs:
           fi
           echo "[INFO] Selected SusFS branch: $SUSFS_BRANCH"
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Build Kernel
         uses: ./.github/actions
         with:
@@ -151,6 +151,12 @@ jobs:
           kernel_version: ${{ matrix.kernel_version }}
           ksun_branch: ${{ inputs.ksun_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+      - name: Debug Repository Structure
+        if: always()
+        run: |
+          echo "[DEBUG] Repository structure:"
+          ls -la $GITHUB_WORKSPACE
+          ls -la $GITHUB_WORKSPACE/.github/actions || echo "[INFO] .github/actions directory not found"
 
   build-batch-2:
     name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
@@ -212,8 +218,12 @@ jobs:
             manifest: oneplus_13s.xml
             android_version: android15
             kernel_version: "6.6"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          path: .  # Explicitly set checkout path to repository root
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
         run: |
@@ -248,10 +258,6 @@ jobs:
           fi
           echo "[INFO] Selected SusFS branch: $SUSFS_BRANCH"
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Build Kernel
         uses: ./.github/actions
         with:
@@ -263,12 +269,18 @@ jobs:
           kernel_version: ${{ matrix.kernel_version }}
           ksun_branch: ${{ inputs.ksun_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+      - name: Debug Repository Structure
+        if: always()
+        run: |
+          echo "[DEBUG] Repository structure:"
+          ls -la $GITHUB_WORKSPACE
+          ls -la $GITHUB_WORKSPACE/.github/actions || echo "[INFO] .github/actions directory not found"
 
   trigger-release:
     needs:
       - build-batch-1
       - build-batch-2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ inputs.make_release }}
     env:
       REPO_OWNER: ${{ github.repository_owner }}
@@ -277,75 +289,21 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
+        with:
+          path: .  # Explicitly set checkout path to repository root
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./downloaded-artifacts
-
-      - name: Extract Versions from Artifacts
-        id: extract-versions
+      - name: Debug Downloaded Artifacts
         run: |
-          echo "[INFO] Extracting versions from artifact names..."
-          for file in ./downloaded-artifacts/kernel-*/*.zip; do
-            if [[ "$file" =~ Next_([0-9]+)_SUSFS_([^_]+)\.zip ]]; then
-              KSUVER="${BASH_REMATCH[1]}"
-              SUSVER="${BASH_REMATCH[2]}"
-              echo "[INFO] Found KSUVER=$KSUVER, SUSVER=$SUSVER"
-              echo "KSUVER=$KSUVER" >> $GITHUB_ENV
-              echo "SUSVER=$SUSVER" >> $GITHUB_ENV
-              break
-            fi
-          done
-          if [[ -z "$KSUVER" || -z "$SUSVER" ]]; then
-            echo "[ERROR] Failed to extract KSUVER or SUSVER from artifact names"
-            exit 1
-          fi
-
-      - name: Generate and Create New Tag
+          echo "[DEBUG] Downloaded artifacts structure:"
+          ls -la ./downloaded-artifacts
+      - name: Create Release
         run: |
-          echo "[INFO] Generating new tag..."
-          BASE_TAG="v${{ env.SUSVER }}-r0"
-          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name' || echo "")
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="$BASE_TAG"
-          else
-            LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
-          fi
-          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
-          echo "[INFO] New tag: $NEW_TAG"
-          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
-          git tag "$NEW_TAG" || { echo "[ERROR] Failed to create tag $NEW_TAG"; exit 1; }
-          git push origin "$NEW_TAG" || { echo "[ERROR] Failed to push tag $NEW_TAG"; exit 1; }
-
-      - name: Create GitHub Release
-        run: |
-          echo "[INFO] Creating GitHub release for tag ${{ env.NEW_TAG }}..."
-          RELEASE_NAME="*TEST BUILD* OnePlus Kernels With KernelSU Next v${{ env.KSUVER }} & SUSFS v${{ env.SUSVER }} *TEST BUILD*"
-          RELEASE_NOTES="This release contains KernelSU Next v${{ env.KSUVER }} and SUSFS v${{ env.SUSVER }}\n\nModule:\n-> https://github.com/sidex15/ksu_module_susfs\n\nNon-Official Managers:\n-> https://github.com/KernelSU-Next/KernelSU-Next"
-          gh release create "${{ env.NEW_TAG }}" \
-            --title "$RELEASE_NAME" \
-            --notes "$RELEASE_NOTES" \
-            --prerelease \
-            || { echo "[ERROR] Failed to create release for tag ${{ env.NEW_TAG }}"; exit 1; }
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Release Assets Dynamically
-        run: |
-          echo "[INFO] Uploading release assets for tag ${{ env.NEW_TAG }}..."
-          for file in ./downloaded-artifacts/kernel-*/*.zip; do
-            if [ -f "$file" ]; then
-              echo "[INFO] Uploading $file..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" || { echo "[ERROR] Failed to upload $file"; exit 1; }
-            else
-              echo "[INFO] No .zip files found in ./downloaded-artifacts/kernel-*"
-            fi
-          done
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Display Files Uploaded
-        run: |
-          echo "[INFO] GitHub release created with the following files:"
-          ls -l ./downloaded-artifacts/kernel-*/*.zip || echo "[INFO] No files found"
+          echo "[INFO] Creating release for all models..."
+          TAG_NAME="v${{ github.run_id }}-KSU-${{ inputs.ksun_branch }}"
+          gh release create "$TAG_NAME" \
+            --title "Kernel Release for Multiple Models" \
+            --notes "Kernel builds with KernelSU and SUSFS for multiple OnePlus models" \
+            ./downloaded-artifacts/**/*.zip
