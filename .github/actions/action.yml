@@ -1,10 +1,10 @@
 name: Build
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 env:
-  CONFIG_DIR: model  # Static placeholder, will prepend inputs.model in steps
+  CONFIG_DIR: model
   KERNEL_PLATFORM_DIR: model/kernel_platform
   ANYKERNEL_DIR: AnyKernel3
   SUSFS_DIR: susfs4ksu
@@ -105,15 +105,18 @@ runs:
         echo "[INFO] ccache initial stats:"
         $CCACHE_EXEC -s
         
+        echo "[INFO] Downloading repo binary..."
         mkdir -p "$GITHUB_WORKSPACE/git-repo"
-        curl -sSL ${{ env.REPO_BINARY_URL }} > "$GITHUB_WORKSPACE/git-repo/repo"
+        if ! curl -sSL -o "$GITHUB_WORKSPACE/git-repo/repo" "${{ env.REPO_BINARY_URL }}"; then
+          echo "[ERROR] Failed to download repo binary from ${{ env.REPO_BINARY_URL }}"
+          exit 1
+        fi
         chmod a+rx "$GITHUB_WORKSPACE/git-repo/repo"
         echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> $GITHUB_ENV
         
         echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
         echo "[INFO] Post-cleanup disk usage:"
         df -h
-
     - name: Cache ccache Directory
       uses: actions/cache@v4
       with:
@@ -123,7 +126,6 @@ runs:
           ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
           ccache-${{ inputs.model }}-${{ inputs.android_version }}-
           ccache-${{ inputs.model }}-
-
     - name: Create Working Directories
       shell: bash
       run: |
@@ -131,7 +133,6 @@ runs:
         mkdir -p "$GITHUB_WORKSPACE/${{ inputs.model }}" "$GITHUB_WORKSPACE/${{ inputs.model }}/kernel_platform" "$GITHUB_WORKSPACE/${{ env.ANYKERNEL_DIR }}" "$GITHUB_WORKSPACE/${{ env.SUSFS_DIR }}" "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}" "$GITHUB_WORKSPACE/${{ env.CCACHE_DIR }}"
         echo "[INFO] Directories created successfully"
         ls -la "$GITHUB_WORKSPACE"
-
     - name: Optimize Memory Management
       shell: bash
       run: |
@@ -151,7 +152,6 @@ runs:
         echo "Y" | sudo -E tee /sys/kernel/mm/lru_gen/enabled
         echo "1000" | sudo -E tee /sys/kernel/mm/lru_gen/min_ttl_ms
         echo "1" | sudo -E tee /sys/kernel/mm/swap/vma_ra_enabled
-
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
@@ -178,7 +178,6 @@ runs:
           exit 1
         fi
         popd
-
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
@@ -200,7 +199,6 @@ runs:
         $REPO --version
         $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
         popd
-
     - name: Add KernelSU Next
       shell: bash
       run: |
@@ -221,7 +219,6 @@ runs:
         fi
         git submodule update --init --recursive
         popd
-
     - name: Apply SUSFS Patches
       shell: bash
       run: |
@@ -315,7 +312,6 @@ runs:
           echo "[INFO] Not OPAce5Pro / OP13, skipping hmbird patch"
         fi
         popd
-
     - name: Apply KSUN Hooks
       shell: bash
       run: |
@@ -328,7 +324,6 @@ runs:
         cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/next/scope_min_manual_hooks_v1.4.patch" ./manual_hooks.patch
         patch -p1 < ./manual_hooks.patch || { echo "[ERROR] Failed to apply manual_hooks.patch"; exit 1; }
         popd
-
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
@@ -341,7 +336,6 @@ runs:
         cp "$GITHUB_WORKSPACE/${{ env.KERNEL_PATCHES_DIR }}/69_hide_stuff.patch" ./
         patch -p1 -F 3 < 69_hide_stuff.patch || { echo "[ERROR] Failed to apply 69_hide_stuff.patch"; exit 1; }
         popd
-
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -372,7 +366,6 @@ runs:
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
         popd
-
     - name: Add BBR Support
       shell: bash
       run: |
@@ -397,7 +390,6 @@ runs:
         echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
         popd
-
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -411,7 +403,6 @@ runs:
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         popd
-
     - name: Others configurations
       shell: bash
       run: |
@@ -430,7 +421,6 @@ runs:
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
         popd
-
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
@@ -454,7 +444,6 @@ runs:
           sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
         fi
         popd
-
     - name: Run sed and perl Commands
       shell: bash
       run: |
@@ -487,7 +476,6 @@ runs:
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
         popd
-
     - name: Build the Kernel
       shell: bash
       run: |
@@ -540,7 +528,6 @@ runs:
         echo "[INFO] Final ccache stats:"
         $CCACHE_EXEC -s
         popd
-
     - name: Create ZIP Files for Different Formats
       shell: bash
       run: |
@@ -566,7 +553,6 @@ runs:
         echo "[INFO] Creating zip file $ZIP_NAME..."
         zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" ./*
         popd
-
     - name: Cleanup Resources
       if: always()
       shell: bash
@@ -604,7 +590,6 @@ runs:
         # Final disk usage
         echo "[INFO] Final disk usage:"
         df -h
-
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
