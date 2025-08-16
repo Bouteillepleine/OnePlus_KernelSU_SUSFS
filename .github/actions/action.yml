@@ -88,10 +88,14 @@ runs:
         fi
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
-        git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        # Clone repositories using the branch names
+        git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
+          
+        # Clone the repo with all branches and history (can optimize later if needed)
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
+        
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
@@ -259,6 +263,8 @@ runs:
         echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+        
+        # Add additional tmpfs config setting
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -273,9 +279,17 @@ runs:
         echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+          
         echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
-
+        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
+    
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -285,6 +299,41 @@ runs:
         echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+    - name: Others configurations
+      shell: bash
+      run: |
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+        echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig                    
+        # lto thin，O2 
+        echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig          
+        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+    - name: Disable OnePlus Kernel Module
+      shell: bash
+      run: |
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+        if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
+        sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+        fi
 
     - name: Save Build Metadata
       shell: bash
@@ -354,9 +403,9 @@ runs:
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
         tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
         tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./common/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Wild"/' ./external/dtc/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./common/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./msm-kernel/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
         chmod +x ./msm-kernel/scripts/setlocalversion
         chmod +x ./external/dtc/scripts/setlocalversion
