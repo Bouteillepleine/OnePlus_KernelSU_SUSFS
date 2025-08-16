@@ -406,6 +406,22 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025"}' ./msm-kernel/scripts/mkcompile_h
         
         find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
+        
+        echo "Configuring Bazel to use ccache..."
+        echo "build --action_env=CC=ccache gcc" >> .bazelrc
+        echo "build --action_env=CXX=ccache g++" >> .bazelrc
+
+    - name: Debug Bazel Configuration
+      shell: bash
+      run: |
+        echo "Bazel version:"
+        bazel version
+        echo "Bazelrc contents:"
+        cat .bazelrc || echo "No .bazelrc found"
+        echo "CC environment variable:"
+        echo $CC
+        echo "CXX environment variable:"
+        echo $CXX
 
     - name: Build the Kernel
       shell: bash
@@ -446,7 +462,7 @@ runs:
         
         if [ -f ./kernel_platform/build_with_bazel.py ]; then
           ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" --cc=ccache -o "$(pwd)/out"
+          ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
         else
           LTO=thin CC="ccache gcc" CXX="ccache g++" ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
         fi
