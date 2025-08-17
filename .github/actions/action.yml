@@ -35,27 +35,18 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install ccache
+    - name: Install and Setup ccache
       shell: bash
       run: |
         sudo apt-get update
         sudo apt-get install -y ccache
-        which ccache
-        ccache --version
-
-    - name: Setup ccache
-      shell: bash
-      run: |
         mkdir -p $HOME/.ccache
         /usr/bin/ccache -M 10G
-        /usr/bin/ccache -o compression=true
-        /usr/bin/ccache -o compression_level=9
-        /usr/bin/ccache -o max_size=10G
-        /usr/bin/ccache -z
+        echo "Installation complete. Setting up environment..."
         echo "USE_CCACHE=1" >> "$GITHUB_ENV"
         echo "CCACHE_EXEC=/usr/bin/ccache" >> "$GITHUB_ENV"
         echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-
+    
     - name: Setup Build System
       shell: bash
       run: |
