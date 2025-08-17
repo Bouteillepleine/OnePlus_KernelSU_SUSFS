@@ -501,7 +501,7 @@ runs:
           echo "Installing missing LLVM tools:$MISSING_TOOLS"
           sudo apt-get update
           sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $MISSING_TOOLS; do
+          for tool in $LLVM_TOOLS; do
             if ! command -v $tool >/dev/null 2>&1; then
               echo "Error: Failed to install $tool"
               exit 1
@@ -514,18 +514,18 @@ runs:
         fi
         cd "$KERNEL_PATH/common" || exit 1
         DEFCONFIG_PATH="$KERNEL_PATH/common/arch/arm64/configs/gki_defconfig"
+        echo "Checking for gki_defconfig at $DEFCONFIG_PATH"
         if [ ! -f "$DEFCONFIG_PATH" ]; then
           echo "Error: gki_defconfig not found at $DEFCONFIG_PATH"
           echo "Listing available defconfigs in $KERNEL_PATH/common/arch/arm64/configs/:"
           ls -l "$KERNEL_PATH/common/arch/arm64/configs/" || echo "No defconfigs found"
-          # Attempt to use a fallback defconfig
           FALLBACK_DEFCONFIG="$KERNEL_PATH/common/arch/arm64/configs/defconfig"
           if [ -f "$FALLBACK_DEFCONFIG" ]; then
             echo "Falling back to defconfig at $FALLBACK_DEFCONFIG"
             DEFCONFIG="defconfig"
           else
-            echo "Error: No fallback defconfig found"
-            exit 1
+            echo "No fallback defconfig found, attempting 'make oldconfig'..."
+            DEFCONFIG=""
           fi
         else
           DEFCONFIG="gki_defconfig"
@@ -540,7 +540,14 @@ runs:
         if [[ -n "${{ env.USE_CCACHE }}" ]]; then
           MAKE_ARGS="CC=${{ env.CCACHE_EXEC }} ${SELECTED_CLANG} $MAKE_ARGS"
         fi
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" $DEFCONFIG || exit 1
+        if [ -n "$DEFCONFIG" ]; then
+          echo "Running make $DEFCONFIG..."
+          make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" $DEFCONFIG || exit 1
+        else
+          echo "Running make oldconfig as fallback..."
+          make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" oldconfig || exit 1
+        fi
+        echo "Running main kernel build..."
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" || exit 1
 
     - name: Create Kernel ZIP
