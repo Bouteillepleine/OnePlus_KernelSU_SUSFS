@@ -167,7 +167,7 @@ runs:
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
             ;;
           "v1.5.8")
-            cp_plural ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
             patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
@@ -522,10 +522,10 @@ runs:
         fi
         if [[ -n "${{ env.USE_CCACHE }}" ]]; then
           MAKE_ARGS="CC=${{ env.CCACHE_EXEC }} ${SELECTED_CLANG} $MAKE_ARGS"
-        fi
+        fi        
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" || exit 1
-        
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
