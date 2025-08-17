@@ -44,7 +44,7 @@ on:
         description: "Choose SusFS Branch for android15-6.6"
         type: string
         default: "gki-android15-6.6"
-
+      
 jobs:
   build-batch-1:
     name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
@@ -137,43 +137,10 @@ jobs:
           fi
           
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      - name: Log Manifest Content
-        run: |
-          echo "Fetching manifest for ${{ matrix.model }}: ${{ matrix.manifest }}"
-          if [[ "${{ matrix.manifest }}" == https://* ]]; then
-            curl -Ls ${{ matrix.manifest }} || echo "Failed to fetch manifest content"
-          else
-            curl -Ls "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/${{ matrix.branch }}/${{ matrix.manifest }}" || echo "Failed to fetch manifest content"
-          fi
-
-      - name: Install and Setup ccache
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ccache
-          mkdir -p $HOME/.ccache
-          ccache --version
-          ccache -M 10G
-          ccache -o compression=true
-          ccache -o compression_level=9
-          ccache -o max_size=10G
-          ccache -z
-          echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          echo "USE_CCACHE=1" >> "$GITHUB_ENV"
-
-      - name: Cache ccache
-        uses: actions/cache@v3
-        with:
-          path: $HOME/.ccache
-          key: ccache-Linux-${{ matrix.model }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}
-          restore-keys: ccache-Linux-
 
       - name: Build Kernel
         uses: ./.github/actions
@@ -226,13 +193,13 @@ jobs:
           - model: OP-ACE-3V
             soc: pineapple
             branch: oneplus/sm7675
-            manifest: oneplus_ace_3v_v.xml  
+            manifest: oneplus_ace_3v_v.xml
             android_version: android14
             kernel_version: "6.1"
           - model: OP-NORD-4
             soc: pineapple
             branch: oneplus/sm7675
-            manifest: oneplus_nord_4_v.xml  
+            manifest: oneplus_nord_4_v.xml
             android_version: android14
             kernel_version: "6.1"
           - model: OP-PAD-2
@@ -245,8 +212,8 @@ jobs:
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_13s.xml
-            android_version: android14
-            kernel_version: "6.1"
+            android_version: android15
+            kernel_version: "6.6"
           - model: OP-Ace3-Pro
             soc: pineapple
             branch: oneplus/sm8650
@@ -290,43 +257,10 @@ jobs:
           fi
           
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      - name: Log Manifest Content
-        run: |
-          echo "Fetching manifest for ${{ matrix.model }}: ${{ matrix.manifest }}"
-          if [[ "${{ matrix.manifest }}" == https://* ]]; then
-            curl -Ls ${{ matrix.manifest }} || echo "Failed to fetch manifest content"
-          else
-            curl -Ls "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/${{ matrix.branch }}/${{ matrix.manifest }}" || echo "Failed to fetch manifest content"
-          fi
-
-      - name: Install and Setup ccache
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ccache
-          mkdir -p $HOME/.ccache
-          ccache --version
-          ccache -M 10G
-          ccache -o compression=true
-          ccache -o compression_level=9
-          ccache -o max_size=10G
-          ccache -z
-          echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          echo "USE_CCACHE=1" >> "$GITHUB_ENV"
-
-      - name: Cache ccache
-        uses: actions/cache@v3
-        with:
-          path: $HOME/.ccache
-          key: ccache-Linux-${{ matrix.model }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}
-          restore-keys: ccache-Linux-
 
       - name: Build Kernel
         uses: ./.github/actions
@@ -372,7 +306,6 @@ jobs:
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
           git tag $NEW_TAG
           git push origin $NEW_TAG
-
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -426,7 +359,6 @@ jobs:
           # Output for debugging
           echo "--- Final Release Notes ---"
           cat release_notes.md
-
       - name: Create GitHub Release
         run: |
           gh release create "${{ env.NEW_TAG }}" \
@@ -434,7 +366,6 @@ jobs:
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --prerelease
-
       - name: Upload Release Assets Dynamically
         run: |
           for file in ./downloaded-artifacts/*/*.zip; do
