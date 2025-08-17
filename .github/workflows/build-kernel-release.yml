@@ -44,7 +44,7 @@ on:
         description: "Choose SusFS Branch for android15-6.6"
         type: string
         default: "gki-android15-6.6"
-      
+
 jobs:
   build-batch-1:
     name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
@@ -143,6 +143,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Log Manifest Content
+        run: |
+          echo "Fetching manifest for ${{ matrix.model }}: ${{ matrix.manifest }}"
+          if [[ "${{ matrix.manifest }}" == https://* ]]; then
+            curl -Ls ${{ matrix.manifest }} || echo "Failed to fetch manifest content"
+          else
+            curl -Ls "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/${{ matrix.branch }}/${{ matrix.manifest }}" || echo "Failed to fetch manifest content"
+          fi
+
       - name: Install and Setup ccache
         shell: bash
         run: |
@@ -217,13 +226,13 @@ jobs:
           - model: OP-ACE-3V
             soc: pineapple
             branch: oneplus/sm7675
-            manifest: oneplus_ace_3v_v.xml
+            manifest: oneplus_ace_3v_v.xml  
             android_version: android14
             kernel_version: "6.1"
           - model: OP-NORD-4
             soc: pineapple
             branch: oneplus/sm7675
-            manifest: oneplus_nord_4_v.xml
+            manifest: oneplus_nord_4_v.xml  
             android_version: android14
             kernel_version: "6.1"
           - model: OP-PAD-2
@@ -286,6 +295,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Log Manifest Content
+        run: |
+          echo "Fetching manifest for ${{ matrix.model }}: ${{ matrix.manifest }}"
+          if [[ "${{ matrix.manifest }}" == https://* ]]; then
+            curl -Ls ${{ matrix.manifest }} || echo "Failed to fetch manifest content"
+          else
+            curl -Ls "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/${{ matrix.branch }}/${{ matrix.manifest }}" || echo "Failed to fetch manifest content"
+          fi
 
       - name: Install and Setup ccache
         shell: bash
