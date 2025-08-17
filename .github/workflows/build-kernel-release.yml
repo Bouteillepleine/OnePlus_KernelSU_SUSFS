@@ -44,7 +44,7 @@ on:
         description: "Choose SusFS Branch for android15-6.6"
         type: string
         default: "gki-android15-6.6"
-
+      
 jobs:
   build-batch-1:
     name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
@@ -143,18 +143,28 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install and Setup ccache
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          mkdir -p $HOME/.ccache
+          ccache --version
+          ccache -M 10G
+          ccache -o compression=true
+          ccache -o compression_level=9
+          ccache -o max_size=10G
+          ccache -z
+          echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "USE_CCACHE=1" >> "$GITHUB_ENV"
+
       - name: Cache ccache
         uses: actions/cache@v3
         with:
           path: $HOME/.ccache
-          key: ccache-${{ runner.os }}-${{ github.ref }}
-          restore-keys: |
-            ccache-${{ runner.os }}-
-
-      - name: Setup ccache
-        run: |
-          mkdir -p $HOME/.ccache
-          ccache -M 10G  # Set maximum cache size
+          key: ccache-Linux-${{ matrix.model }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}
+          restore-keys: ccache-Linux-
 
       - name: Build Kernel
         uses: ./.github/actions
@@ -226,8 +236,8 @@ jobs:
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_13s.xml
-            android_version: android15
-            kernel_version: "6.6"
+            android_version: android14
+            kernel_version: "6.1"
           - model: OP-Ace3-Pro
             soc: pineapple
             branch: oneplus/sm8650
@@ -277,18 +287,28 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install and Setup ccache
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          mkdir -p $HOME/.ccache
+          ccache --version
+          ccache -M 10G
+          ccache -o compression=true
+          ccache -o compression_level=9
+          ccache -o max_size=10G
+          ccache -z
+          echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "USE_CCACHE=1" >> "$GITHUB_ENV"
+
       - name: Cache ccache
         uses: actions/cache@v3
         with:
           path: $HOME/.ccache
-          key: ccache-${{ runner.os }}-${{ github.ref }}
-          restore-keys: |
-            ccache-${{ runner.os }}-
-
-      - name: Setup ccache
-        run: |
-          mkdir -p $HOME/.ccache
-          ccache -M 10G  # Set maximum cache size
+          key: ccache-Linux-${{ matrix.model }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}
+          restore-keys: ccache-Linux-
 
       - name: Build Kernel
         uses: ./.github/actions
@@ -327,7 +347,7 @@ jobs:
           if [ -z "$LATEST_TAG" ]; then
             LATEST_TAG="$BASE_TAG"
           else
-            LATEST_TAG=$(printf "%s\\n%s\\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
+            LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
           fi
           NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
           echo "New tag: $NEW_TAG"
