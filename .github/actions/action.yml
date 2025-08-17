@@ -470,11 +470,11 @@ runs:
         echo "Detected CLANG_VERSION: $CLANG_VERSION"
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
-
+    
     - name: Build Kernel
       shell: bash
       run: |
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+       KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
