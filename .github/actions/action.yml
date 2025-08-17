@@ -308,9 +308,6 @@ runs:
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KASAN=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_WORKQUEUE_POWER_EFFICIENT=y" >> ./common/arch/arm64/configs/gki_defconfig
         # lto thin，O2 
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig          
@@ -439,11 +436,11 @@ runs:
         CONSTANTSCONFIG="$KERNEL_PATH/common/build.config.constants"
         CLANG_VERSION=""
         CLANG_BIN_PATH=""
-        if grep -q '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null; then
+        if [ -f "$DEFCONFIG" ] && grep -q '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null; then
           CLANG_VERSION=$(grep '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | tr -d '"' | xargs)
-        elif grep -q '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null; then
+        elif [ -f "$BUILDCONFIG" ] && grep -q '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null; then
           CLANG_VERSION=$(grep '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | xargs)
-        elif grep -q '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null; then
+        elif [ -f "$CONSTANTSCONFIG" ] && grep -q '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null; then
           CLANG_VERSION=$(grep '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | xargs)
           CLANG_VERSION="clang-$CLANG_VERSION"
         else
@@ -528,6 +525,7 @@ runs:
             DEFCONFIG=""
           fi
         else
+          echo "Found gki_defconfig at $DEFCONFIG_PATH"
           DEFCONFIG="gki_defconfig"
         fi
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
@@ -549,7 +547,7 @@ runs:
         fi
         echo "Running main kernel build..."
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" || exit 1
-
+        
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
