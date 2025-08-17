@@ -1,5 +1,4 @@
 name: Build
-
 permissions:
   contents: write
   actions: write
@@ -35,73 +34,36 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Free Disk Space
-      shell: bash
-      run: |
-        echo "Before cleanup:"
-        df -h
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
-        sudo docker image prune --all --force
-        echo "After initial cleanup:"
-        df -h
-
-    - name: Install and Setup ccache
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ccache
-        mkdir -p $HOME/.ccache
-        ccache --version
-        ccache -M 10G
-        ccache -o compression=true
-        ccache -o compression_level=9
-        ccache -o max_size=10G
-        ccache -z
-        echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
-        echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-        echo "USE_CCACHE=1" >> "$GITHUB_ENV"
-  
-    - name: Setup Build Environment
+    - name: Setup Build System
       shell: bash
       run: |
         export DEBIAN_FRONTEND=noninteractive
         echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"
-        
-        # Clean up unnecessary packages
+        df -h
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
+        sudo docker image prune --all --force
+        echo "Unused directories cleared"
         sudo apt-get purge -y \
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync esl-erlang firefox gfortran-8 gfortran-9 \
-          google-chrome-stable google-cloud-sdk imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev \
-          ant ant-optional kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev yarn \
-          chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev snmp \
-          pollinate libpq-dev postgresql-client powershell ruby-full sphinxsearch subversion mongodb-org \
-          microsoft-edge-stable || true
-        
-        # Remove MySQL, PHP, and .NET packages
+          aria2 ansible azure-cli shellcheck rpm xorriso zsync esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
-        
-        # Clean up package system
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
-        
-        # Install required packages
-        sudo apt-get update
-        sudo apt-get install -y python3 python-is-python3
-        
-        # Setup repo tool directory
+        echo "Package cleanup complete"
+        df -h
+        sudo apt update
+        sudo apt install -y python3 python-is-python3
         mkdir -p ./git-repo
         curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
         chmod a+rx ./git-repo/repo
-        
-        # Set environment variables
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> "$GITHUB_ENV"
         echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
 
-    - name: Install Build Dependencies
+    - name: Install Dependencies
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
-        sudo apt-get update -qq
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+        sudo apt update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
           python3 git curl libelf-dev lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
@@ -113,60 +75,57 @@ runs:
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
         chmod a+x ~/repo
         sudo mv ~/repo /usr/local/bin/repo
-      
-    - name: Clone Dependencies
+
+    - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
         echo "Cloning AnyKernel3 and other dependencies..."
         ANYKERNEL_BRANCH="gki-2.0"
-        SUSFS_BRANCH="${{ inputs.susfs_branch }}"
-        if [[ -z "$SUSFS_BRANCH" ]]; then
+        if [[ -z "${{ inputs.susfs_branch }}" ]]; then
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        else
+          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
         fi
-        
-        echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
-        echo "Using SUSFS branch: $SUSFS_BRANCH"
-        
-        # Clone repositories
+        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
+        echo "Using branch for SUSFS: $SUSFS_BRANCH"
+        # Clone repositories using the branch names
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
-        
-        # Clone and checkout SUSFS
+          
+        # Clone the repo with all branches and history (can optimize later if needed)
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
-        if ! git checkout "$SUSFS_BRANCH" 2>/dev/null; then
-          echo "Error: Branch '$SUSFS_BRANCH' not found"
+        
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
+          git checkout "$SUSFS_BRANCH"
+        else
+          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
           exit 1
         fi
-        cd ..
 
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
+        echo "Creating folder for configuration: $CONFIG..."
         mkdir -p "$CONFIG"
         cd "$CONFIG"
-        
+        echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-            -b oneplus/sm8650 -m temp_manifest.xml \
-            --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-            -b ${{ inputs.branch }} -m ${{ inputs.manifest }} \
-            --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
-        
         $REPO --version
-        $REPO sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
-    - name: Clean ABI Exports
+    - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
         cd "$CONFIG/kernel_platform"
-        rm -f common/android/abi_gki_protected_exports_* || true
-        rm -f msm-kernel/android/abi_gki_protected_exports_* || true
+        rm -f common/android/abi_gki_protected_exports_* || echo "No protected exports in common!"
+        rm -f msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports in msm-kernel!"
         df -h
 
     - name: Add KernelSU Next
@@ -208,8 +167,8 @@ runs:
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
             ;;
           "v1.5.8")
-            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
+            cp_plural ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
             patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
@@ -221,7 +180,7 @@ runs:
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
                 echo "Patching file: $file.c with fix_$file.c.patch"
                 patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
@@ -348,7 +307,10 @@ runs:
         cd "$CONFIG/kernel_platform"
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig                    
+        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CPU_IDLE=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KASAN=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_WORKQUEUE_POWER_EFFICIENT=y" >> ./common/arch/arm64/configs/gki_defconfig
         # lto thin，O2 
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig          
@@ -558,7 +520,9 @@ runs:
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        
+        if [[ -n "${{ env.USE_CCACHE }}" ]]; then
+          MAKE_ARGS="CC=${{ env.CCACHE_EXEC }} $MAKE_ARGS"
+        fi
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" || exit 1
 
