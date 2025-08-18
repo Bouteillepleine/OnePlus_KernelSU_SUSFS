@@ -106,10 +106,10 @@ runs:
         fi
 
     - name: Configure Git
-        shell: bash
-        run: |
-          git config --global user.name "0+builder"
-          git config --global user.email "0+builder@yahoo.com"
+      shell: bash
+      run: |
+        git config --global user.name "0+builder"
+        git config --global user.email "0+builder@yahoo.com"
 
     - name: Initialize and Sync Kernel Source
       shell: bash
