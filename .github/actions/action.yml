@@ -121,7 +121,7 @@ runs:
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/${{ inputs.soc }} -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
@@ -197,8 +197,7 @@ runs:
         GKI_V="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         if [ -f 50_add_susfs_in_gki-${GKI_V}.patch ]; then
           echo "Applying susfs patch"
-          patch -p1 -F 3 < 50_add_susfs_in_gki-${GKI_V}.patch
-          echo "susfs_patch completed"
+          patch -p1 -F 3 < 50_add_susfs_in_gki-${GKI_V}.patch || echo "Patch applied with rejections, check *.rej files"
         else
           echo "susfs patch not found, skipping"
         fi
@@ -213,12 +212,13 @@ runs:
         echo "Fixing access_ok redefinition in kernel_compat.c and kernel_compat.h"
         if [ -f ../KernelSU/kernel/kernel_compat.h ]; then
           sed -i '/#define ksu_access_ok/d' ../KernelSU/kernel/kernel_compat.h
+          echo "Removed ksu_access_ok definition from kernel_compat.h"
         else
           echo "kernel_compat.h not found, skipping"
         fi
         if [ -f ../KernelSU/kernel/kernel_compat.c ]; then
-          sed -i '/int ksu_access_ok/i #undef access_ok\n#undef ksu_access_ok' ../KernelSU/kernel/kernel_compat.c
-          echo "Verifying kernel_compat.c modifications..."
+          sed -i '/int ksu_access_ok/i #undef access_ok\n#ifndef ksu_access_ok\n#define ksu_access_ok(ptr, size) access_ok(ptr, size)\n#endif' ../KernelSU/kernel/kernel_compat.c
+          echo "Added ksu_access_ok fallback definition in kernel_compat.c"
           grep -C 5 "ksu_access_ok" ../KernelSU/kernel/kernel_compat.c || echo "No ksu_access_ok found after fix"
         else
           echo "kernel_compat.c not found, skipping"
@@ -232,7 +232,28 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         cp ../../../SukiSU_patch/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch
+        patch -p1 -F 3 --reject < 69_hide_stuff.patch || echo "Patch applied with rejections, continuing..."
+        if [ -f fs/namespace.c.rej ]; then
+          echo "Patch rejection occurred, review fs/namespace.c.rej"
+          cat fs/namespace.c.rej
+        fi
+        git add -A
+        git commit -m "Apply Hide Stuff Patches"
+
+    - name: Verify KernelSU Configurations
+      shell: bash
+      run: |
+        echo "Verifying KernelSU configurations..."
+        cd "$CONFIG/kernel_platform/common/arch/arm64/configs"
+        grep "CONFIG_KSU" gki_defconfig
+        grep "CONFIG_KSU_SUSFS" gki_defconfig
+
+    - name: Check for ksu_access_ok References
+      shell: bash
+      run: |
+        echo "Searching for ksu_access_ok references..."
+        cd "$CONFIG/kernel_platform"
+        grep -r "ksu_access_ok" . || echo "No references to ksu_access_ok found"
 
     - name: Add SukiSU-Ultra and SUSFS Configuration Settings
       shell: bash
@@ -498,6 +519,13 @@ runs:
         fi
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" || exit 1
+
+    - name: Display Patch Rejections
+      if: failure()
+      shell: bash
+      run: |
+        echo "Checking for patch rejection files..."
+        find "$CONFIG/kernel_platform/common" -name "*.rej" -exec cat {} \;
 
     - name: Apply patch_linux and replace Image
       if: ${{ inputs.KPM == 'true' }}
