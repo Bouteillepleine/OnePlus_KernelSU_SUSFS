@@ -1,4 +1,4 @@
-name: Build and Release OnePlus Kernels with SukiSU Ultra
+name: Build and Release OnePlus Kernels
 
 permissions:
   contents: write
