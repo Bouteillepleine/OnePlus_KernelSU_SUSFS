@@ -95,13 +95,10 @@ runs:
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git          
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
         cd susfs4ksu || exit 1
-        
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          git checkout "$SUSFS_BRANCH"
-        else
-          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
+        if ! git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
+          echo "Error: '$SUSFS_BRANCH' is not a valid branch or commit hash."
           exit 1
         fi
 
@@ -115,7 +112,7 @@ runs:
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/${{ inputs.soc }} -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
@@ -136,7 +133,56 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding SukiSU Ultra..."
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${{ inputs.suki_branch }}/kernel/setup.sh" | bash -s ${{ inputs.suki_branch }}
+        META="${{ inputs.KSU_META }}"
+        BRANCH_NAME="${META%%/*}"
+        CUSTOM_TAG="${META#*/}"
+        echo "Branch Name: $BRANCH_NAME"
+        echo "Custom Version Identifier: $CUSTOM_TAG"
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${{ inputs.suki_branch }}/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+        # Verify KernelSU directory exists
+        if [ ! -d "KernelSU" ]; then
+          echo "Error: KernelSU directory not found after running setup.sh"
+          ls -la
+          exit 1
+        fi
+        echo "KernelSU directory contents:"
+        ls -la KernelSU
+        cd ./KernelSU
+        KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
+          grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+          KSU_API_VERSION="3.1.7"
+        fi
+        echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
+        GIT_HASH=$(git rev-parse --short HEAD)
+        echo "GIT_HASH=$GIT_HASH"
+        if [[ -z "$CUSTOM_TAG" || "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then
+          VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
+        else
+          VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$GIT_HASH]"
+        fi
+        sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
+        sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
+        sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
+        VERSION_DEFINITIONS=$(cat <<EOF
+        define get_ksu_version_full
+        $VERSION_FULL
+        endef
+        KSU_VERSION_API := $KSU_API_VERSION
+        KSU_VERSION_FULL := $VERSION_FULL
+        EOF
+        )
+        awk -v def="$VERSION_DEFINITIONS" '
+          /REPO_OWNER :=/ {print; print def; inserted=1; next}
+          1
+          END {if (!inserted) print def}
+        ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+        KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        echo "::group::Preview of version information in the final Makefile and partial debug results"
+        grep -A10 "REPO_OWNER" kernel/Makefile
+        grep "KSU_VERSION_FULL" kernel/Makefile
+        echo "::endgroup::"
         git submodule update --init --recursive
 
     - name: Apply SUSFS Patches
@@ -148,49 +194,63 @@ runs:
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-        cd ./SukiSU
-        echo "Applying SUSFS patches for SukiSU..."
-        susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
+        if [ ! -d "KernelSU" ]; then
+          echo "Error: KernelSU directory not found. Cannot apply SUSFS patches."
+          ls -la
+          exit 1
+        fi
+        cd ./common
+        GKI_V="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        if [ -f 50_add_susfs_in_gki-${GKI_V}.patch ]; then
+          echo "Applying susfs patch"
+          patch -p1 -F 3 < 50_add_susfs_in_gki-${GKI_V}.patch || true
+          echo "susfs_patch completed"
+        else
+          echo "susfs patch not found, skipping"
+        fi
+        if [ -f fs/susfs.c ]; then
+          echo "Applying susfs.c patch"
+          sed -i "s/ksu_susfs_version_full()/get_ksu_version_full()/g" fs/susfs.c
+          echo "susfs.c patch completed"
+        else
+          echo "susfs.c not found, skipping"
+        fi
+        # Apply version-specific SUSFS patches
+        susfs_version=$(grep '#define SUSFS_VERSION' ./include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
-        BASE_VERSION=10200
-        cd ./kernel
-        KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
-        sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
-        cd ..
-        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-        echo "SukiSU Version: $KSU_VERSION"
         echo "SusFS Version: $susfs_version"
+        cd ../KernelSU
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./suki_susfs_latest.patch"
+            patch -p1 --forward < suki_susfs_latest.patch || true
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
+            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
+            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch || true
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
+            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch || true
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
                 echo "Patching file: $file.c with fix_$file.c.patch"
-                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true
             done
-            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
             ;;
           *)
             echo "Invalid version: $susfs_version"
             exit 1
             ;;
         esac
-        patch -p1 --forward < suki_susfs_latest.patch || true
         cd ../common
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
             if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
@@ -199,26 +259,27 @@ runs:
                 echo "Line already present. Skipping insert."
             fi
         fi
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" || true
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || true
           echo "Patching hmbird files!"
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true
         else
           echo "Not OPAce5Pro / OP13, skipping hmbird patch"
         fi
+        git add -A
+        git commit -m "Apply SukiSU Ultra and SUSFS Patches" || true
 
     - name: Apply SukiSU Hooks
       shell: bash
@@ -227,7 +288,7 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         echo "Applying SukiSU Hooks..."
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-        patch -p1 < ./manual_hooks.patch
+        patch -p1 < ./manual_hooks.patch || true
 
     - name: Apply Hide Stuff Patches
       shell: bash
@@ -235,7 +296,7 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch
+        patch -p1 -F 3 < 69_hide_stuff.patch || true
 
     - name: Add SukiSU and SUSFS Configuration Settings
       shell: bash
@@ -243,28 +304,30 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
-        
-        # Add additional tmpfs config setting
-        echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+        if [ "${{ inputs.KPM }}" = "true" ]; then
+          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+        fi
+        echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+        echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
 
     - name: Add BBR Support
       shell: bash
