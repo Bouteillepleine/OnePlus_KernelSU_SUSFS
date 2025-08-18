@@ -229,10 +229,10 @@ runs:
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
-        cp ../../../kernel_patches/69_hide_stuff.patch ./
+        cp ../../SukiSU_patch/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
+        echo "hide_stuff
 
     - name: Verify KernelSU Configurations
       shell: bash
