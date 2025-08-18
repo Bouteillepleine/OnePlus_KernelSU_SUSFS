@@ -1,4 +1,4 @@
-name: Build and Release OnePlus Kernels
+name: Build and Release OnePlus Kernels with SukiSU Ultra
 
 permissions:
   contents: write
@@ -12,14 +12,24 @@ on:
         required: true
         type: boolean
         default: false
-      ksun_branch:
-        description: "Choose KernelSU Next Branch"
+      suki_branch:
+        description: "Choose SukiSU Branch"
         required: true
         type: choice
         options:
-          - stable
-          - next
-        default: next
+          - main
+          - susfs-main
+        default: main
+      KPM:
+        description: 'Apply patch_linux and replace Image'
+        required: false
+        type: boolean
+        default: false
+      KSU_META:
+        type: string
+        description: "Branch Name (cannot be empty)/Custom Version Identifier (leave empty to not modify)"
+        required: false
+        default: "susfs-main/⚡Ultra⚡"
       android12-5_10_susfs_branch:
         description: "Choose SusFS Branch for android12-5.10"
         type: string
@@ -44,10 +54,10 @@ on:
         description: "Choose SusFS Branch for android15-6.6"
         type: string
         default: "gki-android15-6.6"
-      
+
 jobs:
   build-batch-1:
-    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.suki_branch }})
     strategy:
       fail-fast: false
       matrix:
@@ -137,7 +147,6 @@ jobs:
           fi
           
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -152,11 +161,13 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.ksun_branch }}
+          suki_branch: ${{ inputs.suki_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+          KPM: ${{ inputs.KPM }}
+          KSU_META: ${{ inputs.KSU_META }}
 
   build-batch-2:
-    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.suki_branch }})
     strategy:
       fail-fast: false
       matrix:
@@ -258,7 +269,6 @@ jobs:
           fi
           
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -273,8 +283,10 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.ksun_branch }}
+          suki_branch: ${{ inputs.suki_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+          KPM: ${{ inputs.KPM }}
+          KSU_META: ${{ inputs.KSU_META }}
 
   trigger-release:
     needs:
@@ -286,7 +298,7 @@ jobs:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS v1.5.9 *TEST BUILD*"
+      RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With SukiSU Ultra & SUSFS v1.5.9 *TEST BUILD*"
 
     steps:
       - name: Checkout code
@@ -308,7 +320,6 @@ jobs:
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
           git tag $NEW_TAG
           git push origin $NEW_TAG
-
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -319,13 +330,13 @@ jobs:
         run: |
           echo "=== Start building the release notes ==="
           cat << EOF > release_notes.md
-          This release contains KernelSU Next and SUSFS v1.5.9
+          This release contains SukiSU Ultra and SUSFS v1.5.9
           
           Module: 
           -> https://github.com/sidex15/ksu_module_susfs  
           
           Non-Official Managers:
-          -> https://github.com/KernelSU-Next/KernelSU-Next  
+          -> https://github.com/SukiSU-Ultra/SukiSU-Ultra  
           
           ### Built Devices
           
@@ -346,7 +357,7 @@ jobs:
           cat << 'EOF' >> release_notes.md
           
           ### Features
-          - [+] KernelSU-Next
+          - [+] SukiSU-Ultra
           - [+] SUSFS v1.5.9
           - [+] Wireguard Support
           - [+] Maphide LineageOS Detections
@@ -362,7 +373,6 @@ jobs:
           # Output for debugging
           echo "--- Final Release Notes ---"
           cat release_notes.md
-
       - name: Create GitHub Release
         run: |
           gh release create "${{ env.NEW_TAG }}" \
@@ -370,7 +380,6 @@ jobs:
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --prerelease
-
       - name: Upload Release Assets Dynamically
         run: |
           for file in ./downloaded-artifacts/*/*.zip; do
