@@ -589,12 +589,9 @@ runs:
         fi
         cd "$KERNEL_PATH/common" || exit 1
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld CC='ccache clang' HOSTCC='ccache clang' HOSTCXX='ccache clang++'"
-        if [[ -v USE_LLVM_IAS ]]; then
-          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
-        fi
+        RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+        PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+        LD=ld.lld HOSTLD=ld.lld CC=ccache\ clang HOSTCC=ccache\ clang HOSTCXX=ccache\ clang++"
         
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
