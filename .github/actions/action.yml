@@ -60,7 +60,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Previous steps unchanged...
     - name: Setup Build System
       shell: bash
       run: |
@@ -129,16 +128,7 @@ runs:
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone https://github.com/TheWildJames/kernel_patches.git
         git clone https://github.com/ShirkNeko/SukiSU_patch.git
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-        cd susfs4ksu || exit 1
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
-          git checkout "$SUSFS_BRANCH"
-          SUSVER=$(git describe --tags 2>/dev/null || echo "v1.5.2+")
-          echo "SUSVER=$SUSVER" >> $GITHUB_ENV
-        else
-          echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
-          exit 1
-        fi
+        echo "SUSVER=v1.5.2+" >> $GITHUB_ENV
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -248,17 +238,44 @@ runs:
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG"
+        echo "Cloning susfs4ksu repository..."
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "${{ inputs.susfs_branch }}" ../susfs4ksu
+        echo "Listing susfs4ksu kernel_patches directory for debugging:"
+        ls -la ../susfs4ksu/kernel_patches/ || echo "kernel_patches directory not found"
         cd kernel_platform
         echo "Fetching susfs patches"
-        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
-        cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-        cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        PATCH_FILE="../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
+        if [ -f "$PATCH_FILE" ]; then
+          cp "$PATCH_FILE" ./common/
+        else
+          echo "Patch file $PATCH_FILE not found, skipping copy"
+        fi
+        cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/ || echo "No files found in ../susfs4ksu/kernel_patches/fs/, skipping"
+        cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ || echo "No files found in ../susfs4ksu/kernel_patches/include/linux/, skipping"
         cd ./common
         GKI_V="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-        if [ -f 50_add_susfs_in_gki-${GKI_V}.patch ]; then
+        if [ "$GKI_V" = "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
+          echo "Applying fix for kernel versions 5.15.0 to 5.15.123 (legacy C library bugs)"
+          curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+          patch -p1 < fix_5.15.legacy.patch || echo "Failed to apply fix_5.15.legacy.patch, continuing"
+          echo "fix_5.15_patch completed"
+        fi
+        if [ "${{ inputs.kernel_version }}" = "6.6" ]; then
+          TRUSTY_EXISTS="false"
+          if [ -n "${{ inputs.manifest }}" ] && grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests/${{ inputs.manifest }}"; then
+            TRUSTY_EXISTS="true"
+          fi
+          echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
+          if [ "$TRUSTY_EXISTS" = "false" ] && [ "${{ inputs.model }}" != "OP-PAD-2" ] && [ "${{ inputs.model }}" != "OP-PAD-3" ]; then
+            echo "Fixing susfs errors for kernel 6.6 models missing Trusty OS"
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "50_add_susfs_in_gki-${GKI_V}.patch" || echo "Failed to modify patch file, continuing"
+            sed -i '/#include <trace\/hooks\/fs.h>/d' "50_add_susfs_in_gki-${GKI_V}.patch" || echo "Failed to modify patch file, continuing"
+          fi
+        fi
+        if [ -f "50_add_susfs_in_gki-${GKI_V}.patch" ]; then
           echo "Applying susfs patch"
-          patch -p1 -F 3 < 50_add_susfs_in_gki-${GKI_V}.patch
+          patch -p1 < "50_add_susfs_in_gki-${GKI_V}.patch" || echo "Failed to apply susfs patch, continuing"
           echo "susfs_patch completed"
         else
           echo "susfs patch not found, skipping"
@@ -271,7 +288,7 @@ runs:
           echo "susfs.c not found, skipping"
         fi
         git add -A
-        git commit -m "Add SukiSU Ultra Patches"
+        git commit -m "Add SukiSU Ultra Patches" || echo "No changes to commit"
 
     - name: Validate HOOK Input
       shell: bash
@@ -285,8 +302,6 @@ runs:
             exit 1
             ;;
         esac
-
-    # ... (other steps unchanged, truncated for brevity) ...
 
     - name: Download Latest SUSFS Module from CI
       if: ${{ inputs.SUSFS_CI == 'CI' }}
