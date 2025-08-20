@@ -31,13 +31,12 @@ on:
         required: false
         default: "susfs-main/⚡Ultra⚡"
       HOOK:
-        description: 'Hook method (kprobe, manual, tracepoint)'
+        description: 'Hook method (kprobe, manual)'
         required: true
         type: choice
         options:
           - kprobe
           - manual
-          - tracepoint
         default: 'manual'
       SCHED:
         description: 'Add Fengchi Driver?'
@@ -50,7 +49,7 @@ on:
         type: string
         default: ''
       susfs_branch:
-        description: 'JSON object mapping Android/kernel versions to SusFS branches'
+        description: 'JSON object mapping Android/kernel versions to SusFS branches (e.g., {"android12-5.10":"gki-android12-5.10","android13-5.15":"gki-android13-5.15",...})'
         type: string
         default: '{"android12-5.10":"gki-android12-5.10","android13-5.10":"gki-android13-5.10","android13-5.15":"gki-android13-5.15","android14-5.15":"gki-android14-5.15","android14-6.1":"gki-android14-6.1","android15-6.6":"gki-android15-6.6"}'
 
@@ -160,7 +159,6 @@ jobs:
           HOOK: ${{ inputs.HOOK }}
           SCHED: ${{ inputs.SCHED }}
           SUSFS_CI: ${{ inputs.SUSFS_CI }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   build-batch-2:
     name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.suki_branch }})
@@ -279,7 +277,6 @@ jobs:
           HOOK: ${{ inputs.HOOK }}
           SCHED: ${{ inputs.SCHED }}
           SUSFS_CI: ${{ inputs.SUSFS_CI }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   trigger-release:
     needs:
