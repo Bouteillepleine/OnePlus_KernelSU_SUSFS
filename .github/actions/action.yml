@@ -40,11 +40,18 @@ runs:
         export DEBIAN_FRONTEND=noninteractive
         echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"
         df -h
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+        /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+        /usr/share/swift || true
         sudo docker image prune --all --force
         echo "Unused directories cleared"
-        sudo apt-get purge -y \
-          aria2 ansible azure-cli shellcheck rpm xorriso zsync esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full sphinxsearch subversion mongodb-org microsoft-edge-stable || true
+        sudo apt-get purge -y aria2 ansible azure-cli shellcheck rpm xorriso zsync \
+        esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk \
+        imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional \
+        kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev \
+        yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 \
+        libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full \
+        sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
@@ -57,7 +64,7 @@ runs:
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
         sudo apt update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt install -yq --no-install-recommends \
-          python3 git curl libelf-dev lld \
+          python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip python3 python-is-python3
@@ -83,13 +90,10 @@ runs:
         fi
         echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
         echo "Using branch for SUSFS: $SUSFS_BRANCH"
-        # Clone repositories using the branch names
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone https://github.com/TheWildJames/kernel_patches.git          
-        # Clone the repo with all branches and history (can optimize later if needed)
+        git clone https://github.com/TheWildJames/kernel_patches.git
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
-        
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
@@ -257,12 +261,11 @@ runs:
         echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
-        
-        # Add additional tmpfs config setting
+        # Mountify Support
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    - name: Add BBR Support
+    - name: Add BBR v1 Support
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
@@ -273,7 +276,6 @@ runs:
         echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
-          
         echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
         sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
@@ -283,7 +285,7 @@ runs:
         echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-    
+
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -294,20 +296,22 @@ runs:
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    - name: Others configurations
+    - name: Add Build based configs
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-        echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig                    
-        # lto thin，O2 
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig          
+        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
+        # debug stuff
+        echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Disable OnePlus Kernel Module
       shell: bash
@@ -327,7 +331,6 @@ runs:
         sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
-        fi
 
     - name: Save Build Metadata
       shell: bash
@@ -390,15 +393,13 @@ runs:
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
         
         sed -i 's/check_defconfig//' ./common/build.config.gki
-        tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
-        tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
-        tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./common/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./msm-kernel/scripts/setlocalversion
+        tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
+        tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
+        tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡/' ./common/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./msm-kernel/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
         chmod +x ./msm-kernel/scripts/setlocalversion
@@ -504,7 +505,7 @@ runs:
           USE_LLVM_IAS=true
         fi
         cd "$KERNEL_PATH/common" || exit 1
-        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
           LD=ld.lld HOSTLD=ld.lld"
@@ -512,9 +513,9 @@ runs:
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin" || exit 1
-
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
