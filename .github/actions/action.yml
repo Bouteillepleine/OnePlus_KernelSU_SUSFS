@@ -308,10 +308,6 @@ runs:
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZSMALLOC=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP=\"zstd\"" >> ./common/arch/arm64/configs/gki_defconfig
         # internet stuff
         echo "CONFIG_IP_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP_SET_BITMAP_IP=y" >> ./common/arch/arm64/configs/gki_defconfig
