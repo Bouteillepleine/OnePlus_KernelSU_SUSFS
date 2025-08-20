@@ -50,7 +50,7 @@ on:
         type: string
         default: ''
       susfs_branch:
-        description: 'JSON object mapping Android/kernel versions to SusFS branches (e.g., {"android12-5.10":"gki-android12-5.10","android13-5.15":"gki-android13-5.15",...})'
+        description: 'JSON object mapping Android/kernel versions to SusFS branches'
         type: string
         default: '{"android12-5.10":"gki-android12-5.10","android13-5.10":"gki-android13-5.10","android13-5.15":"gki-android13-5.15","android14-5.15":"gki-android14-5.15","android14-6.1":"gki-android14-6.1","android15-6.6":"gki-android15-6.6"}'
 
@@ -117,13 +117,11 @@ jobs:
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           DEFAULT_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          # Validate JSON input
           SUSFS_JSON="${{ inputs.susfs_branch }}"
           if [[ -z "$SUSFS_JSON" ]]; then
             echo "No susfs_branch input provided, using default: $DEFAULT_BRANCH"
             SUSFS_BRANCH="$DEFAULT_BRANCH"
           else
-            # Check if SUSFS_JSON is valid JSON
             if echo "$SUSFS_JSON" | jq . >/dev/null 2>&1; then
               SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"$DEFAULT_BRANCH\"")
             else
@@ -162,6 +160,7 @@ jobs:
           HOOK: ${{ inputs.HOOK }}
           SCHED: ${{ inputs.SCHED }}
           SUSFS_CI: ${{ inputs.SUSFS_CI }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   build-batch-2:
     name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.suki_branch }})
@@ -237,13 +236,11 @@ jobs:
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           DEFAULT_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          # Validate JSON input
           SUSFS_JSON="${{ inputs.susfs_branch }}"
           if [[ -z "$SUSFS_JSON" ]]; then
             echo "No susfs_branch input provided, using default: $DEFAULT_BRANCH"
             SUSFS_BRANCH="$DEFAULT_BRANCH"
           else
-            # Check if SUSFS_JSON is valid JSON
             if echo "$SUSFS_JSON" | jq . >/dev/null 2>&1; then
               SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"$DEFAULT_BRANCH\"")
             else
@@ -282,6 +279,7 @@ jobs:
           HOOK: ${{ inputs.HOOK }}
           SCHED: ${{ inputs.SCHED }}
           SUSFS_CI: ${{ inputs.SUSFS_CI }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   trigger-release:
     needs:
@@ -339,7 +337,6 @@ jobs:
           |-------|----------------|
           EOF
           
-          # Generate table rows
           for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
             if [ -f "$file" ]; then
               model=$(basename "$file" .txt)
@@ -348,7 +345,6 @@ jobs:
             fi
           done
           
-          # Add features and finalize
           cat << 'EOF' >> release_notes.md
           
           ### Features
@@ -365,7 +361,6 @@ jobs:
           - [+] HMBIRD scx support for OnePlus 13 & OnePlus Ace 5 Pro
           EOF
           
-          # Output for debugging
           echo "--- Final Release Notes ---"
           cat release_notes.md
       - name: Create GitHub Release
