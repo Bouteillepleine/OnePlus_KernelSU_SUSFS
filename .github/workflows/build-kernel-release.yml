@@ -115,17 +115,26 @@ jobs:
         id: get-susfs-branch
         run: |
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          DEFAULT_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          # Parse the JSON input
+          # Validate JSON input
           SUSFS_JSON="${{ inputs.susfs_branch }}"
           if [[ -z "$SUSFS_JSON" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+            echo "No susfs_branch input provided, using default: $DEFAULT_BRANCH"
+            SUSFS_BRANCH="$DEFAULT_BRANCH"
           else
-            SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}\"")
+            # Check if SUSFS_JSON is valid JSON
+            if echo "$SUSFS_JSON" | jq . >/dev/null 2>&1; then
+              SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"$DEFAULT_BRANCH\"")
+            else
+              echo "Invalid JSON in susfs_branch input: $SUSFS_JSON"
+              echo "Falling back to default: $DEFAULT_BRANCH"
+              SUSFS_BRANCH="$DEFAULT_BRANCH"
+            fi
           fi
           
           if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+            SUSFS_BRANCH="$DEFAULT_BRANCH"
           fi
           
           echo "Selected SusFS branch: $SUSFS_BRANCH"
@@ -226,17 +235,26 @@ jobs:
         id: get-susfs-branch
         run: |
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          DEFAULT_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          # Parse the JSON input
+          # Validate JSON input
           SUSFS_JSON="${{ inputs.susfs_branch }}"
           if [[ -z "$SUSFS_JSON" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+            echo "No susfs_branch input provided, using default: $DEFAULT_BRANCH"
+            SUSFS_BRANCH="$DEFAULT_BRANCH"
           else
-            SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}\"")
+            # Check if SUSFS_JSON is valid JSON
+            if echo "$SUSFS_JSON" | jq . >/dev/null 2>&1; then
+              SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"$DEFAULT_BRANCH\"")
+            else
+              echo "Invalid JSON in susfs_branch input: $SUSFS_JSON"
+              echo "Falling back to default: $DEFAULT_BRANCH"
+              SUSFS_BRANCH="$DEFAULT_BRANCH"
+            fi
           fi
           
           if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+            SUSFS_BRANCH="$DEFAULT_BRANCH"
           fi
           
           echo "Selected SusFS branch: $SUSFS_BRANCH"
