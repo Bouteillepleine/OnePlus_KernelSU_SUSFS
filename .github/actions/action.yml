@@ -69,26 +69,6 @@ runs:
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip python3 python-is-python3
 
-    - name: Install and Configure ccache
-      shell: bash
-      run: |
-        sudo apt-get install -yq --no-install-recommends ccache
-        echo "Configuring ccache..."
-        ccache --set-config=cache_dir="$GITHUB_WORKSPACE/.ccache"
-        ccache --max-size=5.0G
-        ccache --set-config=compression=true
-        echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
-        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
-
-    - name: Cache ccache
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.run_id }}
-        restore-keys: |
-          ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
-          ccache-${{ inputs.model }}-${{ inputs.android_version }}-
-
     - name: Install Repo Tool
       shell: bash
       run: |
@@ -114,7 +94,7 @@ runs:
         git clone https://github.com/TheWildJames/kernel_patches.git
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu || exit 1
-        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
           git checkout "$SUSFS_BRANCH"
         else
           echo "Error: '$SUSFS_BRANCH' is neither a valid branch/tag nor a valid commit hash."
@@ -136,12 +116,7 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(( $(nproc --all) * 2 )) --fail-fast
-        # Verify kernel source tree
-        if [ ! -d "$CONFIG/kernel_platform/common" ] || [ ! -f "$CONFIG/kernel_platform/common/Makefile" ] || [ ! -f "$CONFIG/kernel_platform/common/Kconfig" ]; then
-          echo "Error: Kernel source tree incomplete at $CONFIG/kernel_platform/common"
-          exit 1
-        fi
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
     - name: Clean Up ABI Protected Exports
       shell: bash
@@ -185,91 +160,64 @@ runs:
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
         echo "KernelSU Next Version: $KSU_VERSION"
         echo "SusFS Version: $susfs_version"
-        mkdir -p patch_logs
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
-            if ! patch -p1 --forward < ksun_susfs_latest.patch > patch_logs/ksun_susfs_latest.log 2>&1; then
-              echo "Warning: Failed to apply ksun_susfs_latest.patch, see patch_logs/ksun_susfs_latest.log" >&2
-            fi
             ;;
           "v1.5.8")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            if ! patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch > patch_logs/10_enable_susfs_for_ksu.log 2>&1; then
-              echo "Warning: Failed to apply 10_enable_susfs_for_ksu.patch, see patch_logs/10_enable_susfs_for_ksu.log" >&2
-            fi
-            for patch in fix_apk_sign.c.patch fix_core_hook.c.patch fix_selinux.c.patch fix_ksud.c.patch; do
-              cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/$patch" ./
-              if ! patch -p1 --forward --fuzz=3 < "$patch" > "patch_logs/$patch.log" 2>&1; then
-                echo "Warning: Failed to apply $patch, see patch_logs/$patch.log" >&2
-              fi
-            done
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
           "v1.5.9")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            if ! patch -p1 --forward < 10_enable_susfs_for_ksu.patch > patch_logs/10_enable_susfs_for_ksu.log 2>&1; then
-              echo "Warning: Failed to apply 10_enable_susfs_for_ksu.patch, see patch_logs/10_enable_susfs_for_ksu.log" >&2
-            fi
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-              echo "Patching file: $file.c with fix_$file.c.patch"
-              if ! patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" > "patch_logs/fix_$file.c.log" 2>&1; then
-                echo "Warning: Failed to apply fix_$file.c.patch, see patch_logs/fix_$file.c.log" >&2
-              fi
+                echo "Patching file: $file.c with fix_$file.c.patch"
+                patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
-            if ! patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" > patch_logs/fix_kernel_compat.c.log 2>&1; then
-              echo "Warning: Failed to apply fix_kernel_compat.c.patch, see patch_logs/fix_kernel_compat.c.log" >&2
-            fi
+            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
           *)
-            echo "Error: Invalid version: $susfs_version"
+            echo "Invalid version: $susfs_version"
             exit 1
             ;;
         esac
-        # Check for patch conflicts
-        if [ -n "$(find . -name "*.rej")" ]; then
-          echo "Warning: Patch conflicts detected (.rej files found):"
-          find . -name "*.rej" -exec ls -l {} \;
-        fi
+        patch -p1 --forward < ksun_susfs_latest.patch || true
         cd ../common
         if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
-          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-          else
-            echo "Line already present. Skipping insert."
-          fi
+            if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+                sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
+            else
+                echo "Line already present. Skipping insert."
+            fi
         fi
-        if ! patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch > patch_logs/50_add_susfs_in_gki.log 2>&1; then
-          echo "Warning: Failed to apply 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch, see patch_logs/50_add_susfs_in_gki.log" >&2
-        fi
+        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MIN_VERSION="5.16"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
-          if ! patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch" > patch_logs/gki_ptrace.log 2>&1; then
-            echo "Warning: Failed to apply gki_ptrace.patch, see patch_logs/gki_ptrace.log" >&2
-          fi
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
-          if ! patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" > patch_logs/hmbird_kernel_patch.log 2>&1; then
-            echo "Warning: Failed to apply hmbird_kernel_patch.patch, see patch_logs/hmbird_kernel_patch.log" >&2
-          fi
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
           echo "Patching hmbird files!"
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
-          if ! patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" > patch_logs/hmbird_files_patch.log 2>&1; then
-            echo "Warning: Failed to apply hmbird_files_patch.patch, see patch_logs/hmbird_files_patch.log" >&2
-          fi
+          patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13, skipping hmbird patch"
-        fi
-        # Check for patch conflicts again
-        if [ -n "$(find .. -name "*.rej")" ]; then
-          echo "Warning: Patch conflicts detected (.rej files found):"
-          find .. -name "*.rej" -exec ls -l {} \;
+          echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -278,31 +226,16 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         echo "Applying KSUN Hooks..."
-        mkdir -p patch_logs
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-        if ! patch -p1 < ./manual_hooks.patch > patch_logs/manual_hooks.log 2>&1; then
-          echo "Warning: Failed to apply manual_hooks.patch, see patch_logs/manual_hooks.log" >&2
-        fi
-        if [ -n "$(find . -name "*.rej")" ]; then
-          echo "Warning: Patch conflicts detected (.rej files found):"
-          find . -name "*.rej" -exec ls -l {} \;
-        fi
+        patch -p1 < ./manual_hooks.patch
 
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
-        echo "Applying Hide Stuff patches..."
-        mkdir -p patch_logs
         cp ../../../kernel_patches/69_hide_stuff.patch ./
-        if ! patch -p1 -F 3 < 69_hide_stuff.patch > patch_logs/69_hide_stuff.log 2>&1; then
-          echo "Warning: Failed to apply 69_hide_stuff.patch, see patch_logs/69_hide_stuff.log" >&2
-        fi
-        if [ -n "$(find . -name "*.rej")" ]; then
-          echo "Warning: Patch conflicts detected (.rej files found):"
-          find . -name "*.rej" -exec ls -l {} \;
-        fi
+        patch -p1 -F 3 < 69_hide_stuff.patch
 
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
@@ -310,91 +243,88 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         echo "Adding configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        # Backup original gki_defconfig
-        cp "$DEFCONFIG" "$DEFCONFIG.bak"
-        echo "CONFIG_KSU=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$DEFCONFIG"
-        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$DEFCONFIG"
-        echo "CONFIG_TMPFS_XATTR=y" >> "$DEFCONFIG"
-        echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$DEFCONFIG"
+        echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+        # Mountify Support
+        echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Add BBR v1 Support
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-        echo "Adding BBR configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$DEFCONFIG"
-        echo "CONFIG_TCP_CONG_BBR=y" >> "$DEFCONFIG"
-        echo "CONFIG_TCP_CONG_BIC=n" >> "$DEFCONFIG"
-        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$DEFCONFIG"
-        echo "CONFIG_TCP_CONG_HTCP=n" >> "$DEFCONFIG"
-        echo "CONFIG_NET_SCH_FQ=y" >> "$DEFCONFIG"
-        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$DEFCONFIG"
-        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$DEFCONFIG"
-        echo "CONFIG_IP_ECN=y" >> "$DEFCONFIG"
-        echo "CONFIG_TCP_ECN=y" >> "$DEFCONFIG"
-        echo "CONFIG_IPV6_ECN=y" >> "$DEFCONFIG"
-        echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$DEFCONFIG"
+        echo "Adding configuration settings to gki_defconfig..."
+        echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Add TTL Target Support
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-        echo "Adding TTL configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$DEFCONFIG"
-        echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$DEFCONFIG"
-        echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$DEFCONFIG"
+        echo "Adding configuration settings to gki_defconfig..."
+        echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    - name: Add Build-based Configurations
+    - name: Add Build based configs
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
-        echo "Adding base configuration settings to gki_defconfig..."
-        DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_LTO_CLANG_THIN=y" >> "$DEFCONFIG"
-        echo "CONFIG_LTO_CLANG=y" >> "$DEFCONFIG"
-        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> "$DEFCONFIG"
-        echo "CONFIG_DEBUG_KERNEL=n" >> "$DEFCONFIG"
-        echo "CONFIG_DYNAMIC_DEBUG=n" >> "$DEFCONFIG"
-        echo "CONFIG_DEBUG_INFO=n" >> "$DEFCONFIG"
-        echo "CONFIG_KSM=y" >> "$DEFCONFIG"
-        echo "CONFIG_ZRAM=y" >> "$DEFCONFIG"
-        echo "CONFIG_ZRAM_WRITEBACK=y" >> "$DEFCONFIG"
-        echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> "$DEFCONFIG"
-        echo "CONFIG_PREEMPT=y" >> "$DEFCONFIG"
-        echo "CONFIG_NO_HZ_FULL=y" >> "$DEFCONFIG"
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$DEFCONFIG"
-        # Remove conflicting CONFIG_CC_OPTIMIZE_FOR_SIZE
-        sed -i '/CONFIG_CC_OPTIMIZE_FOR_SIZE=/d' "$DEFCONFIG"
+        echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSM=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZRAM=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZRAM_WRITEBACK=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_PREEMPT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NO_HZ_FULL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        # debug stuff
+        echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-        if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
+        cd "$CONFIG/kernel_platform" 
+        if [ "${ANDROID_VERSION:-android13}" = "android14" ] && [ "${KERNEL_VERSION:-5.15}" = "6.1" ]; then
           echo "Disabling KUnit test modules in $CONFIG_FILE..."
           sed -i -e 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' \
                  -e 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' \
@@ -410,7 +340,7 @@ runs:
                  "$CONFIG_FILE"
           echo "Modifications complete."
         else
-          echo "Conditions not met (android_version=${{ inputs.android_version }}, kernel_version=${{ inputs.kernel_version }}). Skipping modifications."
+          echo "Conditions not met (ANDROID_VERSION=${ANDROID_VERSION:-android13}, KERNEL_VERSION=${KERNEL_VERSION:-5.15}). Skipping modifications."
         fi
 
     - name: Save Build Metadata
@@ -420,16 +350,18 @@ runs:
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
+        
         cd "$CONFIG_DIR/kernel_platform/common"
         CONFIG_FILES=("build.config.common" "build.config.constants")
         BRANCH_LINE=""
+        
         for file in "${CONFIG_FILES[@]}"; do
           if [ -f "$file" ]; then
             line=$(grep '^[[:space:]]*BRANCH=' "$file" | head -n1 || true)
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break
+              break  # Found it — exit loop
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -437,21 +369,28 @@ runs:
             echo "File not found: $file"
           fi
         done
+        
         if [ -z "$BRANCH_LINE" ]; then
           echo "Error: No BRANCH= found in any of: ${CONFIG_FILES[*]}"
           exit 1
         fi
+        
         BRANCH_VALUE="${BRANCH_LINE#*=}"
         ANDROID_VERSION="${BRANCH_VALUE%-*}"
+        
         if [ -z "$ANDROID_VERSION" ]; then
           echo "Error: Could not extract 'androidXX' from BRANCH='$BRANCH_VALUE'"
           exit 1
         fi
+        
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
         FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
+        
         echo "Kernel Version: $ANDROID_VERSION-$FULL_VERSION"
+        
         cd "$ARTIFACTS_DIR"
         echo "$ANDROID_VERSION-$FULL_VERSION" > ${{ inputs.model }}.txt
         echo "ANDROID_VER=$ANDROID_VERSION" >> $GITHUB_ENV
@@ -465,6 +404,7 @@ runs:
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+        
         sed -i 's/check_defconfig//' ./common/build.config.gki
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
         tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
@@ -488,6 +428,7 @@ runs:
         else
           echo "No workspace_status_stamp.py!"
         fi
+        
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
@@ -520,7 +461,7 @@ runs:
             CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
           else
             CLANG_VERSION="clang"
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin" # dummy
           fi
         else
           if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
@@ -532,25 +473,6 @@ runs:
         echo "Detected CLANG_VERSION: $CLANG_VERSION"
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
-
-    - name: Validate gki_defconfig
-      shell: bash
-      run: |
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-        DEFCONFIG="$KERNEL_PATH/common/arch/arm64/configs/gki_defconfig"
-        if [ ! -f "$DEFCONFIG" ]; then
-          echo "Error: gki_defconfig not found at $DEFCONFIG"
-          exit 1
-        fi
-        echo "gki_defconfig found at $DEFCONFIG"
-        # Basic syntax check for gki_defconfig
-        if ! grep -E '^[ \t]*(CONFIG_[A-Za-z0-9_]+[ \t]*=[ \t]*[ynm]|[ \t]*#[ \t]*CONFIG_[A-Za-z0-9_]+[ \t]*is[ \t]*not[ \t]*set)' "$DEFCONFIG" > /dev/null; then
-          echo "Warning: gki_defconfig may contain invalid syntax or no valid CONFIG entries"
-        fi
-        # Check for unexpected content
-        if grep -E '^[ \t]*(CONFIG_[A-Za-z0-9_]+[ \t]*=[ \t]*[^ynm])' "$DEFCONFIG"; then
-          echo "Warning: gki_defconfig contains invalid CONFIG values (not y/n/m)"
-        fi
 
     - name: Build Kernel
       shell: bash
@@ -594,53 +516,17 @@ runs:
           USE_LLVM_IAS=true
         fi
         cd "$KERNEL_PATH/common" || exit 1
-        # Ensure output directory exists
-        mkdir -p out
-        chmod -R u+w out
-        # Use ccache only for clang, not rustc
-        MAKE_ARGS="CC=${{ env.CCACHE_EXEC }} clang LD=ld.lld ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
+        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          HOSTLD=ld.lld"
+          LD=ld.lld HOSTLD=ld.lld"
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        echo "Generating .config with gki_defconfig..."
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig > config.log 2>&1 || {
-          echo "Error: Failed to generate .config with gki_defconfig, see config.log"
-          cat config.log
-          exit 1
-        }
-        if [ ! -f "out/.config" ]; then
-          echo "Error: .config file not generated in out/ directory"
-          exit 1
-        fi
-        echo "Running olddefconfig to resolve undefined configs..."
-        make -j$(nproc --all) O=out $MAKE_ARGS olddefconfig >> config.log 2>&1 || {
-          echo "Error: Failed to run olddefconfig, see config.log"
-          cat config.log
-          exit 1
-        }
-        echo ".config generated successfully"
-        echo "Building kernel..."
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" > build.log 2>&1 || {
-          echo "Error: Kernel build failed, see build.log"
-          cat build.log
-          exit 1
-        }
-        ccache --show-stats
-
-    - name: Monitor Disk Space
-      shell: bash
-      run: |
-        echo "Disk space after build:"
-        df -h
-        echo "Cleaning temporary files..."
-        find "$GITHUB_WORKSPACE" -name "*.o" -delete
-        find "$GITHUB_WORKSPACE" -name "*.rej" -delete
-        echo "Disk space after cleanup:"
-        df -h
-
+        
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -651,14 +537,11 @@ runs:
         cd "$GITHUB_WORKSPACE/AnyKernel3"
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
           cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
-          if ! patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" > patch_logs/ak3_hmbird_patch.log 2>&1; then
-            echo "Warning: Failed to apply ak3_hmbird_patch.patch, see patch_logs/ak3_hmbird_patch.log" >&2
-          fi
+          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
         fi
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
-        mkdir -p "$ARTIFACTS_DIR"
         zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
 
     - name: Upload Artifacts
@@ -668,6 +551,3 @@ runs:
         name: kernel-${{ env.CONFIG }}
         path: |
           ${{ env.CONFIG }}/artifacts/*
-          ${{ env.CONFIG }}/kernel_platform/common/config.log
-          ${{ env.CONFIG }}/kernel_platform/common/build.log
-          ${{ env.CONFIG }}/kernel_platform/common/patch_logs/*
