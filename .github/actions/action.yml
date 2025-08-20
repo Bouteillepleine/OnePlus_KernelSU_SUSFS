@@ -51,8 +51,8 @@ inputs:
     default: false
   SUSFS_CI:
     type: string
-    required: false
-    default: ""
+    required: true
+    default: true
 
 runs:
   using: "composite"
