@@ -43,11 +43,6 @@ on:
         required: true
         type: boolean
         default: false
-      SUSFS_CI:
-        description: 'Download SUSFS module from CI?'
-        required: false
-        type: string
-        default: ''
       susfs_branch:
         description: 'JSON object mapping Android/kernel versions to SusFS branches (e.g., {"android12-5.10":"gki-android12-5.10","android13-5.15":"gki-android13-5.15",...})'
         type: string
