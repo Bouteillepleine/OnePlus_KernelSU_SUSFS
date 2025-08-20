@@ -69,6 +69,26 @@ runs:
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip python3 python-is-python3
 
+    - name: Install and Configure ccache
+      shell: bash
+      run: |
+        sudo apt-get install -yq --no-install-recommends ccache
+        echo "Configuring ccache..."
+        ccache --set-config=cache_dir="$GITHUB_WORKSPACE/.ccache"
+        ccache --max-size=5.0G  # Limit cache size to 5GB
+        ccache --set-config=compression=true  # Enable compression to save space
+        echo "CCACHE_EXEC=$(which ccache)" >> "$GITHUB_ENV"
+        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.run_id }}
+        restore-keys: |
+          ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-${{ inputs.model }}-${{ inputs.android_version }}-
+
     - name: Install Repo Tool
       shell: bash
       run: |
@@ -116,7 +136,7 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(( $(nproc --all) * 2 )) --fail-fast 
 
     - name: Clean Up ABI Protected Exports
       shell: bash
@@ -305,9 +325,17 @@ runs:
         echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_PSI=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_PREEMPT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_PM=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KSM=y" >> ./common/arch/arm64/configs/gki_defconfig  # Kernel Samepage Merging for memory efficiency
+        echo "CONFIG_ZRAM=y" >> ./common/arch/arm64/configs/gki_defconfig  # Compressed RAM for better memory utilization
+        echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> ./common/arch/arm64/configs/gki_defconfig  # LZ4 for lower CPU usage in ZRAM
+        echo "CONFIG_ZRAM_WRITEBACK=y" >> ./common/arch/arm64/configs/gki_defconfig
         # debug stuff
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
@@ -405,7 +433,7 @@ runs:
         tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./common/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./msm-kernel/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
         chmod +x ./msm-kernel/scripts/setlocalversion
         chmod +x ./external/dtc/scripts/setlocalversion
@@ -510,16 +538,16 @@ runs:
           USE_LLVM_IAS=true
         fi
         cd "$KERNEL_PATH/common" || exit 1
-        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
+        MAKE_ARGS="CC=${{ env.CCACHE_EXEC }} clang LD=ld.lld ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld"
+          HOSTLD=ld.lld"
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        ccache --show-stats  # Display cache statistics
         
     - name: Create Kernel ZIP
       id: create_zip
