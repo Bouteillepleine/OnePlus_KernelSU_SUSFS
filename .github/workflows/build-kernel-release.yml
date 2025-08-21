@@ -60,69 +60,60 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 2  # Optimize for ccache sharing between builds
+      # No max-parallel limit for maximum build speed - let GitHub Actions handle optimal parallelism
       matrix:
         include:
-          # Group by kernel version for optimal ccache utilization - 5.10 builds first
+          # Group by kernel version for optimal ccache utilization while maintaining speed
           - model: OP11r
             soc: waipio
             branch: oneplus/sm8475
             manifest: oneplus_11r_v.xml
             android_version: android12
             kernel_version: "5.10"
-            build_priority: 1
           - model: OP-ACE-2
             soc: waipio
             branch: oneplus/sm8475
             manifest: oneplus_ace2_v.xml
             android_version: android12
             kernel_version: "5.10"
-            build_priority: 2
           - model: OP10t
             soc: waipio
             branch: oneplus/sm8475
             manifest: oneplus_10t_v.xml
             android_version: android12
             kernel_version: "5.10"
-            build_priority: 3
           - model: OP10pro
             soc: waipio
             branch: oneplus/sm8450
             manifest: oneplus_10_pro_v.xml
             android_version: android12
             kernel_version: "5.10"
-            build_priority: 4
-          # Then 5.15 builds for maximum cache sharing
           - model: OP11
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_11_v.xml
             android_version: android13
             kernel_version: "5.15"
-            build_priority: 5
           - model: OP-OPEN
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_open_v.xml
             android_version: android13
             kernel_version: "5.15"
-            build_priority: 6
           - model: OP-ACE-2-PRO
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_ace2_pro_v.xml
             android_version: android13
             kernel_version: "5.15"
-            build_priority: 7
           - model: OP12r
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_12r_v.xml
             android_version: android13
             kernel_version: "5.15"
-            build_priority: 8
     steps:
-      - name: Free Disk Space for Better ccache Performance
+      - name: Free Disk Space for Better Performance
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -174,17 +165,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Initialize ccache Statistics
-        run: |
-          echo "=== Pre-build ccache Statistics for ${{ matrix.model }} ==="
-          if command -v ccache >/dev/null 2>&1; then
-            ccache -z  # Reset statistics
-            ccache -s
-          else
-            echo "ccache not yet installed, will be handled by composite action"
-          fi
-
-      - name: Build Kernel
+      - name: Build Kernel with ccache Optimization
         uses: ./.github/actions
         with:
           model: ${{ matrix.model }}
@@ -200,114 +181,87 @@ jobs:
         if: always()
         run: |
           if command -v ccache >/dev/null 2>&1; then
-            echo "=== Post-build ccache Statistics for ${{ matrix.model }} ==="
+            echo "=== ccache Statistics for ${{ matrix.model }} (${{ matrix.kernel_version }}) ==="
             ccache -s
             echo ""
-            echo "=== ccache Hit Rate Analysis ==="
+            # Quick hit rate calculation for performance monitoring
             STATS=$(ccache -s)
-            CACHE_HIT=$(echo "$STATS" | grep -o "cache hit.*" | head -1 || echo "cache hit: 0")
-            CACHE_MISS=$(echo "$STATS" | grep -o "cache miss.*" | head -1 || echo "cache miss: 0")
-            echo "Build: ${{ matrix.model }} (${{ matrix.kernel_version }})"
-            echo "$CACHE_HIT"
-            echo "$CACHE_MISS"
-            
-            # Calculate and display hit rate percentage
-            HIT_COUNT=$(echo "$CACHE_HIT" | grep -o '[0-9]\+' | head -1 || echo "0")
-            MISS_COUNT=$(echo "$CACHE_MISS" | grep -o '[0-9]\+' | head -1 || echo "0")
-            TOTAL=$((HIT_COUNT + MISS_COUNT))
-            if [ $TOTAL -gt 0 ]; then
-              HIT_RATE=$((HIT_COUNT * 100 / TOTAL))
-              echo "Hit Rate: ${HIT_RATE}% (${HIT_COUNT}/${TOTAL})"
-            fi
-          else
-            echo "ccache not available for statistics"
+            HIT_LINE=$(echo "$STATS" | grep "cache hit" | head -1 || echo "cache hit: 0")
+            MISS_LINE=$(echo "$STATS" | grep "cache miss" | head -1 || echo "cache miss: 0")
+            echo "Build: ${{ matrix.model }} - $HIT_LINE, $MISS_LINE"
           fi
 
   build-batch-2:
     name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    # Wait for batch-1 to complete for better ccache utilization
-    needs: build-batch-1
     strategy:
       fail-fast: false
-      max-parallel: 2  # Optimize for ccache sharing between builds
+      # No max-parallel limit for maximum build speed
       matrix:
         include:
-          # Group by kernel version for optimal ccache utilization - 6.1 builds first
           - model: OP12
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus12_v.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 1
           - model: OP13r
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_13r.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 2
           - model: OP-ACE-5
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_ace5.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 3
           - model: OP-ACE-3V
             soc: pineapple
             branch: oneplus/sm7675
             manifest: oneplus_ace_3v_v.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 4
           - model: OP-NORD-4
             soc: pineapple
             branch: oneplus/sm7675
             manifest: oneplus_nord_4_v.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 5
           - model: OP-PAD-2
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_pad2_v.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 6
           - model: OP-Ace3-Pro
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_ace3_pro_v.xml
             android_version: android14
             kernel_version: "6.1"
-            build_priority: 7
-          # Then 6.6 builds for maximum cache sharing
           - model: OP13
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_13.xml
             android_version: android15
             kernel_version: "6.6"
-            build_priority: 8
           - model: OPAce5Pro
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_ace5_pro.xml
             android_version: android15
             kernel_version: "6.6"
-            build_priority: 9
           - model: OP13S
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_13s.xml
             android_version: android15
             kernel_version: "6.6"
-            build_priority: 10
     steps:
-      - name: Free Disk Space for Better ccache Performance
+      - name: Free Disk Space for Better Performance
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -359,17 +313,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Initialize ccache Statistics
-        run: |
-          echo "=== Pre-build ccache Statistics for ${{ matrix.model }} ==="
-          if command -v ccache >/dev/null 2>&1; then
-            ccache -z  # Reset statistics
-            ccache -s
-          else
-            echo "ccache not yet installed, will be handled by composite action"
-          fi
-
-      - name: Build Kernel
+      - name: Build Kernel with ccache Optimization
         uses: ./.github/actions
         with:
           model: ${{ matrix.model }}
@@ -385,27 +329,14 @@ jobs:
         if: always()
         run: |
           if command -v ccache >/dev/null 2>&1; then
-            echo "=== Post-build ccache Statistics for ${{ matrix.model }} ==="
+            echo "=== ccache Statistics for ${{ matrix.model }} (${{ matrix.kernel_version }}) ==="
             ccache -s
             echo ""
-            echo "=== ccache Hit Rate Analysis ==="
+            # Quick hit rate calculation for performance monitoring
             STATS=$(ccache -s)
-            CACHE_HIT=$(echo "$STATS" | grep -o "cache hit.*" | head -1 || echo "cache hit: 0")
-            CACHE_MISS=$(echo "$STATS" | grep -o "cache miss.*" | head -1 || echo "cache miss: 0")
-            echo "Build: ${{ matrix.model }} (${{ matrix.kernel_version }})"
-            echo "$CACHE_HIT"
-            echo "$CACHE_MISS"
-            
-            # Calculate and display hit rate percentage
-            HIT_COUNT=$(echo "$CACHE_HIT" | grep -o '[0-9]\+' | head -1 || echo "0")
-            MISS_COUNT=$(echo "$CACHE_MISS" | grep -o '[0-9]\+' | head -1 || echo "0")
-            TOTAL=$((HIT_COUNT + MISS_COUNT))
-            if [ $TOTAL -gt 0 ]; then
-              HIT_RATE=$((HIT_COUNT * 100 / TOTAL))
-              echo "Hit Rate: ${HIT_RATE}% (${HIT_COUNT}/${TOTAL})"
-            fi
-          else
-            echo "ccache not available for statistics"
+            HIT_LINE=$(echo "$STATS" | grep "cache hit" | head -1 || echo "cache hit: 0")
+            MISS_LINE=$(echo "$STATS" | grep "cache miss" | head -1 || echo "cache miss: 0")
+            echo "Build: ${{ matrix.model }} - $HIT_LINE, $MISS_LINE"
           fi
 
   trigger-release:
@@ -481,7 +412,8 @@ jobs:
           ### Features
           - [+] KernelSU-Next
           - [+] SUSFS v1.5.9
-          - [+] Enhanced ccache optimization for 6-10x faster builds
+          - [+] Enhanced ccache optimization for faster builds
+          - [+] Maximum parallel execution for optimal build speed
           - [+] Wireguard Support
           - [+] Maphide LineageOS Detections
           - [+] Futile Maphide for jit-zygote-cache Detections
@@ -493,10 +425,10 @@ jobs:
           - [+] HMBIRD scx support for OnePlus 13 & OnePlus Ace 5 Pro
           
           ### Build Optimizations
-          - Sequential kernel version builds for maximum ccache efficiency
-          - Parallel execution limited to 2 jobs for optimal cache sharing
+          - Maximum parallel execution for fastest build times
+          - ccache optimization with 8GB cache size and compression
           - Enhanced disk space management for better performance
-          - Comprehensive ccache statistics and monitoring
+          - Streamlined ccache statistics monitoring
           EOF
           
           # Output for debugging
@@ -530,4 +462,4 @@ jobs:
           echo "Release Tag: ${{ env.NEW_TAG }}"
           echo "Release URL: https://github.com/${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}/releases/tag/${{ env.NEW_TAG }}"
           echo "Total Builds: $(find ./downloaded-artifacts -name "*.zip" -type f | wc -l)"
-          echo "ccache optimizations enabled for faster subsequent builds"
+          echo "Build optimized for maximum speed with ccache acceleration"
