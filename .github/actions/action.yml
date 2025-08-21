@@ -116,7 +116,10 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast || {
+          echo "Error: Repo sync failed"
+          exit 1
+        }
 
     - name: Clean Up ABI Protected Exports
       shell: bash
@@ -283,7 +286,7 @@ runs:
         echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        
+
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -313,7 +316,7 @@ runs:
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform" 
+        cd "$CONFIG/kernel_platform"
         if [ "${ANDROID_VERSION:-android13}" = "android14" ] && [ "${KERNEL_VERSION:-5.15}" = "6.1" ]; then
           echo "Disabling KUnit test modules in $CONFIG_FILE..."
           sed -i -e 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' \
@@ -464,10 +467,23 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
 
+    - name: Debug kernel_platform Directory
+      shell: bash
+      run: |
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        if [ -d "$KERNEL_PATH" ]; then
+          echo "kernel_platform directory exists"
+          ls -la "$KERNEL_PATH"
+        else
+          echo "Error: kernel_platform directory does not exist"
+          exit 1
+        fi
+
     - name: Cache ccache
       uses: actions/cache@v4
+      continue-on-error: true
       with:
-        key: ccache-${{ runner.os }}-${{ inputs.kernel_version }}-${{ hashFiles('**/kernel_platform/**') }}
+        key: ccache-${{ runner.os }}-${{ inputs.kernel_version }}-${{ hashFiles('${{ env.CONFIG }}/kernel_platform/common/build.config.gki', '${{ env.CONFIG }}/kernel_platform/common/arch/arm64/configs/gki_defconfig') }}
         path: ~/.ccache
         restore-keys: ccache-${{ runner.os }}-${{ inputs.kernel_version }}-
 
@@ -484,7 +500,7 @@ runs:
         ccache -s     # Show cache stats before build
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
           echo "Adding Clang to PATH: $CLANG_BIN_PATH"
-          SELECTED_CLANG="clang"  # Now using ccache wrapper
+          SELECTED_CLANG="clang"  # Using ccache wrapper
         elif command -v clang >/dev/null 2>&1; then
           SELECTED_CLANG="$(command -v clang)"
           echo "Using system Clang: $SELECTED_CLANG"
