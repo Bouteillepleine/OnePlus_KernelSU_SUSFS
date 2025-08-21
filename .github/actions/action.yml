@@ -464,7 +464,7 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
 
-        - name: Cache ccache
+    - name: Cache ccache
       uses: actions/cache@v4
       with:
         key: ccache-${{ runner.os }}-${{ inputs.kernel_version }}-${{ hashFiles('**/kernel_platform/**') }}
