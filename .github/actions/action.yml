@@ -426,7 +426,7 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
 
-    - name: Detect Clang Version from Configs
+        - name: Detect Clang Version from Configs
       shell: bash
       run: |
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
@@ -479,93 +479,250 @@ runs:
           exit 1
         fi
 
+    - name: Setup ccache Environment
+      shell: bash
+      run: |
+        # Create ccache directory and setup environment
+        mkdir -p ~/.ccache
+        
+        # Set ccache environment variables
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=15G" >> $GITHUB_ENV
+        echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
+        echo "CCACHE_COMPRESSLEVEL=6" >> $GITHUB_ENV
+        echo "CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime,file_macro,pch_defines" >> $GITHUB_ENV
+        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+        echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
+        echo "CCACHE_HARDLINK=true" >> $GITHUB_ENV
+        echo "CCACHE_NOSTATS=false" >> $GITHUB_ENV
+        
+        # Create ccache wrapper directory
+        mkdir -p ~/.ccache/bin
+        
+        echo "ccache environment setup complete"
+
     - name: Cache ccache
       uses: actions/cache@v4
       continue-on-error: true
       with:
-        key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ hashFiles('${{ env.CONFIG }}/kernel_platform/common/build.config.gki', '${{ env.CONFIG }}/kernel_platform/common/arch/arm64/configs/gki_defconfig') }}
+        key: ccache-v2-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ github.sha }}
         path: ~/.ccache
-        restore-keys: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+        restore-keys: |
+          ccache-v2-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-v2-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-
+          ccache-v2-${{ runner.os }}-${{ inputs.model }}-
+          ccache-v2-${{ runner.os }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+          ccache-v2-${{ runner.os }}-
+
+    - name: Setup ccache Wrappers
+      shell: bash
+      run: |
+        CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
+        
+        # Create ccache wrapper scripts for all compiler tools
+        TOOLS="clang clang++ gcc g++ cc c++"
+        LLVM_TOOLS="ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip llvm-readelf"
+        
+        for tool in $TOOLS; do
+          cat > ~/.ccache/bin/$tool << 'EOF'
+#!/bin/bash
+exec ccache $(basename $0) "$@"
+EOF
+          chmod +x ~/.ccache/bin/$tool
+        done
+        
+        # For LLVM tools, create direct symlinks to the actual tools
+        if [ -d "$CLANG_BIN_PATH" ]; then
+          for tool in $LLVM_TOOLS; do
+            if [ -f "$CLANG_BIN_PATH/$tool" ]; then
+              ln -sf "$CLANG_BIN_PATH/$tool" ~/.ccache/bin/$tool
+            fi
+          done
+        fi
+        
+        # Create aarch64 cross-compiler wrappers
+        CROSS_TOOLS="aarch64-linux-android-gcc aarch64-linux-android-g++ aarch64-linux-android-clang aarch64-linux-android-clang++"
+        for tool in $CROSS_TOOLS; do
+          cat > ~/.ccache/bin/$tool << 'EOF'
+#!/bin/bash
+exec ccache $(basename $0) "$@"
+EOF
+          chmod +x ~/.ccache/bin/$tool
+        done
+        
+        echo "ccache wrappers created successfully"
+        ls -la ~/.ccache/bin/
+
+    - name: Initialize ccache
+      shell: bash
+      run: |
+        # Initialize ccache with our settings
+        export CCACHE_DIR=~/.ccache
+        export CCACHE_MAXSIZE=15G
+        export CCACHE_COMPRESS=true
+        export CCACHE_COMPRESSLEVEL=6
+        export CCACHE_SLOPPINESS="time_macros,include_file_mtime,include_file_ctime,file_macro,pch_defines"
+        export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
+        export CCACHE_NOHASHDIR=true
+        export CCACHE_HARDLINK=true
+        
+        # Clear stats and set max size
+        ccache -z
+        ccache -M 15G
+        ccache -s
+        
+        echo "ccache initialized successfully"
 
     - name: Build Kernel
       shell: bash
+      env:
+        CCACHE_DIR: ~/.ccache
+        CCACHE_MAXSIZE: 15G
+        CCACHE_COMPRESS: true
+        CCACHE_COMPRESSLEVEL: 6
+        CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime,file_macro,pch_defines
+        CCACHE_BASEDIR: ${{ github.workspace }}
+        CCACHE_NOHASHDIR: true
+        CCACHE_HARDLINK: true
+        CCACHE_NOSTATS: false
       run: |
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
-        mkdir -p ~/.ccache
-        export CCACHE_DIR=~/.ccache
-        export PATH="/usr/lib/ccache:$CLANG_BIN_PATH:$PATH"
-        ccache -M 5G  # Set max cache size to 5GB
-        ccache -s     # Show cache stats before build
+        
+        # Setup PATH with ccache wrappers first, then clang
+        export PATH="$HOME/.ccache/bin:/usr/lib/ccache:$CLANG_BIN_PATH:$PATH"
+        
+        # Show ccache stats before build
+        echo "=== ccache stats before build ==="
+        ccache -s
+        
+        # Verify ccache setup
+        echo "=== Verifying ccache setup ==="
+        which clang
+        which clang++
+        ccache --version
+        
+        cd "$KERNEL_PATH" || exit 1
+        
+        # Determine the correct clang to use
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
-          echo "Adding Clang to PATH: $CLANG_BIN_PATH"
-          SELECTED_CLANG="clang"  # Using ccache wrapper
+          echo "Using prebuilt Clang: $CLANG_BIN_PATH/clang"
+          SELECTED_CLANG="clang"  # Will use ccache wrapper
+          SELECTED_CLANGXX="clang++"
         elif command -v clang >/dev/null 2>&1; then
-          SELECTED_CLANG="$(command -v clang)"
-          echo "Using system Clang: $SELECTED_CLANG"
-          exit 1
+          SELECTED_CLANG="clang"
+          SELECTED_CLANGXX="clang++"
+          echo "Using system Clang: $(which clang)"
         else
-          echo "Error: No valid Clang binary found"
+          echo "Error: No suitable Clang compiler found"
           exit 1
-        fi
-        echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
-        MISSING_TOOLS=""
-        for tool in $LLVM_TOOLS; do
-          if ! command -v $tool >/dev/null 2>&1; then
-            MISSING_TOOLS="$MISSING_TOOLS $tool"
-          fi
-        done
-        if [ -n "$MISSING_TOOLS" ]; then
-          echo "Installing missing LLVM tools:$MISSING_TOOLS"
-          sudo apt-get update
-          sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $MISSING_TOOLS; do
-            if ! command -v $tool >/dev/null 2>&1; then
-              echo "Error: Failed to install $tool"
-              exit 1
-            fi
-          done
-        fi
-        KERNEL_VERSION="${{ inputs.kernel_version }}"
-        if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-          USE_LLVM_IAS=true
-        fi
-        cd "$KERNEL_PATH/common" || exit 1
-        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld CC=clang HOSTCC=clang"
-        if [[ -v USE_LLVM_IAS ]]; then
-          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
-        ccache -s  # Show cache stats after build
+        # Show compiler versions
+        echo "=== Compiler Information ==="
+        $SELECTED_CLANG --version
+        echo "Clang path: $(which $SELECTED_CLANG)"
+        
+        # Build configuration
+        echo "=== Building kernel configuration ==="
+        
+        # Set build variables for better ccache utilization
+        export KBUILD_BUILD_TIMESTAMP="$(date -u -d @${SOURCE_DATE_EPOCH:-$(date +%s)} +%Y-%m-%d)"
+        export KBUILD_BUILD_USER="builder"
+        export KBUILD_BUILD_HOST="github-actions"
+        
+        # Common make arguments with ccache
+        MAKE_ARGS="LLVM=1 ARCH=arm64 \
+          CC='$SELECTED_CLANG' \
+          CXX='$SELECTED_CLANGXX' \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          READELF=llvm-readelf \
+          STRIP=llvm-strip \
+          HOSTCC='$SELECTED_CLANG' \
+          HOSTCXX='$SELECTED_CLANGXX' \
+          HOSTLD=ld.lld \
+          CROSS_COMPILE=aarch64-linux-android- \
+          CROSS_COMPILE_COMPAT=arm-linux-androideabi-"
+        
+        # Optimization flags
+        KCFLAGS="-Wno-error -O2 -flto=thin -fno-stack-protector -Wno-unused-command-line-argument"
+        
+        # Build defconfig
+        echo "Building defconfig..."
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS="$KCFLAGS" gki_defconfig || {
+          echo "Error: defconfig build failed"
+          exit 1
+        }
+        
+        # Build kernel
+        echo "Building kernel..."
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS="$KCFLAGS" || {
+          echo "Error: kernel build failed"
+          exit 1
+        }
+        
+        # Show final ccache stats
+        echo "=== ccache stats after build ==="
+        ccache -s
+        
+        # Verify kernel image was created
+        if [ -f "out/arch/arm64/boot/Image" ]; then
+          echo "Kernel build completed successfully"
+          ls -lh out/arch/arm64/boot/Image
+        else
+          echo "Error: Kernel image not found"
+          exit 1
+        fi
 
-    - name: Create Kernel ZIP
-      id: create_zip
+    - name: Create Kernel Package
       shell: bash
       run: |
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
         KERNEL_PATH="$CONFIG_DIR/kernel_platform"
-        cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-        cd "$GITHUB_WORKSPACE/AnyKernel3"
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
-          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
-        fi
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+        
+        echo "Creating kernel package..."
+        cd "$KERNEL_PATH"
+        
+        # Copy kernel image to AnyKernel3
+        if [ -f "out/arch/arm64/boot/Image" ]; then
+          cp out/arch/arm64/boot/Image ../../../AnyKernel3/
+          echo "Kernel image copied to AnyKernel3"
+        else
+          echo "Error: Kernel image not found"
+          exit 1
+        fi
+        
+        # Create zip package
+        cd ../../../AnyKernel3
+        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ env.ANDROID_VER }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
+        
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
-        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
+        zip -r9 "$ARTIFACTS_DIR/$ZIP_NAME" . -x "*.git*" "README.md" "*.md"
+        
+        echo "Package created successfully: $ZIP_NAME"
+        ls -lh "$ARTIFACTS_DIR/$ZIP_NAME"
 
     - name: Upload Artifacts
-      if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-${{ env.CONFIG }}
-        path: |
-          ${{ env.CONFIG }}/artifacts/*
+        name: kernel-${{ inputs.model }}
+        path: ${{ env.CONFIG }}/artifacts/*
+        if-no-files-found: warn
+        compression-level: 6
+        overwrite: false
+        include-hidden-files: false
+
+    - name: Show Final ccache Statistics
+      shell: bash
+      run: |
+        echo "=== Final ccache statistics ==="
+        ccache -s
+        echo "=== ccache configuration ==="
+        ccache -p
+
