@@ -1,3 +1,40 @@
+name: Build
+permissions:
+  contents: write
+  actions: write
+
+inputs:
+  model:
+    required: true
+    type: string
+  soc:
+    required: true
+    type: string
+  branch:
+    required: true
+    type: string
+  manifest:
+    required: true
+    type: string
+  android_version:
+    required: true
+    type: string
+  kernel_version:
+    required: true
+    type: string
+  ksun_branch:
+    required: true
+    type: string
+    default: stable
+  susfs_branch:
+    required: true
+    type: string
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+  
 - name: Cache ccache
   uses: actions/cache@v3
   id: cache-ccache
