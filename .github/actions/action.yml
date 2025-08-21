@@ -34,23 +34,21 @@ inputs:
 runs:
   using: "composite"
   steps:
-  
-- name: Cache ccache
-  uses: actions/cache@v3
-  id: cache-ccache
-  with:
-    path: |
-      ~/.ccache
-    key: ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ hashFiles('**/build.config*', '**/Makefile') }}
-    restore-keys: |
-      ccache-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-
-      ccache-${{ runner.os }}-${{ inputs.model }}-
+
+- name: Initialize Environment
+  shell: bash
+  run: |
+  set -euo pipefail
+  echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
+  echo "ANDROID_VER=${{ inputs.android_version }}" >> "$GITHUB_ENV"
+  echo "KERNEL_SERIES=${{ inputs.kernel_version }}" >> "$GITHUB_ENV"
 
 - name: Setup Build System
   shell: bash
   run: |
     set -euo pipefail
     export DEBIAN_FRONTEND=noninteractive
+    echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"
     df -h
     sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
       /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
@@ -66,7 +64,6 @@ runs:
     sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
     sudo apt-get autoremove -y
     sudo apt-get autoclean -y
-    echo "System cleanup complete."
     df -h
 
 - name: Install Dependencies
@@ -75,39 +72,27 @@ runs:
     set -euo pipefail
     sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
     sudo apt update -qq
-    sudo apt install -y --no-install-recommends \
-      git curl python3 python-is-python3 \
-      build-essential flex bison libssl-dev libelf-dev libelf1 \
-      libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip lld ccache parallel
-
-- name: Initialize ccache
-  shell: bash
-  run: |
-    set -euo pipefail
-    ccache -o max_size=20G
-    ccache -o compression=true
-    ccache -o compression_level=9
-    ccache -o hash_dir=false
-    ccache -o base_dir="$CCACHE_BASEDIR"
-    ccache -o compiler_check=content
-    ccache -z
-    echo "Initial ccache stats:"
-    ccache -s
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
+      python3 git curl libelf-dev libelf1 lld \
+      build-essential flex bison libssl-dev \
+      libncurses-dev liblz4-tool zlib1g-dev \
+      libxml2-utils rsync unzip python3 python-is-python3 jq lz4
 
 - name: Install Repo Tool
   shell: bash
   run: |
     set -euo pipefail
     mkdir -p ./git-repo
-    curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o ./git-repo/repo
+    curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
     chmod a+rx ./git-repo/repo
     echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> "$GITHUB_ENV"
+    echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
 
 - name: Clone AnyKernel3 and Other Dependencies
   shell: bash
   run: |
     set -euo pipefail
-    echo "Cloning AnyKernel3 and dependencies..."
+    echo "Cloning AnyKernel3 and other dependencies..."
     ANYKERNEL_BRANCH="gki-2.0"
     if [[ -z "${{ inputs.susfs_branch }}" ]]; then
       SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
@@ -116,14 +101,14 @@ runs:
     fi
     echo "AnyKernel3 branch: $ANYKERNEL_BRANCH"
     echo "SUSFS branch: $SUSFS_BRANCH"
-    git clone -b "$ANYKERNEL_BRANCH" https://github.com/Bouteillepleine/AnyKernel3.git
+    git clone https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
     git clone https://github.com/TheWildJames/kernel_patches.git
     git clone https://gitlab.com/simonpunk/susfs4ksu.git
     cd susfs4ksu
     if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
       git checkout "$SUSFS_BRANCH"
     else
-      echo "ERROR: SUSFS branch/tag/commit '$SUSFS_BRANCH' not found."
+      echo "ERROR: SUSFS ref '$SUSFS_BRANCH' not found"
       exit 1
     fi
 
@@ -135,13 +120,11 @@ runs:
     cd "$CONFIG"
     if [[ "${{ inputs.manifest }}" == https://* ]]; then
       mkdir -p .repo/manifests
-        curl -Ls "${{ inputs.manifest }}" -o .repo/manifests/temp_manifest.xml
-        "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-          -b oneplus/sm8650 -m temp_manifest.xml \
-          --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+      curl -Ls "${{ inputs.manifest }}" -o .repo/manifests/temp_manifest.xml
+      "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml \
+        --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
     else
-      "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-        -b "${{ inputs.branch }}" -m "${{ inputs.manifest }}" \
+      "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "${{ inputs.branch }}" -m "${{ inputs.manifest }}" \
         --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
     fi
     "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
@@ -168,6 +151,7 @@ runs:
     git submodule update --init --recursive
 
 - name: Apply SUSFS Patches
+  id: apply_susfs
   shell: bash
   run: |
     set -euo pipefail
@@ -180,11 +164,11 @@ runs:
     echo "SUSVER=$susfs_version" >> "$GITHUB_ENV"
     BASE_VERSION=10200
     cd kernel
-    KSU_VERSION=$(expr "$(git rev-list --count HEAD)" + "$BASE_VERSION")
-    sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+    KSU_VERSION=$(( $(git rev-list --count HEAD) + BASE_VERSION ))
+    sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile || true
     cd ..
     echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
-    echo "KernelSU Next: $KSU_VERSION  SUSFS: $susfs_version"
+    echo "Detected SUSFS: $susfs_version  KernelSU Next: $KSU_VERSION"
 
     case "$susfs_version" in
       v1.5.5|v1.5.6|v1.5.7)
@@ -196,17 +180,17 @@ runs:
         patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
         for f in fix_apk_sign.c.patch fix_core_hook.c.patch fix_selinux.c.patch fix_ksud.c.patch; do
           cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/$f" .
-          patch -p1 --forward --fuzz=3 < "$f"
+          patch -p1 --forward --fuzz=3 < "$f" || true
         done
         ;;
       v1.5.9)
         cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch .
         patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
-        for f in $(find ./kernel -maxdepth 2 -name '*.rej' -printf "%f\n" | cut -d'.' -f1); do
-          patchfile="../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$f.c.patch"
-          [ -f "$patchfile" ] && patch -p1 --forward < "$patchfile"
+        for rej in $(find ./kernel -maxdepth 2 -name '*.rej' -printf "%f\n" | cut -d'.' -f1); do
+          pf="../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_${rej}.c.patch"
+          [ -f "$pf" ] && patch -p1 --forward < "$pf" || true
         done
-        patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+        patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
         ;;
       *)
         echo "Unsupported SUSFS version: $susfs_version"
@@ -230,8 +214,8 @@ runs:
       echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
       patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch" || true
       cd kernel/sched
-      rm -f ext.c ext.h build_policy.c slim.h slim_sysctl.c || true
-      patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true
+        rm -f ext.c ext.h build_policy.c slim.h slim_sysctl.c || true
+        patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch" || true
     fi
 
 - name: Apply KSUN Hooks
@@ -240,7 +224,7 @@ runs:
     set -euo pipefail
     cd "$CONFIG/kernel_platform/common"
     cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch manual_hooks.patch
-    patch -p1 < manual_hooks.patch
+    patch -p1 < manual_hooks.patch || true
 
 - name: Apply Hide Stuff Patches
   shell: bash
@@ -248,16 +232,16 @@ runs:
     set -euo pipefail
     cd "$CONFIG/kernel_platform/common"
     cp ../../../kernel_patches/69_hide_stuff.patch .
-    patch -p1 -F 3 < 69_hide_stuff.patch
+    patch -p1 -F 3 < 69_hide_stuff.patch || true
 
 - name: Append KernelSU / SUSFS Config
   shell: bash
   run: |
     set -euo pipefail
-    DEF=("$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig")
-    add() {
-      grep -q "^$1" "${DEF[0]}" && sed -i "/^$1/d" "${DEF[0]}"
-      echo "$2" >> "${DEF[0]}"
+    DEF="$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig"
+    add () {
+      grep -q "^$1" "$DEF" && sed -i "/^$1/d" "$DEF"
+      echo "$2" >> "$DEF"
     }
     add CONFIG_KSU "CONFIG_KSU=y"
     add CONFIG_KSU_KPROBES_HOOK "CONFIG_KSU_KPROBES_HOOK=n"
@@ -298,8 +282,8 @@ runs:
     DEF="$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig"
     for kv in CONFIG_IP_NF_TARGET_TTL=y CONFIG_IP6_NF_TARGET_HL=y CONFIG_IP6_NF_MATCH_HL=y; do
       key="${kv%%=*}"
-        sed -i "/^$key=/d" "$DEF"
-        echo "$kv" >> "$DEF"
+      sed -i "/^$key=/d" "$DEF"
+      echo "$kv" >> "$DEF"
     done
 
 - name: Add Build Optimization Configs
@@ -327,7 +311,7 @@ runs:
     set -euo pipefail
     cd "$CONFIG/kernel_platform"
     CONFIG_FILE="common/arch/arm64/configs/gki_defconfig"
-    if [ "${ANDROID_VERSION:-android13}" = "android14" ] && [ "${KERNEL_VERSION:-5.15}" = "6.1" ]; then
+    if [ "${ANDROID_VER:-android13}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
       sed -i -e 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' \
              -e 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' \
              -e 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' \
@@ -343,27 +327,28 @@ runs:
     fi
 
 - name: Save Build Metadata
-  shell: bash
   id: save_metadata
+  shell: bash
   run: |
     set -euo pipefail
     CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
     ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
     mkdir -p "$ARTIFACTS_DIR"
     cd "$CONFIG_DIR/kernel_platform/common"
+
     BRANCH_LINE=$( (grep '^[[:space:]]*BRANCH=' build.config.common || grep '^[[:space:]]*BRANCH=' build.config.constants || true) | head -n1 )
     if [ -z "$BRANCH_LINE" ]; then
       echo "BRANCH not found"
       exit 1
     fi
     BRANCH_VALUE="${BRANCH_LINE#*=}"
-    ANDROID_VERSION="${BRANCH_VALUE%-*}"
+    ANDROID_VERSION_PARSED="${BRANCH_VALUE%-*}"
     VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
     PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
     SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
     FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
-    echo "$ANDROID_VERSION-$FULL_VERSION" > "$ARTIFACTS_DIR/${{ inputs.model }}.txt"
-    echo "ANDROID_VER=$ANDROID_VERSION" >> "$GITHUB_ENV"
+    echo "$ANDROID_VERSION_PARSED-$FULL_VERSION" > "$ARTIFACTS_DIR/${{ inputs.model }}.txt"
+    echo "ANDROID_VER=$ANDROID_VERSION_PARSED" >> "$GITHUB_ENV"
 
 - name: Customize LocalVersion / UTS
   shell: bash
@@ -394,13 +379,10 @@ runs:
       raw="${raw//\"/}"
       echo "CLANG_CFG_VERSION=$raw" >> "$GITHUB_ENV"
     fi
-    # Prebuilts autodetect
     AUTO=$(ls -1d "$KERNEL_PATH"/prebuilts/clang/host/linux-x86/clang-r* 2>/dev/null | tail -n1 || true)
-    if [ -n "$AUTO" ]; then
-      echo "CLANG_BIN_PATH=$AUTO/bin" >> "$GITHUB_ENV"
-    fi
+    [ -n "$AUTO" ] && echo "CLANG_BIN_PATH=$AUTO/bin" >> "$GITHUB_ENV"
 
-- name: Build Kernel (with ccache)
+- name: Build Kernel
   shell: bash
   run: |
     set -euo pipefail
@@ -413,31 +395,27 @@ runs:
     cd "$KERNEL_PATH/common"
     MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
     CORES=$(nproc)
-    # Conservative job scaling if low memory
     if [ "$MEM_GB" -lt 16 ]; then
       JOBS=$(( CORES > 4 ? CORES/2 : CORES ))
     else
       JOBS=$CORES
     fi
     [ "$JOBS" -lt 1 ] && JOBS=1
-    echo "Using $JOBS compile jobs (RAM ${MEM_GB}G, cores $CORES)"
-    MAKE_ARGS="LLVM=1 ARCH=arm64 CC='ccache clang' LD=ld.lld HOSTLD=ld.lld CROSS_COMPILE=aarch64-linux-android-"
-    # Thin LTO flag reinforcement
+    echo "Using $JOBS jobs (RAM ${MEM_GB}G, cores $CORES)"
+    MAKE_ARGS="LLVM=1 ARCH=arm64 CC=clang LD=ld.lld HOSTLD=ld.lld CROSS_COMPILE=aarch64-linux-android-"
     export KBUILD_BUILD_USER="builder"
     export KBUILD_BUILD_HOST="github"
-    # Defconfig
     make O=out ${MAKE_ARGS} gki_defconfig
-    # Build
-    time make -j"$JOBS" O=out ${MAKE_ARGS} KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" 2>&1 | tee build.log
-    # Basic artifact existence check
+    time make -j"$JOBS" O=out ${MAKE_ARGS} KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector"
     test -f out/arch/arm64/boot/Image || { echo "Image not produced"; ls -R out/arch/arm64/boot; exit 1; }
 
-- name: ccache Statistics (Post-Build)
+- name: Record Versions
+  id: record_versions
   shell: bash
   run: |
     set -euo pipefail
-    echo "Final ccache stats:"
-    ccache -s
+    echo "ksu_version=${KSUVER:-}" >> "$GITHUB_OUTPUT"
+    echo "susfs_version=${SUSVER:-}" >> "$GITHUB_OUTPUT"
 
 - name: Create Kernel ZIP
   id: create_zip
@@ -450,48 +428,27 @@ runs:
     IMG=""
     for c in Image Image.gz Image.lz4; do
       if [ -f "$OUTDIR/$c" ]; then
-        IMG="$OUTDIR/$c"
-        break
+        IMG="$OUTDIR/$c"; break
       fi
     done
     [ -z "$IMG" ] && { echo "No kernel image found"; ls -1 "$OUTDIR"; exit 1; }
+    mkdir -p "$GITHUB_WORKSPACE/AnyKernel3"
     if [[ "$IMG" == *.gz ]]; then
       gunzip -c "$IMG" > "$GITHUB_WORKSPACE/AnyKernel3/Image"
-    elif [[ "$IMG" == *.lz4" ]]; then
+    elif [[ "$IMG" == *.lz4 ]]; then
       lz4 -d -c "$IMG" > "$GITHUB_WORKSPACE/AnyKernel3/Image"
     else
-        cp "$IMG" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+      cp "$IMG" "$GITHUB_WORKSPACE/AnyKernel3/Image"
     fi
     cd "$GITHUB_WORKSPACE/AnyKernel3"
     if [ "${{ inputs.model }}" = "OPAce5Pro" ] || [ "${{ inputs.model }}" = "OP13" ]; then
-      cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ || true
-      patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" || true
+      mkdir -p tools
+      cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
+      [ -f "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" ] && patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" || true
     fi
-    ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${KSUVER}_SUSFS_${SUSVER}.zip"
+    ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${KSUVER:-}_SUSFS_${SUSVER:-}.zip"
     ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
     mkdir -p "$ARTIFACTS_DIR"
-    zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
-
-- name: Upload Artifacts
-  if: success() && steps.create_zip.conclusion == 'success'
-  uses: actions/upload-artifact@v4
-  with:
-    name: kernel-${{ inputs.model }}
-    path: |
-      ${{ inputs.model }}/artifacts/*
-
-- name: Upload Build Log On Failure
-  if: failure()
-  uses: actions/upload-artifact@v4
-  with:
-    name: build-log-${{ inputs.model }}
-    path: ${{ inputs.model }}/kernel_platform/common/build.log
-    if-no-files-found: ignore
-
-- name: Summary
-  shell: bash
-  run: |
-    echo "Build completed (or failed earlier)."
-    echo "Model: ${{ inputs.model }}"
-    echo "Android: ${{ inputs.android_version }}  Kernel: ${{ inputs.kernel_version }}"
-    echo "KSU Version: ${KSUVER:-unknown}  SUSFS: ${SUSVER:-unknown}"
+    zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
+    echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+    echo "Created $ZIP_NAME"
