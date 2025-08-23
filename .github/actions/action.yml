@@ -188,6 +188,8 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG"
         echo "Fetching susfs patches..."
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        git clone https://github.com/ShirkNeko/SukiSU_patch.git
         PATCH_FILE="./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
         if [ -f "$PATCH_FILE" ]; then
           cp "$PATCH_FILE" ./kernel_platform/common/
