@@ -1,3 +1,4 @@
+```yaml
 name: Build
 permissions:
   contents: write
@@ -296,8 +297,8 @@ runs:
         cd "$CONFIG/kernel_platform"
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Save Build Metadata
       shell: bash
@@ -389,51 +390,51 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
 
-    - name: Detect Clang Version from Configs
+    - name: Detect Clang Version from Configs and build
       shell: bash
       run: |
-        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
-        cd kernel_workspace/kernel_platform
-        # LLVM_IAS
+        echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
+        cd "$CONFIG/kernel_platform"
+        # Auto-detect LLVM_IAS
         if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
           USE_LLVM_IAS=true
         else
           USE_LLVM_IAS=false
         fi
-        # build.config.common CLANG_PREBUILT_BIN
+        # Read CLANG_PREBUILT_BIN from build.config.common
         CLANG_PREBUILT_BIN=$(grep '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2 || true)
         if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
-          echo "CLANG_PREBUILT_BIN build.config.common"
+          echo "CLANG_PREBUILT_BIN not found in build.config.common, falling back to official build script"
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        # CLANG_PREBUILT_BIN clang-r 
+        # Try to extract clang-r version from CLANG_PREBUILT_BIN
         if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z]+) ]]; then
           CLANG_VERSION="${BASH_REMATCH[1]}"
         else
-          # build.config.constants
+          # If not matched, try to extract from build.config.constants
           if [[ -f ./common/build.config.constants ]]; then
             CLANG_VERSION=$(grep '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
           fi
         fi
         if [[ -z "$CLANG_VERSION" ]]; then
-          echo "CLANG_PREBUILT_BIN build.config.constants"
+          echo "Failed to obtain Clang version from CLANG_PREBUILT_BIN or build.config.constants, falling back to official build script"
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        # CLANG_VERSION
+        # Replace with new CLANG_VERSION value
         CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
-        # CLANG_PREBUILT_BIN 一 CLANG_DIR
+        # Get the first directory name from CLANG_PREBUILT_BIN, assign to CLANG_DIR
         CLANG_DIR=$(echo "$CLANG_PREBUILT_BIN" | cut -d'/' -f1)
-        # CLANG_PREBUILT_BIN CLANG_PATH
+        # Get the parent directory name from CLANG_PREBUILT_BIN, assign to CLANG_PATH
         CLANG_PATH=$(basename "$(dirname "$CLANG_PREBUILT_BIN")")
         echo "CLANG_VERSION=$CLANG_VERSION"
         echo "CLANG_DIR=$CLANG_DIR"
         echo "CLANG_PATH=$CLANG_PATH"
         echo "USE_LLVM_IAS=$USE_LLVM_IAS"
-        export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
+        export PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
         cd ./common
-        # SUBLEVEL
+        # Force modify SUBLEVEL, disabled by default
         # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' Makefile
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
@@ -469,3 +470,4 @@ runs:
         name: kernel-${{ env.CONFIG }}
         path: |
           ${{ env.CONFIG }}/artifacts/*
+```
