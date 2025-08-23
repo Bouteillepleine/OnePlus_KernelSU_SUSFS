@@ -77,6 +77,11 @@ runs:
         echo "Package cleanup complete"
         df -h
 
+    - name: Configure Git
+        run: |
+          git config --global user.name "0°build"
+          git config --global user.email "0°build@qq.com"
+
     - name: Install Dependencies
       shell: bash
       run: |
