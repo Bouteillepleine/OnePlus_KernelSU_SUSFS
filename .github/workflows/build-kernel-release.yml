@@ -47,10 +47,6 @@ on:
         description: "SukiSU Meta (e.g., susfs-main/Wild)"
         type: string
         default: "susfs-main/Wild"
-      kpm:
-        description: "Enable KPM"
-        type: boolean
-        default: true
       hook:
         description: "Hook type"
         type: choice
