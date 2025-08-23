@@ -12,45 +12,58 @@ on:
         required: true
         type: boolean
         default: false
-      suki_branch:
-        description: "Choose SukiSU Branch"
+      ksun_branch:
+        description: "Choose SukiSU Ultra Branch"
         required: true
-        type: choice
-        options:
-          - main
-          - susfs-main
-        default: main
-      KPM:
-        description: 'Apply patch_linux and replace Image'
-        required: false
-        type: boolean
-        default: false
+        type:  string
+        default: "susfs-main"
+      android12-5_10_susfs_branch:
+        description: "Choose SusFS Branch for android12-5.10"
+        type: string
+        default: "gki-android12-5.10"
+      android13-5_10_susfs_branch:
+        description: "Choose SusFS Branch for android13-5.10"
+        type: string
+        default: "gki-android13-5.10"
+      android13-5_15_susfs_branch:
+        description: "Choose SusFS Branch for android13-5.15"
+        type: string
+        default: "gki-android13-5.15"
+      android14-5_15_susfs_branch:
+        description: "Choose SusFS Branch for android14-5.15"
+        type: string
+        default: "gki-android14-5.15"
+      android14-6_1_susfs_branch:
+        description: "Choose SusFS Branch for android14-6.1"
+        type: string
+        default: "gki-android14-6.1"
+      android15-6_6_susfs_branch:
+        description: "Choose SusFS Branch for android15-6.6"
+        type: string
+        default: "gki-android15-6.6"
       KSU_META:
         type: string
-        description: "Branch Name (cannot be empty)/Custom Version Identifier (leave empty to not modify)"
+        description: "susfs-main/Wild"
         required: false
-        default: "susfs-main/⚡Ultra⚡"
-      HOOK:
-        description: 'Hook method (kprobe, manual)'
+        default: "susfs-main/Wild"
+      KPM:
+        type: boolean
+        description: "KPM"
         required: true
+        default: true
+      HOOK:
         type: choice
+        description: "Hook type"
+        required: true
+        default: manual
         options:
           - kprobe
           - manual
-        default: 'manual'
-      SCHED:
-        description: 'Add Fengchi Driver?'
-        required: true
-        type: boolean
-        default: false
-      susfs_branch:
-        description: 'JSON object mapping Android/kernel versions to SusFS branches (e.g., {"android12-5.10":"gki-android12-5.10","android13-5.15":"gki-android13-5.15",...})'
-        type: string
-        default: '{"android12-5.10":"gki-android12-5.10","android13-5.10":"gki-android13-5.10","android13-5.15":"gki-android13-5.15","android14-5.15":"gki-android14-5.15","android14-6.1":"gki-android14-6.1","android15-6.6":"gki-android15-6.6"}'
+          - tracepoint
 
 jobs:
   build-batch-1:
-    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.suki_branch }})
+    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     strategy:
       fail-fast: false
       matrix:
@@ -109,30 +122,38 @@ jobs:
         id: get-susfs-branch
         run: |
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          DEFAULT_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          SUSFS_JSON="${{ inputs.susfs_branch }}"
-          if [[ -z "$SUSFS_JSON" ]]; then
-            echo "No susfs_branch input provided, using default: $DEFAULT_BRANCH"
-            SUSFS_BRANCH="$DEFAULT_BRANCH"
-          else
-            if echo "$SUSFS_JSON" | jq . >/dev/null 2>&1; then
-              SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"$DEFAULT_BRANCH\"")
-            else
-              echo "Invalid JSON in susfs_branch input: $SUSFS_JSON"
-              echo "Falling back to default: $DEFAULT_BRANCH"
-              SUSFS_BRANCH="$DEFAULT_BRANCH"
-            fi
-          fi
+          case "$KERNEL_STRING" in
+            "android12-5.10")
+              SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
+              ;;
+            "android13-5.10")
+              SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}"
+              ;;
+            "android13-5.15")
+              SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}"
+              ;;
+            "android14-5.15")
+              SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}"
+              ;;
+            "android14-6.1")
+              SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}"
+              ;;
+            "android15-6.6")
+              SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}"
+              ;;
+            *)
+              echo "Invalid kernel version or unsupported: $KERNEL_STRING"
+              exit 1
+              ;;
+          esac
           
           if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="$DEFAULT_BRANCH"
+            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           fi
           
-          echo "Selected SusFS branch: $SUSFS_BRANCH"
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-        env:
-          DEBIAN_FRONTEND: noninteractive
+
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -147,16 +168,15 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.suki_branch }}
+          ksun_branch: ${{ inputs.ksun_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-          KPM: ${{ inputs.KPM }}
-          KSU_META: ${{ inputs.KSU_META }}
-          HOOK: ${{ inputs.HOOK }}
-          SCHED: ${{ inputs.SCHED }}
           SUSFS_CI: ${{ inputs.SUSFS_CI }}
+          KSU_META: ${{ inputs.KSU_META }}
+          KPM: ${{ inputs.KPM }}
+          HOOK: ${{ inputs.HOOK }}
 
   build-batch-2:
-    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.suki_branch }})
+    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     strategy:
       fail-fast: false
       matrix:
@@ -227,30 +247,38 @@ jobs:
         id: get-susfs-branch
         run: |
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          DEFAULT_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          SUSFS_JSON="${{ inputs.susfs_branch }}"
-          if [[ -z "$SUSFS_JSON" ]]; then
-            echo "No susfs_branch input provided, using default: $DEFAULT_BRANCH"
-            SUSFS_BRANCH="$DEFAULT_BRANCH"
-          else
-            if echo "$SUSFS_JSON" | jq . >/dev/null 2>&1; then
-              SUSFS_BRANCH=$(echo "$SUSFS_JSON" | jq -r ".\"$KERNEL_STRING\" // \"$DEFAULT_BRANCH\"")
-            else
-              echo "Invalid JSON in susfs_branch input: $SUSFS_JSON"
-              echo "Falling back to default: $DEFAULT_BRANCH"
-              SUSFS_BRANCH="$DEFAULT_BRANCH"
-            fi
-          fi
+          case "$KERNEL_STRING" in
+            "android12-5.10")
+              SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
+              ;;
+            "android13-5.10")
+              SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}"
+              ;;
+            "android13-5.15")
+              SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}"
+              ;;
+            "android14-5.15")
+              SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}"
+              ;;
+            "android14-6.1")
+              SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}"
+              ;;
+            "android15-6.6")
+              SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}"
+              ;;
+            *)
+              echo "Invalid kernel version or unsupported: $KERNEL_STRING"
+              exit 1
+              ;;
+          esac
           
           if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="$DEFAULT_BRANCH"
+            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           fi
           
-          echo "Selected SusFS branch: $SUSFS_BRANCH"
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
-        env:
-          DEBIAN_FRONTEND: noninteractive
+
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -265,13 +293,12 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.suki_branch }}
+          ksun_branch: ${{ inputs.ksun_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-          KPM: ${{ inputs.KPM }}
-          KSU_META: ${{ inputs.KSU_META }}
-          HOOK: ${{ inputs.HOOK }}
-          SCHED: ${{ inputs.SCHED }}
           SUSFS_CI: ${{ inputs.SUSFS_CI }}
+          KSU_META: ${{ inputs.KSU_META }}
+          KPM: ${{ inputs.KPM }}
+          HOOK: ${{ inputs.HOOK }}
 
   trigger-release:
     needs:
@@ -283,7 +310,7 @@ jobs:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With SukiSU Ultra & SUSFS v1.5.9 *TEST BUILD*"
+      RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With SukiSU Ultra *TEST BUILD*"
 
     steps:
       - name: Checkout code
@@ -305,6 +332,7 @@ jobs:
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
           git tag $NEW_TAG
           git push origin $NEW_TAG
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -315,16 +343,13 @@ jobs:
         run: |
           echo "=== Start building the release notes ==="
           cat << EOF > release_notes.md
-          This release contains SukiSU Ultra and SUSFS v1.5.9
-          
-          Module: 
-          -> https://github.com/sidex15/ksu_module_susfs  
-          
+          This release contains SukiSU Ultra
+
           Non-Official Managers:
-          -> https://github.com/SukiSU-Ultra/SukiSU-Ultra  
-          
+          -> https://github.com/SukiSU-Ultra/SukiSU-Ultra
+
           ### Built Devices
-          
+
           | Model | Kernel Version |
           |-------|----------------|
           EOF
@@ -340,8 +365,8 @@ jobs:
           cat << 'EOF' >> release_notes.md
           
           ### Features
-          - [+] SukiSU-Ultra
-          - [+] SUSFS v1.5.9
+          - [+] SukiSU Ultra
+          - [+] SUSFS Integration
           - [+] Wireguard Support
           - [+] Maphide LineageOS Detections
           - [+] Futile Maphide for jit-zygote-cache Detections
@@ -355,6 +380,7 @@ jobs:
           
           echo "--- Final Release Notes ---"
           cat release_notes.md
+
       - name: Create GitHub Release
         run: |
           gh release create "${{ env.NEW_TAG }}" \
@@ -362,6 +388,7 @@ jobs:
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --prerelease
+
       - name: Upload Release Assets Dynamically
         run: |
           for file in ./downloaded-artifacts/*/*.zip; do
