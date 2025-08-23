@@ -1,4 +1,3 @@
-```yaml
 name: Build
 permissions:
   contents: write
@@ -470,4 +469,3 @@ runs:
         name: kernel-${{ env.CONFIG }}
         path: |
           ${{ env.CONFIG }}/artifacts/*
-```
