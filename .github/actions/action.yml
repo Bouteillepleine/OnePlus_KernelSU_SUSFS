@@ -78,6 +78,7 @@ runs:
         df -h
 
     - name: Configure Git
+      shell: bash
       run: |
         git config --global user.name "0°build"
         git config --global user.email "0°build@qq.com"
@@ -269,31 +270,7 @@ runs:
         rm -f Image
         mv oImage Image
         cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
-
-    - name: Download Latest SukiSU-Ultra APK from CI
-      continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
-      run: |
-        run_id=$(gh api \
-          "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=main&status=success&per_page=1" \
-          --jq '.workflow_runs[0].id' || echo "")
-        if [[ -z "$run_id" ]]; then
-          echo "No successful workflow run found. Skipping artifact download."
-        else
-          artifact_url=$(gh api \
-            "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | \
-            jq -r '.artifacts[] | select(.name == "manager") | .archive_download_url' | head -n1)
-          if [[ -z "$artifact_url" ]]; then
-            echo "No 'manager' artifact found in run $run_id. Skipping download."
-          else
-            echo "Downloading from: $artifact_url"
-            curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
-            unzip -j manager.zip "*.apk" -d ./AnyKernel3/
-          fi
-        fi
-
+    
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
