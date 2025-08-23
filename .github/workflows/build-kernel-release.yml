@@ -281,7 +281,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      -keyboard: - name: Build Kernel
+      - name: Build Kernel
         uses: ./.github/actions
         with:
           model: ${{ matrix.model }}
