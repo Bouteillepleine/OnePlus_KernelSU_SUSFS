@@ -22,22 +22,18 @@ inputs:
   kernel_version:
     required: true
     type: string
-  ksun_branch:
-    required: true
-    type: string
-    default: stable
   susfs_branch:
     required: true
     type: string
     default: ""
   KSU_META:
     type: string
-    description: "susfs-main/Wild"
+    description: "SukiSU Ultra branch/custom version identifier (e.g., susfs-main/Wild)"
     required: false
     default: "susfs-main/Wild"
   KPM:
     type: boolean
-    description: "KPM"
+    description: "Enable Kernel Module (KPM)"
     required: true
     default: true
   HOOK:
@@ -53,29 +49,25 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup Build System
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 8192
+        temp-reserve-mb: 2048
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+
+    - name: Create and Enable 3G Swap
       shell: bash
       run: |
-        export DEBIAN_FRONTEND=noninteractive
-        echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"
-        df -h
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-        /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
-        /usr/share/swift || true
-        sudo docker image prune --all --force
-        echo "Unused directories cleared"
-        sudo apt-get purge -y aria2 ansible azure-cli shellcheck rpm xorriso zsync \
-        esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk \
-        imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional \
-        kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev \
-        yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 \
-        libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-        sphinxsearch subversion mongodb-org microsoft-edge-stable || true
-        sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
-        sudo apt-get autoremove -y
-        sudo apt-get autoclean -y
-        echo "Package cleanup complete"
-        df -h
+        sudo swapoff -a
+        sudo fallocate -l 3G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        free -h
 
     - name: Install Dependencies
       shell: bash
@@ -86,7 +78,7 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3
+          libxml2-utils rsync unzip python-is-python3 llvm
 
     - name: Install Repo Tool
       shell: bash
@@ -125,7 +117,7 @@ runs:
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/${{ inputs.soc }} -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
@@ -151,7 +143,7 @@ runs:
         CUSTOM_TAG="${META#*/}"
         echo "Branch name: $BRANCH_NAME"
         echo "Custom version identifier: $CUSTOM_TAG"
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/setup.sh" | bash -s "$BRANCH_NAME"
         cd ./KernelSU
         KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
           grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
@@ -259,33 +251,55 @@ runs:
           echo "Invoking tracepoint hook"
           patch -p1 -F 3 < tracepoint_hooks.patch
         fi
-
+    
     - name: Add kernelSU and SUSFS Configuration Settings
       shell: bash
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        echo "Adding configuration settings to gki_defconfig..."
-        echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        cd $CONFIG/kernel_platform
+        CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+
+        # SukiSU Ultra configuration
+        echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+
+        # KPM configuration
+        if [ "${{ inputs.KPM }}" = "true" ]; then
+          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+        fi
+
+        # HOOK configuration
+        if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
+        elif [ "${{ inputs.HOOK }}" = "manual" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
+        elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE" 
+        fi
+
+        # SUSFS configuration
+        echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+
+        # TMPFS configuration
+        echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
 
     - name: Add BBR v1 Support
       shell: bash
@@ -318,8 +332,8 @@ runs:
         cd "$CONFIG/kernel_platform"
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
 
     - name: Save Build Metadata
       shell: bash
@@ -500,8 +514,8 @@ runs:
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -fno-stack-protector" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -fno-stack-protector" || exit 1
 
     - name: Apply patch_linux and replace Image
       if: ${{ inputs.KPM == 'true' }}
