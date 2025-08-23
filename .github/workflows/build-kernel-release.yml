@@ -2,8 +2,7 @@ name: Build and Release OnePlus Kernels
 
 permissions:
   contents: write
-  actions: read
-  packages: write
+  actions: write
 
 on:
   workflow_dispatch:
@@ -13,11 +12,13 @@ on:
         required: true
         type: boolean
         default: false
-      ksun_branch:
-        description: "Choose SukiSU Ultra Branch"
+      BRANCH_NAME:
+        description: "Choose susfs-main"
         required: true
-        type: string
-        default: "susfs-main"
+        type: choice
+        options:
+          - susfs-main
+        default: susfs-main
       android12-5_10_susfs_branch:
         description: "Choose SusFS Branch for android12-5.10"
         type: string
@@ -42,40 +43,37 @@ on:
         description: "Choose SusFS Branch for android15-6.6"
         type: string
         default: "gki-android15-6.6"
-      KSU_META:
+      ksu_meta:
+        description: "SukiSU Meta (e.g., susfs-main/Wild)"
         type: string
-        description: "susfs-main/Wild"
-        required: false
         default: "susfs-main/Wild"
-      KPM:
+      kpm:
+        description: "Enable KPM"
         type: boolean
-        description: "KPM"
-        required: true
         default: true
-      HOOK:
-        type: choice
+      hook:
         description: "Hook type"
-        required: true
-        default: manual
+        type: choice
         options:
           - kprobe
           - manual
           - tracepoint
+        default: manual
 
 jobs:
   build-batch-1:
-    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.BRANCH_NAME }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - model: OP-11
+          - model: OP11
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_11_v.xml
             android_version: android13
             kernel_version: "5.15"
-          - model: OP-11R
+          - model: OP11r
             soc: waipio
             branch: oneplus/sm8475
             manifest: oneplus_11r_v.xml
@@ -87,31 +85,31 @@ jobs:
             manifest: oneplus_open_v.xml
             android_version: android13
             kernel_version: "5.15"
-          - model: OP-ACE2
+          - model: OP-ACE-2
             soc: waipio
             branch: oneplus/sm8475
             manifest: oneplus_ace2_v.xml
             android_version: android12
             kernel_version: "5.10"
-          - model: OP-10T
+          - model: OP10t
             soc: waipio
             branch: oneplus/sm8475
             manifest: oneplus_10t_v.xml
             android_version: android12
             kernel_version: "5.10"
-          - model: OP-10PRO
+          - model: OP10pro
             soc: waipio
             branch: oneplus/sm8450
             manifest: oneplus_10_pro_v.xml
             android_version: android12
             kernel_version: "5.10"
-          - model: OP-ACE2-PRO
+          - model: OP-ACE-2-PRO
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_ace2_pro_v.xml
             android_version: android13
             kernel_version: "5.15"
-          - model: OP-12R
+          - model: OP12r
             soc: kalama
             branch: oneplus/sm8550
             manifest: oneplus_12r_v.xml
@@ -123,6 +121,7 @@ jobs:
         id: get-susfs-branch
         run: |
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          
           case "$KERNEL_STRING" in
             "android12-5.10")
               SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
@@ -147,6 +146,11 @@ jobs:
               exit 1
               ;;
           esac
+          
+          if [[ -z "$SUSFS_BRANCH" ]]; then
+            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          fi
+          
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Checkout Code
@@ -163,82 +167,73 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.ksun_branch }}
+          BRANCH_NAME: ${{ inputs.BRANCH_NAME }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-          KSU_META: ${{ inputs.KSU_META }}
-          KPM: ${{ inputs.KPM }}
-          HOOK: ${{ inputs.HOOK }}
-
-      - name: Save Kernel Version
-        run: echo "${{ matrix.kernel_version }}" > ${{ matrix.model }}.txt
-
-      - name: Upload Version File
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.model }}-version
-          path: ${{ matrix.model }}.txt
+          KSU_META: ${{ inputs.ksu_meta }}
+          KPM: ${{ inputs.kpm }}
+          HOOK: ${{ inputs.hook }}
 
   build-batch-2:
-    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.BRANCH_NAME }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - model: OP-13
+          - model: OP13
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_13.xml
             android_version: android15
             kernel_version: "6.6"
-          - model: OP-ACE5-PRO
+          - model: OPAce5Pro
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_ace5_pro.xml
             android_version: android15
             kernel_version: "6.6"
-          - model: OP-12
+          - model: OP12
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus12_v.xml
             android_version: android14
             kernel_version: "6.1"
-          - model: OP-13R
+          - model: OP13r
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_13r.xml
             android_version: android14
             kernel_version: "6.1"
-          - model: OP-ACE5
+          - model: OP-ACE-5
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_ace5.xml
             android_version: android14
             kernel_version: "6.1"
-          - model: OP-ACE3V
+          - model: OP-ACE-3V
             soc: pineapple
             branch: oneplus/sm7675
             manifest: oneplus_ace_3v_v.xml
             android_version: android14
             kernel_version: "6.1"
-          - model: OP-NORD4
+          - model: OP-NORD-4
             soc: pineapple
             branch: oneplus/sm7675
             manifest: oneplus_nord_4_v.xml
             android_version: android14
             kernel_version: "6.1"
-          - model: OP-PAD2
+          - model: OP-PAD-2
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_pad2_v.xml
             android_version: android14
             kernel_version: "6.1"
-          - model: OP-13S
+          - model: OP13S
             soc: sun
             branch: oneplus/sm8750
             manifest: oneplus_13s.xml
             android_version: android15
             kernel_version: "6.6"
-          - model: OP-ACE3-PRO
+          - model: OP-Ace3-Pro
             soc: pineapple
             branch: oneplus/sm8650
             manifest: oneplus_ace3_pro_v.xml
@@ -250,6 +245,7 @@ jobs:
         id: get-susfs-branch
         run: |
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          
           case "$KERNEL_STRING" in
             "android12-5.10")
               SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}"
@@ -274,6 +270,11 @@ jobs:
               exit 1
               ;;
           esac
+          
+          if [[ -z "$SUSFS_BRANCH" ]]; then
+            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          fi
+          
           echo "susfs_branch=$SUSFS_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Checkout Code
@@ -290,20 +291,11 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.ksun_branch }}
+          BRANCH_NAME: ${{ inputs.BRANCH_NAME }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-          KSU_META: ${{ inputs.KSU_META }}
-          KPM: ${{ inputs.KPM }}
-          HOOK: ${{ inputs.HOOK }}
-
-      - name: Save Kernel Version
-        run: echo "${{ matrix.kernel_version }}" > ${{ matrix.model }}.txt
-
-      - name: Upload Version File
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.model }}-version
-          path: ${{ matrix.model }}.txt
+          KSU_META: ${{ inputs.ksu_meta }}
+          KPM: ${{ inputs.kpm }}
+          HOOK: ${{ inputs.hook }}
 
   trigger-release:
     needs:
@@ -315,7 +307,7 @@ jobs:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME: "OnePlus Kernels With SukiSU Ultra (Test Build)"
+      RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS v1.5.9 *TEST BUILD*"
 
     steps:
       - name: Checkout code
@@ -326,7 +318,7 @@ jobs:
       - name: Generate and Create New Tag
         run: |
           BASE_TAG="v1.5.9-r0"
-          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name' || echo "$BASE_TAG")
+          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name')
           if [ -z "$LATEST_TAG" ]; then
             LATEST_TAG="$BASE_TAG"
           else
@@ -336,7 +328,7 @@ jobs:
           echo "New tag: $NEW_TAG"
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
           git tag $NEW_TAG
-          git push origin $NEW_TAG || { echo "Failed to push tag"; exit 1; }
+          git push origin $NEW_TAG
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -348,35 +340,35 @@ jobs:
         run: |
           echo "=== Start building the release notes ==="
           cat << EOF > release_notes.md
-          This release contains SukiSU Ultra
-
+          This release contains KernelSU Next and SUSFS v1.5.9
+          
+          Module: 
+          -> https://github.com/sidex15/ksu_module_susfs  
+          
           Non-Official Managers:
-          -> https://github.com/SukiSU-Ultra/SukiSU-Ultra
-
+          -> https://github.com/KernelSU-Next/KernelSU-Next  
+          
           ### Built Devices
-
+          
           | Model | Kernel Version |
           |-------|----------------|
           EOF
           
-          if ! ls downloaded-artifacts/*/*.txt >/dev/null 2>&1; then
-            echo "| No devices built | - |" >> release_notes.md
-            echo "Warning: No version files found for any devices" >&2
-          else
-            for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
-              if [ -f "$file" ]; then
-                model=$(basename "$file" .txt)
-                version=$(cat "$file")
-                printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
-              fi
-            done
-          fi
+          # Generate table rows
+          for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
+            if [ -f "$file" ]; then
+              model=$(basename "$file" .txt)
+              version=$(cat "$file")
+              printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
+            fi
+          done
           
+          # Add features and finalize
           cat << 'EOF' >> release_notes.md
           
           ### Features
-          - [+] SukiSU Ultra
-          - [+] SUSFS Integration
+          - [+] KernelSU-Next
+          - [+] SUSFS v1.5.9
           - [+] Wireguard Support
           - [+] Maphide LineageOS Detections
           - [+] Futile Maphide for jit-zygote-cache Detections
@@ -388,6 +380,7 @@ jobs:
           - [+] HMBIRD scx support for OnePlus 13 & OnePlus Ace 5 Pro
           EOF
           
+          # Output for debugging
           echo "--- Final Release Notes ---"
           cat release_notes.md
 
@@ -401,13 +394,9 @@ jobs:
 
       - name: Upload Release Assets Dynamically
         run: |
-          if ! ls ./downloaded-artifacts/*/*.zip >/dev/null 2>&1; then
-            echo "Error: No .zip files found to upload" >&2
-            exit 1
-          fi
           for file in ./downloaded-artifacts/*/*.zip; do
             if [ -f "$file" ]; then
               echo "Uploading $file..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber || { echo "Failed to upload $file"; exit 1; }
+              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
             fi
           done
