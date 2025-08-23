@@ -260,43 +260,7 @@ runs:
           patch -p1 -F 3 < tracepoint_hooks.patch
         fi
 
-    - name: Apply patch_linux and replace Image
-      if: ${{ inputs.KPM == 'true' }}
-      shell: bash
-      run: |
-        cd "$CONFIG/kernel_platform/out/Final-Image-Find"
-        curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
-        chmod +x patch_linux
-        ./patch_linux
-        rm -f Image
-        mv oImage Image
-        cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
-
-    - name: Download Latest SukiSU-Ultra APK from CI
-      continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
-      run: |
-        run_id=$(gh api \
-          "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=main&status=success&per_page=1" \
-          --jq '.workflow_runs[0].id' || echo "")
-        if [[ -z "$run_id" ]]; then
-          echo "No successful workflow run found. Skipping artifact download."
-        else
-          artifact_url=$(gh api \
-            "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | \
-            jq -r '.artifacts[] | select(.name == "manager") | .archive_download_url' | head -n1)
-          if [[ -z "$artifact_url" ]]; then
-            echo "No 'manager' artifact found in run $run_id. Skipping download."
-          else
-            echo "Downloading from: $artifact_url"
-            curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
-            unzip -j manager.zip "*.apk" -d ./AnyKernel3/
-          fi
-        fi
-
-    - name: Add KernelSU-Next and SUSFS Configuration Settings
+    - name: Add kernelSU and SUSFS Configuration Settings
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
@@ -538,6 +502,18 @@ runs:
         fi
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+
+    - name: Apply patch_linux and replace Image
+      if: ${{ inputs.KPM == 'true' }}
+      shell: bash
+      run: |
+        cd "$CONFIG/kernel_platform/out/Final-Image-Find"
+        curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
+        chmod +x patch_linux
+        ./patch_linux
+        rm -f Image
+        mv oImage Image
+        cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
 
     - name: Create Kernel ZIP
       id: create_zip
