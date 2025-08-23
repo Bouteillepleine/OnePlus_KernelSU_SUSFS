@@ -186,42 +186,29 @@ runs:
       shell: bash
       run: |
         cd "$CONFIG"
-        if [[ "${{ env.SUSFS_BRANCH }}" != "v1.5.2+" ]]; then
-          PATCH_FILE="./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
-          if [ -f "$PATCH_FILE" ]; then
-            cp "$PATCH_FILE" ./kernel_platform/common/
-            cp ./susfs4ksu/kernel_patches/fs/* ./kernel_platform/common/fs/ || echo "Warning: No fs patches found, skipping..."
-            cp ./susfs4ksu/kernel_patches/include/linux/* ./kernel_platform/common/include/linux/ || echo "Warning: No include patches found, skipping..."
-          else
-            echo "Warning: Patch file $PATCH_FILE not found, falling back to CI/Release"
-            SUSFS_BRANCH="v1.5.2+"
-            echo "SUSFS_BRANCH=$SUSFS_BRANCH" >> $GITHUB_ENV
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }} --depth 1
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth 1
+          cd kernel_platform
+          echo "正在拉取susfs补丁"
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          cd ./common
+          GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+          SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
+          if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
+            echo "修复内核版本5.15.0到5.15.123仅支持旧版C库造成的一些bug"
+            curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+            patch -p1 < fix_5.15.legacy.patch
+            echo "fix_5.15_patch完成"
           fi
-        fi
-        cd ./kernel_platform/common
-        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-        if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-          curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
-          patch -p1 < fix_5.15.legacy.patch
-          echo "fix_5.15_patch completed"
-        fi
-        if [[ "${{ env.KERNEL_VERSION }}" == "6.6" ]]; then
-          if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${{ inputs.manifest }}"; then
-            TRUSTY_EXISTS="true"
-          else
-            TRUSTY_EXISTS="false"
-          fi
-          echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
-          if [[ "$TRUSTY_EXISTS" == "false" && "${{ inputs.manifest }}" != "oneplus_pad_2_pro" && "${{ inputs.manifest }}" != "oneplus_pad_3" ]]; then
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
-            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
-          fi
-        fi
-        if [ -f "50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch" ]; then
-          patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
-          echo "susfs_patch completed"
-        fi
+          KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+          file="${{ github.event.inputs.FILE }}"
+          if [ "${{ github.event.inputs.SUSFS_ENABLE }}" = "true" ]; then
+            echo "正在打susfs补丁"
+            patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            echo "susfs_patch完成"
+          fi      
 
     - name: Apply Hide Stuff Patches
       shell: bash
