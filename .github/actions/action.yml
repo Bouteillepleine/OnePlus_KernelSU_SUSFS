@@ -67,8 +67,7 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3 \
-          make=4.3
+          libxml2-utils rsync unzip python3 python-is-python3
 
     - name: Install Repo Tool
       shell: bash
@@ -297,8 +296,8 @@ runs:
         cd "$CONFIG/kernel_platform"
         echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
 
     - name: Save Build Metadata
       shell: bash
@@ -361,7 +360,6 @@ runs:
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/--output-sync=[a-z0-9]*//' ./common/build.config.gki
         
         sed -i 's/check_defconfig//' ./common/build.config.gki
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
@@ -391,54 +389,100 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
 
-    - name: Detect Clang Version from Configs and build
+    - name: Detect Clang Version from Configs
       shell: bash
       run: |
-        echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
-        cd "$CONFIG/kernel_platform"
-        make --version
-        if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
-          USE_LLVM_IAS=true
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        DEFCONFIG="$KERNEL_PATH/common/arch/arm64/configs/gki_defconfig"
+        BUILDCONFIG="$KERNEL_PATH/common/build.config.gki"
+        CONSTANTSCONFIG="$KERNEL_PATH/common/build.config.constants"
+        CLANG_VERSION=""
+        CLANG_BIN_PATH=""
+        if grep -q '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null; then
+          CLANG_VERSION=$(grep '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | tr -d '"' | xargs)
+        elif grep -q '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null; then
+          CLANG_VERSION=$(grep '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | xargs)
+        elif grep -q '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null; then
+          CLANG_VERSION=$(grep '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | xargs)
+          CLANG_VERSION="clang-$CLANG_VERSION"
         else
-          USE_LLVM_IAS=false
+          echo "No clang version found in config, will auto-detect in prebuilts."
         fi
-        CLANG_PREBUILT_BIN=$(grep '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2 || true)
-        if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
-          echo "CLANG_PREBUILT_BIN not found in build.config.common, falling back to official build script"
-          echo "fallback=true" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z]+) ]]; then
-          CLANG_VERSION="${BASH_REMATCH[1]}"
+        if [ -z "$CLANG_VERSION" ]; then
+          if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
+            CLANG_VERSION=$(ls -d "$KERNEL_PATH"/prebuilts/clang/host/linux-x86/clang-r*/ | tail -n 1 | xargs basename)
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
+          elif [ -d "$KERNEL_PATH/prebuilts-master/clang/host/linux-x86" ]; then
+            CLANG_VERSION=$(ls -d "$KERNEL_PATH"/prebuilts-master/clang/host/linux-x86/clang-r*/ | tail -n 1 | xargs basename)
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
+          else
+            CLANG_VERSION="clang"
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin" # dummy
+          fi
         else
-          if [[ -f ./common/build.config.constants ]]; then
-            CLANG_VERSION=$(grep '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
+          if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
+          else
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
           fi
         fi
-        if [[ -z "$CLANG_VERSION" ]]; then
-          echo "Failed to obtain Clang version from CLANG_PREBUILT_BIN or build.config.constants, falling back to official build script"
-          echo "fallback=true" >> "$GITHUB_OUTPUT"
-          exit 0
+        echo "Detected CLANG_VERSION: $CLANG_VERSION"
+        echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
+        echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
+
+    - name: Build Kernel
+      shell: bash
+      run: |
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
+        CLANG_VERSION="${{ env.CLANG_VERSION }}"
+        if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
+          echo "Adding Clang to PATH: $CLANG_BIN_PATH"
+          export PATH="$CLANG_BIN_PATH:$PATH"
+          SELECTED_CLANG="$CLANG_BIN_PATH/clang"
+        elif command -v clang >/dev/null 2>&1; then
+          SELECTED_CLANG="$(command -v clang)"
+          echo "Using system Clang: $SELECTED_CLANG"
+          exit 1
+        else
+          echo "Error: No valid Clang binary found"
+          exit 1
         fi
-        CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
-        CLANG_DIR=$(echo "$CLANG_PREBUILT_BIN" | cut -d'/' -f1)
-        CLANG_PATH=$(basename "$(dirname "$CLANG_PREBUILT_BIN")")
-        echo "CLANG_VERSION=$CLANG_VERSION"
-        echo "CLANG_DIR=$CLANG_DIR"
-        echo "CLANG_PATH=$CLANG_PATH"
-        echo "USE_LLVM_IAS=$USE_LLVM_IAS"
-        export PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
-        cd ./common
-        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error -O2 -flto=thin -fno-stack-protector"
-        if [[ "$USE_LLVM_IAS" == "true" ]]; then
+        echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
+        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
+        MISSING_TOOLS=""
+        for tool in $LLVM_TOOLS; do
+          if ! command -v $tool >/dev/null 2>&1; then
+            MISSING_TOOLS="$MISSING_TOOLS $tool"
+          fi
+        done
+        if [ -n "$MISSING_TOOLS" ]; then
+          echo "Installing missing LLVM tools:$MISSING_TOOLS"
+          sudo apt-get update
+          sudo apt-get install -yq --no-install-recommends llvm
+          for tool in $MISSING_TOOLS; do
+            if ! command -v $tool >/dev/null 2>&1; then
+              echo "Error: Failed to install $tool"
+              exit 1
+            fi
+          done
+        fi
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+        if [[ "$KERNEL_VERSION" == "5.10" ]]; then
+          USE_LLVM_IAS=true
+        fi
+        cd "$KERNEL_PATH/common" || exit 1
+        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
+          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld"
+        if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        make -j$(nproc --all) --output-sync=none O=out $MAKE_ARGS gki_defconfig || exit 1
-        make -j$(nproc --all) --output-sync=none O=out $MAKE_ARGS || exit 1
-
+        
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
