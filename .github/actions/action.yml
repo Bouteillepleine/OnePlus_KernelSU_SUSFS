@@ -67,7 +67,8 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3
+          libxml2-utils rsync unzip python3 python-is-python3 \
+          make=4.3
 
     - name: Install Repo Tool
       shell: bash
@@ -360,6 +361,7 @@ runs:
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/--output-sync=[a-z0-9]*//' ./common/build.config.gki
         
         sed -i 's/check_defconfig//' ./common/build.config.gki
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Wild"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
@@ -394,24 +396,21 @@ runs:
       run: |
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> $GITHUB_ENV
         cd "$CONFIG/kernel_platform"
-        # Auto-detect LLVM_IAS
+        make --version
         if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
           USE_LLVM_IAS=true
         else
           USE_LLVM_IAS=false
         fi
-        # Read CLANG_PREBUILT_BIN from build.config.common
         CLANG_PREBUILT_BIN=$(grep '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2 || true)
         if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
           echo "CLANG_PREBUILT_BIN not found in build.config.common, falling back to official build script"
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        # Try to extract clang-r version from CLANG_PREBUILT_BIN
         if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z]+) ]]; then
           CLANG_VERSION="${BASH_REMATCH[1]}"
         else
-          # If not matched, try to extract from build.config.constants
           if [[ -f ./common/build.config.constants ]]; then
             CLANG_VERSION=$(grep '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
           fi
@@ -421,11 +420,8 @@ runs:
           echo "fallback=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        # Replace with new CLANG_VERSION value
         CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
-        # Get the first directory name from CLANG_PREBUILT_BIN, assign to CLANG_DIR
         CLANG_DIR=$(echo "$CLANG_PREBUILT_BIN" | cut -d'/' -f1)
-        # Get the parent directory name from CLANG_PREBUILT_BIN, assign to CLANG_PATH
         CLANG_PATH=$(basename "$(dirname "$CLANG_PREBUILT_BIN")")
         echo "CLANG_VERSION=$CLANG_VERSION"
         echo "CLANG_DIR=$CLANG_DIR"
@@ -433,8 +429,6 @@ runs:
         echo "USE_LLVM_IAS=$USE_LLVM_IAS"
         export PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
         cd ./common
-        # Force modify SUBLEVEL, disabled by default
-        # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' Makefile
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
@@ -442,8 +436,8 @@ runs:
         if [[ "$USE_LLVM_IAS" == "true" ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS || exit 1
+        make -j$(nproc --all) --output-sync=none O=out $MAKE_ARGS gki_defconfig || exit 1
+        make -j$(nproc --all) --output-sync=none O=out $MAKE_ARGS || exit 1
 
     - name: Create Kernel ZIP
       id: create_zip
