@@ -185,33 +185,28 @@ runs:
     - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG"
-        echo "Fetching susfs patches..."
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
-        git clone https://github.com/ShirkNeko/SukiSU_patch.git
-        PATCH_FILE="./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          cp "$PATCH_FILE" ./kernel_platform/common/
-          cp ./susfs4ksu/kernel_patches/fs/* ./kernel_platform/common/fs/ || echo "Warning: No fs patches found, skipping..."
-          cp ./susfs4ksu/kernel_patches/include/linux/* ./kernel_platform/common/include/linux/ || echo "Warning: No include patches found, skipping..."
-        else
-          echo "Error: Patch file 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch not found in susfs4ksu/kernel_patches/"
-          echo "Listing contents of susfs4ksu for debugging:"
-          ls -R ./susfs4ksu/ || true
-          exit 1
+        if [[ "${{ env.SUSFS_BRANCH }}" != "v1.5.2+" ]]; then
+          PATCH_FILE="./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
+          if [ -f "$PATCH_FILE" ]; then
+            cp "$PATCH_FILE" ./kernel_platform/common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./kernel_platform/common/fs/ || echo "Warning: No fs patches found, skipping..."
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./kernel_platform/common/include/linux/ || echo "Warning: No include patches found, skipping..."
+          else
+            echo "Warning: Patch file $PATCH_FILE not found, falling back to CI/Release"
+            SUSFS_BRANCH="v1.5.2+"
+            echo "SUSFS_BRANCH=$SUSFS_BRANCH" >> $GITHUB_ENV
+          fi
         fi
         cd ./kernel_platform/common
-        GKI_V="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
         if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-          echo "Fix some bugs caused by only supporting the old C library in kernel versions 5.15.0 to 5.15.123"
           curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
           patch -p1 < fix_5.15.legacy.patch
           echo "fix_5.15_patch completed"
         fi
-        KERNEL_VERSION="${{ inputs.kernel_version }}"
-        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+        if [[ "${{ env.KERNEL_VERSION }}" == "6.6" ]]; then
           if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${{ inputs.manifest }}"; then
             TRUSTY_EXISTS="true"
           else
@@ -219,14 +214,14 @@ runs:
           fi
           echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
           if [[ "$TRUSTY_EXISTS" == "false" && "${{ inputs.manifest }}" != "oneplus_pad_2_pro" && "${{ inputs.manifest }}" != "oneplus_pad_3" ]]; then
-            echo "Fix errors in susfs caused by missing Trusty OS in some models with kernel version 6.6"
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch
-            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
           fi
         fi
-        echo "Applying susfs patches..."
-        patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-        echo "susfs_patch completed"
+        if [ -f "50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch" ]; then
+          patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+          echo "susfs_patch completed"
+        fi
 
     - name: Apply Hide Stuff Patches
       shell: bash
