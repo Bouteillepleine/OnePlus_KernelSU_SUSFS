@@ -352,7 +352,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break
+              break  # Found it — exit loop
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -374,6 +374,7 @@ runs:
           exit 1
         fi
         
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
@@ -451,7 +452,7 @@ runs:
             CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
           else
             CLANG_VERSION="clang"
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin" # dummy
           fi
         else
           if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
@@ -513,8 +514,9 @@ runs:
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -fno-stack-protector" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -fno-stack-protector" || exit 1
+        
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
 
     - name: Apply patch_linux and replace Image
       if: ${{ inputs.KPM == 'true' }}
