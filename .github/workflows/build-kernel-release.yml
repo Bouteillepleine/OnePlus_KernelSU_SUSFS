@@ -310,6 +310,8 @@ jobs:
             - Hide kernel symbols for enhanced security
             - Kernel Module (KPM): ${{ inputs.KPM }}
             - Hook Type: ${{ inputs.HOOK }}
+            - BBR v1 congestion control
+            - TTL target support
             
             **Installation Instructions**:
             1. Flash the kernel zip via a custom recovery.
@@ -319,6 +321,6 @@ jobs:
             - Ensure compatibility with your device's Android version.
             - Backup your device before flashing.
           files: |
-            ${{ matrix.model }}/kernel-*.zip
+            ${{ matrix.model }}/artifacts/AnyKernel3_${{ matrix.model }}_${{ matrix.android_version }}-${{ matrix.kernel_version }}_SukiSU_*.zip
           draft: false
           prerelease: false
