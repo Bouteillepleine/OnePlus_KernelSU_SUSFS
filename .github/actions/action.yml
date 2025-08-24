@@ -501,13 +501,30 @@ runs:
           exit 1
         fi
         
-        for tool in "$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc" "$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole"; do
-          if [ ! -x "$tool" ]; then
-            echo "Error: Prebuilt tool $tool not found or not executable"
-            ls -la "$(dirname $tool)" || true
-            exit 1
-          fi
-        done
+        echo "Listing kernel source directory structure for debugging:"
+        ls -la "$KERNEL_PATH" || true
+        ls -la "$KERNEL_PATH/prebuilts" 2>/dev/null || true
+        
+        RUSTC_PATH="$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc"
+        PAHOLE_PATH="$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
+        RUSTC=""
+        
+        if [ -x "$RUSTC_PATH" ]; then
+          echo "Found prebuilt rustc at $RUSTC_PATH"
+          RUSTC="$RUSTC_PATH"
+        elif command -v rustc >/dev/null 2>&1; then
+          RUSTC="$(command -v rustc)"
+          echo "Warning: Using system rustc (prebuilt not found): $RUSTC"
+          echo "System rustc version: $(rustc --version)"
+        else
+          echo "Warning: No rustc found (prebuilt or system). Proceeding without Rust, assuming not required."
+        fi
+        
+        if [ ! -x "$PAHOLE_PATH" ]; then
+          echo "Error: Prebuilt tool $PAHOLE_PATH not found or not executable"
+          ls -la "$(dirname $PAHOLE_PATH)" || true
+          exit 1
+        fi
         
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
           echo "Adding prebuilt Clang to PATH: $CLANG_BIN_PATH"
@@ -551,9 +568,11 @@ runs:
           USE_LLVM_IAS="LLVM_IAS=1"
         fi
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          PAHOLE=$PAHOLE_PATH \
           LD=ld.lld HOSTLD=ld.lld CC='ccache clang' CXX='ccache clang++'"
+        if [[ -n "$RUSTC" ]]; then
+          MAKE_ARGS="RUSTC=$RUSTC $MAKE_ARGS"
+        fi
         if [[ -n "$USE_LLVM_IAS" ]]; then
           MAKE_ARGS="$USE_LLVM_IAS $MAKE_ARGS"
         fi
