@@ -1,5 +1,4 @@
 name: Build
-
 permissions:
   contents: write
   actions: write
@@ -33,10 +32,8 @@ inputs:
     default: ""
 
 runs:
-  using: composite
+  using: "composite"
   steps:
-
-    # Clean up system environment to start fresh and free disk space
     - name: Setup Build System
       shell: bash
       run: |
@@ -60,9 +57,8 @@ runs:
         sudo apt-get autoclean -y
         echo "Package cleanup complete"
         df -h
-    
-    # Install required build dependencies
-    - name: Install Dependencies with ccache
+
+    - name: Install Dependencies
       shell: bash
       run: |
         sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock
@@ -73,7 +69,6 @@ runs:
           libncurses-dev liblz4-tool zlib1g-dev \
           libxml2-utils rsync unzip python3 python-is-python3
 
-    # Install repo tool for source management
     - name: Install Repo Tool
       shell: bash
       run: |
@@ -83,7 +78,6 @@ runs:
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> "$GITHUB_ENV"
         echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
 
-    # Clone AnyKernel3 and SUSFS kernel patches repositories
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
@@ -107,7 +101,6 @@ runs:
           exit 1
         fi
 
-    # Initialize and sync kernel source using repo tool
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
@@ -123,12 +116,8 @@ runs:
           $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         $REPO --version
-        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast || {
-          echo "Error: Repo sync failed"
-          exit 1
-        }
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
 
-    # Clean up ABI protected exports that may cause build issues
     - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
@@ -137,7 +126,6 @@ runs:
         rm -f msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports in msm-kernel!"
         df -h
 
-    # Add KernelSU Next patches
     - name: Add KernelSU Next
       shell: bash
       run: |
@@ -151,7 +139,6 @@ runs:
         fi
         git submodule update --init --recursive
 
-    # Apply SUSFS patches with branching based on version
     - name: Apply SUSFS Patches
       shell: bash
       run: |
@@ -233,7 +220,6 @@ runs:
           echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
         fi
 
-    # Apply KSUN hooks patch
     - name: Apply KSUN Hooks
       shell: bash
       run: |
@@ -243,7 +229,6 @@ runs:
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
         patch -p1 < ./manual_hooks.patch
 
-    # Apply hide stuff patch
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
@@ -252,7 +237,6 @@ runs:
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
 
-    # Add KernelSU and SUSFS config options to defconfig
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -281,7 +265,6 @@ runs:
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    # Add TCP BBR and network configurations
     - name: Add BBR v1 Support
       shell: bash
       run: |
@@ -300,8 +283,9 @@ runs:
         echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    # Add TTL Target support for network packets
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -312,7 +296,6 @@ runs:
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
-    # Add general build configuration options and disable debug
     - name: Add Build based configs
       shell: bash
       run: |
@@ -323,6 +306,8 @@ runs:
         echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
         # debug stuff (tests)
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
@@ -334,12 +319,11 @@ runs:
         echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n" >> ./common/arch/arm64/configs/gki_defconfig
 
-    # Disable unwanted OnePlus kernel KUnit test modules conditionally
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
         echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
+        cd "$CONFIG/kernel_platform" 
         if [ "${ANDROID_VERSION:-android13}" = "android14" ] && [ "${KERNEL_VERSION:-5.15}" = "6.1" ]; then
           echo "Disabling KUnit test modules in $CONFIG_FILE..."
           sed -i -e 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' \
@@ -359,7 +343,6 @@ runs:
           echo "Conditions not met (ANDROID_VERSION=${ANDROID_VERSION:-android13}, KERNEL_VERSION=${KERNEL_VERSION:-5.15}). Skipping modifications."
         fi
 
-    # Save build metadata like kernel version and branch
     - name: Save Build Metadata
       shell: bash
       id: save_metadata
@@ -412,7 +395,6 @@ runs:
         echo "$ANDROID_VERSION-$FULL_VERSION" > ${{ inputs.model }}.txt
         echo "ANDROID_VER=$ANDROID_VERSION" >> $GITHUB_ENV
 
-    # Run sed and perl commands to patch version and symbols
     - name: Run sed and perl Commands
       shell: bash
       run: |
@@ -427,14 +409,14 @@ runs:
         tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
         tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
         tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./common/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡/' ./common/scripts/setlocalversion
         sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./msm-kernel/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
         chmod +x ./msm-kernel/scripts/setlocalversion
         chmod +x ./external/dtc/scripts/setlocalversion
         if [ -f ./build/kernel/kleaf/impl/stamp.bzl ]; then
-          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g"
+          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
         else
           echo "No stamp.bzl!"
         fi
@@ -451,7 +433,6 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
 
-    # Detect and configure Clang version for build
     - name: Detect Clang Version from Configs
       shell: bash
       run: |
@@ -493,7 +474,6 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
 
-    # Build the kernel with detected Clang and configured options
     - name: Build Kernel
       shell: bash
       run: |
@@ -507,8 +487,7 @@ runs:
         elif command -v clang >/dev/null 2>&1; then
           SELECTED_CLANG="$(command -v clang)"
           echo "Using system Clang: $SELECTED_CLANG"
-          # Optional: comment out exit to allow system clang fallback
-          # exit 1
+          exit 1
         else
           echo "Error: No valid Clang binary found"
           exit 1
@@ -547,15 +526,7 @@ runs:
         
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
-
-    # Post-build validation to catch style and config issues
-    - name: Post-build Kernel Validation
-      shell: bash
-      run: |
-        cd "$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform/common"
-        ./scripts/checkpatch.pl out/.config || echo "Checkpatch found warnings/errors"
-
-    # Create AnyKernel3 flashable zip and patch it if needed
+        
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -573,7 +544,6 @@ runs:
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
         zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
 
-    # Upload artifacts for later use
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
