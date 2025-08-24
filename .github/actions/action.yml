@@ -83,7 +83,7 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3   
+          libxml2-utils rsync unzip python3 python-is-python3 ccache      
 
     - name: Install Repo Tool
       shell: bash
@@ -482,6 +482,11 @@ runs:
     - name: Build Kernel
       shell: bash
       run: |
+        export CCACHE_DIR="$HOME/.ccache"
+        export CCACHE_COMPRESS=1
+        export CCACHE_MAXSIZE=10G
+        export PATH="/usr/lib/ccache:$PATH"
+        ccache -s
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
@@ -520,17 +525,16 @@ runs:
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
         fi
-        cd "$KERNEL_PATH/common" || exit 1
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld"
+          LD=ld.lld HOSTLD=ld.lld CC='ccache clang' CXX='ccache clang++'"
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        ccache -s
 
     - name: Apply patch_linux and replace Image
       if: ${{ inputs.KPM == 'true' }}
