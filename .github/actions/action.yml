@@ -536,7 +536,7 @@ runs:
       if: ${{ inputs.KPM == 'true' }}
       shell: bash
       run: |
-        cd "$CONFIG/kernel_platform/out/Final-Image-Find"
+        cd "$CONFIG/kernel_platform/out/arch/arm64/boot"
         curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
         chmod +x patch_linux
         ./patch_linux
