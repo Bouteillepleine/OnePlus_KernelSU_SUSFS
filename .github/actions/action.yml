@@ -482,63 +482,27 @@ runs:
     - name: Build Kernel
       shell: bash
       run: |
-        set -e
         export CCACHE_DIR="$HOME/.ccache"
         export CCACHE_COMPRESS=1
         export CCACHE_MAXSIZE=10G
         export PATH="/usr/lib/ccache:$PATH"
-        ccache -s || { echo "Warning: ccache stats failed"; }
+        ccache -s
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
-        echo "Kernel path: $KERNEL_PATH"
-        echo "Clang bin path: $CLANG_BIN_PATH"
-        echo "Clang version: $CLANG_VERSION"
-        
-        if [ ! -d "$KERNEL_PATH" ]; then
-          echo "Error: Kernel source directory $KERNEL_PATH does not exist"
-          ls -la "$GITHUB_WORKSPACE/${{ env.CONFIG }}" || true
-          exit 1
-        fi
-        
-        echo "Listing kernel source directory structure for debugging:"
-        ls -la "$KERNEL_PATH" || true
-        ls -la "$KERNEL_PATH/prebuilts" 2>/dev/null || true
-        
-        RUSTC_PATH="$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc"
-        PAHOLE_PATH="$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
-        RUSTC=""
-        
-        if [ -x "$RUSTC_PATH" ]; then
-          echo "Found prebuilt rustc at $RUSTC_PATH"
-          RUSTC="$RUSTC_PATH"
-        elif command -v rustc >/dev/null 2>&1; then
-          RUSTC="$(command -v rustc)"
-          echo "Warning: Using system rustc (prebuilt not found): $RUSTC"
-          echo "System rustc version: $(rustc --version)"
-        else
-          echo "Warning: No rustc found (prebuilt or system). Proceeding without Rust, assuming not required."
-        fi
-        
-        if [ ! -x "$PAHOLE_PATH" ]; then
-          echo "Error: Prebuilt tool $PAHOLE_PATH not found or not executable"
-          ls -la "$(dirname $PAHOLE_PATH)" || true
-          exit 1
-        fi
-        
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
-          echo "Adding prebuilt Clang to PATH: $CLANG_BIN_PATH"
+          echo "Adding Clang to PATH: $CLANG_BIN_PATH"
           export PATH="$CLANG_BIN_PATH:$PATH"
           SELECTED_CLANG="$CLANG_BIN_PATH/clang"
         elif command -v clang >/dev/null 2>&1; then
           SELECTED_CLANG="$(command -v clang)"
-          echo "Warning: Using system Clang (prebuilt not found): $SELECTED_CLANG"
+          echo "Using system Clang: $SELECTED_CLANG"
+          exit 1
         else
-          echo "Error: No valid Clang binary found (prebuilt or system)"
+          echo "Error: No valid Clang binary found"
           exit 1
         fi
         echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-        
         LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
         MISSING_TOOLS=""
         for tool in $LLVM_TOOLS; do
@@ -547,136 +511,64 @@ runs:
           fi
         done
         if [ -n "$MISSING_TOOLS" ]; then
-          echo "Installing missing LLVM tools: $MISSING_TOOLS"
+          echo "Installing missing LLVM tools:$MISSING_TOOLS"
           sudo apt-get update
           sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $LLVM_TOOLS; do
+          for tool in $MISSING_TOOLS; do
             if ! command -v $tool >/dev/null 2>&1; then
               echo "Error: Failed to install $tool"
               exit 1
             fi
           done
         fi
-        
-        cd "$KERNEL_PATH" || { echo "Error: Cannot cd to $KERNEL_PATH"; exit 1; }
-        echo "Current directory: $(pwd)"
-        ls -la
-        
         KERNEL_VERSION="${{ inputs.kernel_version }}"
-        USE_LLVM_IAS=""
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-          USE_LLVM_IAS="LLVM_IAS=1"
+          USE_LLVM_IAS=true
         fi
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
-          PAHOLE=$PAHOLE_PATH \
+          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
           LD=ld.lld HOSTLD=ld.lld CC='ccache clang' CXX='ccache clang++'"
-        if [[ -n "$RUSTC" ]]; then
-          MAKE_ARGS="RUSTC=$RUSTC $MAKE_ARGS"
+        if [[ -v USE_LLVM_IAS ]]; then
+          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
-        if [[ -n "$USE_LLVM_IAS" ]]; then
-          MAKE_ARGS="$USE_LLVM_IAS $MAKE_ARGS"
-        fi
-        
-        echo "Running make gki_defconfig..."
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || { echo "Error: make gki_defconfig failed"; exit 1; }
-        echo "gki_defconfig completed successfully"
-        
-        echo "Running make build..."
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || { echo "Error: make build failed"; exit 1; }
-        echo "Kernel build completed successfully"
-        
-        IMAGE_PATH=$(find "$KERNEL_PATH/out" -name "Image" -type f | head -n 1)
-        if [ -z "$IMAGE_PATH" ] || [ ! -f "$IMAGE_PATH" ]; then
-          echo "Error: Kernel Image not found in $KERNEL_PATH/out"
-          ls -la "$KERNEL_PATH/out" || true
-          ls -la "$KERNEL_PATH/out/arch/arm64/boot" 2>/dev/null || true
-          exit 1
-        fi
-        echo "Verified: Image found at $IMAGE_PATH (size: $(ls -lh "$IMAGE_PATH"))"
-        
-        FINAL_IMAGE_DIR="$KERNEL_PATH/out/Final-Image-Find"
-        mkdir -p "$FINAL_IMAGE_DIR"
-        cp "$IMAGE_PATH" "$FINAL_IMAGE_DIR/Image" || { echo "Error: Failed to copy Image to $FINAL_IMAGE_DIR"; exit 1; }
-        echo "Image staged at $FINAL_IMAGE_DIR/Image"
-        ccache -s || { echo "Warning: ccache stats failed"; }
-
-    - name: Make AnyKernel3
-      shell: bash
-      run: |
-        set -e
-        git clone https://github.com/Numbersf/AnyKernel3 --depth=1
-        rm -rf ./AnyKernel3/.git
-        mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
-        dir1=""
-        dir2=""
-        image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
-        if [ -n "$image_path" ]; then
-          dir1=$(dirname "$image_path")/
-          echo "Using make compilation unified path, successfully found Image file"
-        else
-          image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" | head -n 1)
-          if [ -n "$image_path" ]; then
-            dir2=$(dirname "$image_path")/
-            echo "Compiled using official script, successfully found Image file"
-          else
-            echo "Image file not found, build failed" >&2
-            exit 1
-          fi
-        fi
-        if [ -n "$image_path" ] && [ -f "$image_path" ]; then
-          echo "Image file finally located at: $image_path"
-          cp "$image_path" ./AnyKernel3/Image || { echo "Error: Failed to copy Image to AnyKernel3"; exit 1; }
-          cp "$image_path" kernel_workspace/kernel_platform/out/Final-Image-Find/Image || { echo "Error: Failed to copy Image to Final-Image-Find"; exit 1; }
-        fi
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        ccache -s
 
     - name: Apply patch_linux and replace Image
       if: ${{ inputs.KPM == 'true' }}
       shell: bash
       run: |
-        set -e
-        cd kernel_workspace/kernel_platform/out/Final-Image-Find
-        curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux || { echo "Error: Failed to download patch_linux"; exit 1; }
+        cd "$CONFIG/kernel_platform/out/arch/arm64/boot"
+        curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
         chmod +x patch_linux
-        ./patch_linux || { echo "Error: patch_linux script failed"; exit 1; }
+        ./patch_linux
         rm -f Image
-        mv oImage Image || { echo "Error: Failed to rename oImage to Image"; exit 1; }
-        cp Image "$GITHUB_WORKSPACE/AnyKernel3/Image" || { echo "Error: Failed to copy patched Image to AnyKernel3"; exit 1; }
+        mv oImage Image
+        cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
 
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
       run: |
-        set -e
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
-        ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        mkdir -p "$ARTIFACTS_DIR" || { echo "Error: Failed to create artifacts directory"; exit 1; }
-        
-        cd "$ANYKERNEL_DIR" || { echo "Error: Cannot cd to $ANYKERNEL_DIR"; exit 1; }
-        echo "Current directory: $(pwd)"
-        
+        KERNEL_PATH="$CONFIG_DIR/kernel_platform"
+        cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+        cd "$GITHUB_WORKSPACE/AnyKernel3"
         if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          if [ -d "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins" ]; then
-            cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ || { echo "Error: Failed to copy hmbird bins"; exit 1; }
-          else
-            echo "Warning: hmbird bins directory not found, skipping"
-          fi
-          if [ -f "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" ]; then
-            patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" || { echo "Error: Failed to apply ak3_hmbird_patch"; exit 1; }
-          else
-            echo "Warning: hmbird patch file not found, skipping"
-          fi
+          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
+          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
         fi
-        
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_SukiSU_${{ env.KSUVER }}.zip"
+        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
-        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* || { echo "Error: ZIP creation failed"; exit 1; }
-        echo "ZIP created successfully at $ARTIFACTS_DIR/$ZIP_NAME"
+        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
 
-    - name: Upload Kernel ZIP Artifact
+    - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-${{ env.CONFIG }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-SukiSU-${{ env.KSUVER }}
-        path: ${{ env.CONFIG }}/artifacts/AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_SukiSU_${{ env.KSUVER }}.zip
-        retention-days: 30
+        name: kernel-${{ env.CONFIG }}
+        path: |
+          ${{ env.CONFIG }}/artifacts/*
