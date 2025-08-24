@@ -60,30 +60,7 @@ runs:
         sudo apt-get autoclean -y
         echo "Package cleanup complete"
         df -h
-
-    # Cache APT lists to speed up package installs
-    - name: Cache APT lists
-      uses: actions/cache@v4
-      with:
-        path: /var/lib/apt/lists
-        key: ${{ runner.os }}-apt-lists
-
-    # Cache ccache directory for compiler cache reuse
-    - name: Cache ccache
-      uses: actions/cache@v4
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.h', '**/*.c') }}
-
-    # Cache repo metadata to avoid full sync every run
-    - name: Cache repo directory
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CONFIG }}/.repo
-        key: ${{ runner.os }}-repo-${{ env.CONFIG }}-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-repo-${{ env.CONFIG }}-
-
+    
     # Install required build dependencies
     - name: Install Dependencies with ccache
       shell: bash
