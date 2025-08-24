@@ -49,6 +49,7 @@ inputs:
 runs:
   using: "composite"
   steps:
+    
     - name: Setup Build System
       shell: bash
       run: |
@@ -56,17 +57,17 @@ runs:
         echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"
         df -h
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
-          /usr/share/swift || true
+        /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+        /usr/share/swift || true
         sudo docker image prune --all --force
         echo "Unused directories cleared"
         sudo apt-get purge -y aria2 ansible azure-cli shellcheck rpm xorriso zsync \
-          esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk \
-          imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional \
-          kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev \
-          yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 \
-          libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-          sphinxsearch subversion mongodb-org microsoft-edge-stable || true
+        esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable google-cloud-sdk \
+        imagemagick libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional \
+        kubectl mercurial apt-transport-https mono-complete libmysqlclient unixodbc-dev \
+        yarn chrpath libssl-dev libxft-dev libfreetype6 libfreetype6-dev libfontconfig1 \
+        libfontconfig1-dev snmp pollinate libpq-dev postgresql-client powershell ruby-full \
+        sphinxsearch subversion mongodb-org microsoft-edge-stable || true
         sudo apt-get purge -y "$(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || true)" || true
         sudo apt-get autoremove -y
         sudo apt-get autoclean -y
@@ -82,7 +83,7 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3 ccache
+          libxml2-utils rsync unzip python3 python-is-python3 ccache      
 
     - name: Install Repo Tool
       shell: bash
@@ -189,11 +190,22 @@ runs:
     - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
-        cd "$CONFIG/kernel_platform"
+        cd "$CONFIG"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+        git clone https://github.com/ShirkNeko/SukiSU_patch.git
+        cd kernel_platform
         echo "Pulling susfs patches"
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
         cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        
+        if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+          echo "Pulling zram patches"
+          cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
+          cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib/
+          cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto/
+          cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
+        fi
         
         cd ./common
         GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
@@ -204,6 +216,22 @@ runs:
           curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
           patch -p1 < fix_5.15.legacy.patch
           echo "fix_5.15_patch completed"
+        fi
+        
+        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+        file="${{ github.event.inputs.FILE }}"
+        TRUSTY_EXISTS="false"
+        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${file}.xml"; then
+            TRUSTY_EXISTS="true"
+          fi
+          echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
+        
+          if [[ "$TRUSTY_EXISTS" == "false" && "$file" != "oneplus_pad_2_pro" && "$file" != "oneplus_pad_3" ]]; then
+            echo "Fixing susfs errors caused by missing Trusty OS on some devices with kernel version 6.6"
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+          fi
         fi
         
         echo "Applying susfs patch"
@@ -236,7 +264,7 @@ runs:
           echo "Invoking tracepoint hook"
           patch -p1 -F 3 < tracepoint_hooks.patch
         fi
-
+      
     - name: Add kernelSU and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -262,7 +290,7 @@ runs:
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
         elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
           echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE" 
         fi
 
         # SUSFS configuration
@@ -338,7 +366,7 @@ runs:
             if [ -n "$line" ]; then
               BRANCH_LINE="$line"
               echo "Found BRANCH in: $file"
-              break
+              break  # Found it — exit loop
             else
               echo "File exists but no BRANCH= found: $file"
             fi
@@ -360,6 +388,7 @@ runs:
           exit 1
         fi
         
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
@@ -437,7 +466,7 @@ runs:
             CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
           else
             CLANG_VERSION="clang"
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
+            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin" # dummy
           fi
         else
           if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
@@ -552,81 +581,57 @@ runs:
         echo "Image staged at $FINAL_IMAGE_DIR/Image"
         ccache -s || { echo "Warning: ccache stats failed"; }
 
+    - name: Make AnyKernel3
+      shell: bash
+      run: |
+        set -e
+        git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+        rm -rf ./AnyKernel3/.git
+        mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
+        dir1=""
+        dir2=""
+        image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+        if [ -n "$image_path" ]; then
+          dir1=$(dirname "$image_path")/
+          echo "Using make compilation unified path, successfully found Image file"
+        else
+          image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" | head -n 1)
+          if [ -n "$image_path" ]; then
+            dir2=$(dirname "$image_path")/
+            echo "Compiled using official script, successfully found Image file"
+          else
+            echo "Image file not found, build failed" >&2
+            exit 1
+          fi
+        fi
+        if [ -n "$image_path" ] && [ -f "$image_path" ]; then
+          echo "Image file finally located at: $image_path"
+          cp "$image_path" ./AnyKernel3/Image || { echo "Error: Failed to copy Image to AnyKernel3"; exit 1; }
+          cp "$image_path" kernel_workspace/kernel_platform/out/Final-Image-Find/Image || { echo "Error: Failed to copy Image to Final-Image-Find"; exit 1; }
+        fi
+
     - name: Apply patch_linux and replace Image
       if: ${{ inputs.KPM == 'true' }}
       shell: bash
       run: |
         set -e
-        CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
-        FINAL_IMAGE_DIR="$CONFIG_DIR/kernel_platform/out/Final-Image-Find"
-        echo "Patching kernel image in: $FINAL_IMAGE_DIR"
-        
-        if [ ! -d "$FINAL_IMAGE_DIR" ]; then
-          echo "Error: Final-Image-Find directory $FINAL_IMAGE_DIR does not exist"
-          ls -la "$CONFIG_DIR/kernel_platform/out" || true
-          exit 1
-        fi
-        
-        cd "$FINAL_IMAGE_DIR" || { echo "Error: Cannot cd to $FINAL_IMAGE_DIR"; exit 1; }
-        echo "Current directory: $(pwd)"
-        ls -la
-        
-        if [ ! -f "Image" ]; then
-          echo "Error: Original Image not found in $FINAL_IMAGE_DIR"
-          exit 1
-        fi
-        echo "Original Image verified (size: $(ls -lh Image))"
-        
-        echo "Downloading patch_linux script..."
+        cd kernel_workspace/kernel_platform/out/Final-Image-Find
         curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux || { echo "Error: Failed to download patch_linux"; exit 1; }
         chmod +x patch_linux
-        echo "Running patch_linux..."
-        ./patch_linux || { echo "Error: patch_linux script failed. Check logs for details."; exit 1; }
-        
-        if [ ! -f "oImage" ]; then
-          echo "Error: oImage not produced by patch_linux"
-          ls -la
-          exit 1
-        fi
+        ./patch_linux || { echo "Error: patch_linux script failed"; exit 1; }
         rm -f Image
-        mv oImage Image
-        echo "Patched Image created (size: $(ls -lh Image))"
-        
+        mv oImage Image || { echo "Error: Failed to rename oImage to Image"; exit 1; }
         cp Image "$GITHUB_WORKSPACE/AnyKernel3/Image" || { echo "Error: Failed to copy patched Image to AnyKernel3"; exit 1; }
-        echo "Patched Image copied to AnyKernel3 successfully"
 
     - name: Create Kernel ZIP
       id: create_zip
-      if: success()
       shell: bash
       run: |
         set -e
         CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
-        KERNEL_PATH="$CONFIG_DIR/kernel_platform"
         ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR" || { echo "Error: Failed to create artifacts directory"; exit 1; }
-        
-        IMAGE_SRC="$ANYKERNEL_DIR/Image"
-        if [ ! -f "$IMAGE_SRC" ]; then
-          echo "Error: Image not found in AnyKernel3 at $IMAGE_SRC"
-          ls -la "$ANYKERNEL_DIR" || true
-          if [ "${{ inputs.KPM }}" != "true" ]; then
-            ORIG_IMAGE=$(find "$KERNEL_PATH/out" -name "Image" -type f | head -n 1)
-            if [ -z "$ORIG_IMAGE" ] || [ ! -f "$ORIG_IMAGE" ]; then
-              echo "Error: Original Image not found in $KERNEL_PATH/out"
-              ls -la "$KERNEL_PATH/out" || true
-              ls -la "$KERNEL_PATH/out/arch/arm64/boot" 2>/dev/null || true
-              exit 1
-            fi
-            cp "$ORIG_IMAGE" "$IMAGE_SRC" || { echo "Error: Failed to copy original Image"; exit 1; }
-            echo "Copied original Image from $ORIG_IMAGE to $IMAGE_SRC"
-          else
-            echo "Error: Patched Image should have been copied by Apply patch_linux step"
-            exit 1
-          fi
-        fi
-        echo "Image in AnyKernel3 verified (size: $(ls -lh "$IMAGE_SRC"))"
         
         cd "$ANYKERNEL_DIR" || { echo "Error: Cannot cd to $ANYKERNEL_DIR"; exit 1; }
         echo "Current directory: $(pwd)"
@@ -635,12 +640,12 @@ runs:
           if [ -d "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins" ]; then
             cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ || { echo "Error: Failed to copy hmbird bins"; exit 1; }
           else
-            echo "Warning: hmbird bins directory not found"
+            echo "Warning: hmbird bins directory not found, skipping"
           fi
           if [ -f "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" ]; then
             patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" || { echo "Error: Failed to apply ak3_hmbird_patch"; exit 1; }
           else
-            echo "Warning: hmbird patch file not found"
+            echo "Warning: hmbird patch file not found, skipping"
           fi
         fi
         
