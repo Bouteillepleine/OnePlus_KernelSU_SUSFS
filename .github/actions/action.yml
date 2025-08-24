@@ -477,12 +477,13 @@ runs:
     - name: Build Kernel
       shell: bash
       run: |
+        set -euo pipefail
+
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
         
-        # Clang binary check
-        if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
+        if [[ -d "$CLANG_BIN_PATH" && -x "$CLANG_BIN_PATH/clang" ]]; then
           echo "Adding Clang to PATH: $CLANG_BIN_PATH"
           export PATH="$CLANG_BIN_PATH:$PATH"
           SELECTED_CLANG="$CLANG_BIN_PATH/clang"
@@ -496,40 +497,30 @@ runs:
         
         echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
         
-        # LLVM tools check and installation
         LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip"
-        MISSING_TOOLS=""
+        MISSING_TOOLS=()
         for tool in $LLVM_TOOLS; do
-          if ! command -v $tool >/dev/null 2>&1; then
-            MISSING_TOOLS="$MISSING_TOOLS $tool"
+          if ! command -v "$tool" >/dev/null 2>&1; then
+            MISSING_TOOLS+=("$tool")
           fi
         done
         
-        if [ -n "$MISSING_TOOLS" ]; then
-          echo "Installing missing LLVM tools:$MISSING_TOOLS"
-          sudo apt-get update
-          sudo apt-get install -yq --no-install-recommends llvm
-          for tool in $MISSING_TOOLS; do
-            if ! command -v $tool >/dev/null 2>&1; then
-              echo "Error: Failed to install $tool"
-              exit 1
-            fi
-          done
+        if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
+          echo "Missing LLVM tools: ${MISSING_TOOLS[*]}"
+          echo "Please pre-install these tools or provide a prebuilt LLVM toolchain."
+          exit 1
         fi
         
-        # Kernel version specific settings
         KERNEL_VERSION="${{ inputs.kernel_version }}"
+        USE_LLVM_IAS=false
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
         fi
         
-        # Change to kernel directory
-        cd "$KERNEL_PATH/common" || exit 1
+        cd "$KERNEL_PATH/common" || { echo "Error: Cannot enter kernel directory"; exit 1; }
         
-        # Define optimization flags
         OPTIMIZATION_FLAGS="-O2 -pipe -fno-semantic-interposition -fno-stack-protector"
         
-        # Base make arguments
         MAKE_ARGS="LLVM=1 \
           ARCH=arm64 \
           CROSS_COMPILE=aarch64-linux-android- \
@@ -540,27 +531,26 @@ runs:
           KCFLAGS=-Wno-error \
           KCPPFLAGS=-DCONFIG_OPTIMIZE_INLINING"
         
-        # Add LLVM integrated assembler for 5.10 kernels
-        if [[ -v USE_LLVM_IAS ]]; then
+        if $USE_LLVM_IAS; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        # Build commands with proper error handling
-        echo "Building defconfig..."
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" gki_defconfig || {
+        NUM_JOBS=$(nproc)
+        echo "Building defconfig with $NUM_JOBS jobs..."
+        make -j"$NUM_JOBS" O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" gki_defconfig || {
           echo "Error: defconfig build failed"
           exit 1
         }
         
-        echo "Building kernel..."
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" || {
+        echo "Building kernel with $NUM_JOBS jobs..."
+        make -j"$NUM_JOBS" O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" || {
           echo "Error: kernel build failed"
           exit 1
         }
         
-        # Verify output files
-        if [ ! -f "out/arch/arm64/boot/Image" ]; then
-          echo "Error: Kernel image not found"
+        KERNEL_IMAGE="out/arch/arm64/boot/Image"
+        if [[ ! -f "$KERNEL_IMAGE" ]]; then
+          echo "Error: Kernel image not found at $KERNEL_IMAGE"
           exit 1
         fi
         
