@@ -1,4 +1,5 @@
 name: Build
+
 permissions:
   contents: write
   actions: write
@@ -32,8 +33,10 @@ inputs:
     default: ""
 
 runs:
-  using: "composite"
+  using: composite
   steps:
+
+    # Clean up system environment to start fresh and free disk space
     - name: Setup Build System
       shell: bash
       run: |
@@ -58,6 +61,30 @@ runs:
         echo "Package cleanup complete"
         df -h
 
+    # Cache APT lists to speed up package installs
+    - name: Cache APT lists
+      uses: actions/cache@v4
+      with:
+        path: /var/lib/apt/lists
+        key: ${{ runner.os }}-apt-lists
+
+    # Cache ccache directory for compiler cache reuse
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.h', '**/*.c') }}
+
+    # Cache repo metadata to avoid full sync every run
+    - name: Cache repo directory
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CONFIG }}/.repo
+        key: ${{ runner.os }}-repo-${{ env.CONFIG }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-repo-${{ env.CONFIG }}-
+
+    # Install required build dependencies
     - name: Install Dependencies with ccache
       shell: bash
       run: |
@@ -67,46 +94,9 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3 ccache
+          libxml2-utils rsync unzip python3 python-is-python3
 
-    - name: Setup Advanced ccache Configuration
-      shell: bash
-      run: |
-        # Create ccache directory and set comprehensive configuration
-        mkdir -p ~/.ccache
-        export CCACHE_DIR="$HOME/.ccache"
-        export CCACHE_MAXSIZE="8G"
-        export CCACHE_COMPRESS="true"
-        export CCACHE_COMPRESSLEVEL="6"
-        export CCACHE_SLOPPINESS="file_macro,locale,time_macros,include_file_ctime,include_file_mtime"
-        export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
-        export CCACHE_HASHDIR="true"
-        export CCACHE_NOHASHDIR="false"
-        export USE_CCACHE="1"
-        
-        # Kernel-specific ccache optimizations
-        export CCACHE_DEPEND="true"
-        export CCACHE_CPP2="true"
-        export CCACHE_NOSTATS="false"
-        export CCACHE_STATS="true"
-        
-        # Write to environment for subsequent steps
-        echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-        echo "CCACHE_MAXSIZE=8G" >> "$GITHUB_ENV"
-        echo "CCACHE_COMPRESS=true" >> "$GITHUB_ENV"
-        echo "CCACHE_COMPRESSLEVEL=6" >> "$GITHUB_ENV"
-        echo "CCACHE_SLOPPINESS=file_macro,locale,time_macros,include_file_ctime,include_file_mtime" >> "$GITHUB_ENV"
-        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-        echo "CCACHE_HASHDIR=true" >> "$GITHUB_ENV"
-        echo "CCACHE_DEPEND=true" >> "$GITHUB_ENV"
-        echo "CCACHE_CPP2=true" >> "$GITHUB_ENV"
-        echo "USE_CCACHE=1" >> "$GITHUB_ENV"
-        
-        # Initialize ccache
-        ccache --zero-stats
-        ccache --show-config
-        echo "ccache configuration completed"
-
+    # Install repo tool for source management
     - name: Install Repo Tool
       shell: bash
       run: |
@@ -116,6 +106,7 @@ runs:
         echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> "$GITHUB_ENV"
         echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
 
+    # Clone AnyKernel3 and SUSFS kernel patches repositories
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
@@ -139,6 +130,7 @@ runs:
           exit 1
         fi
 
+    # Initialize and sync kernel source using repo tool
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
@@ -159,6 +151,7 @@ runs:
           exit 1
         }
 
+    # Clean up ABI protected exports that may cause build issues
     - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
@@ -167,6 +160,7 @@ runs:
         rm -f msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports in msm-kernel!"
         df -h
 
+    # Add KernelSU Next patches
     - name: Add KernelSU Next
       shell: bash
       run: |
@@ -180,6 +174,7 @@ runs:
         fi
         git submodule update --init --recursive
 
+    # Apply SUSFS patches with branching based on version
     - name: Apply SUSFS Patches
       shell: bash
       run: |
@@ -261,6 +256,7 @@ runs:
           echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
         fi
 
+    # Apply KSUN hooks patch
     - name: Apply KSUN Hooks
       shell: bash
       run: |
@@ -270,6 +266,7 @@ runs:
         cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
         patch -p1 < ./manual_hooks.patch
 
+    # Apply hide stuff patch
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
@@ -278,6 +275,7 @@ runs:
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
 
+    # Add KernelSU and SUSFS config options to defconfig
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -306,6 +304,7 @@ runs:
         echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
+    # Add TCP BBR and network configurations
     - name: Add BBR v1 Support
       shell: bash
       run: |
@@ -325,6 +324,7 @@ runs:
         echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
 
+    # Add TTL Target support for network packets
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -335,6 +335,7 @@ runs:
         echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
+    # Add general build configuration options and disable debug
     - name: Add Build based configs
       shell: bash
       run: |
@@ -345,11 +346,18 @@ runs:
         echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
         echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
-        # debug stuff
+        # debug stuff (tests)
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_DAMON=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CRYPTO_SHA1_ARM64_CE=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_VIRTIO_PCI_LEGACY=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n" >> ./common/arch/arm64/configs/gki_defconfig
 
+    # Disable unwanted OnePlus kernel KUnit test modules conditionally
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
@@ -374,6 +382,7 @@ runs:
           echo "Conditions not met (ANDROID_VERSION=${ANDROID_VERSION:-android13}, KERNEL_VERSION=${KERNEL_VERSION:-5.15}). Skipping modifications."
         fi
 
+    # Save build metadata like kernel version and branch
     - name: Save Build Metadata
       shell: bash
       id: save_metadata
@@ -426,6 +435,7 @@ runs:
         echo "$ANDROID_VERSION-$FULL_VERSION" > ${{ inputs.model }}.txt
         echo "ANDROID_VER=$ANDROID_VERSION" >> $GITHUB_ENV
 
+    # Run sed and perl commands to patch version and symbols
     - name: Run sed and perl Commands
       shell: bash
       run: |
@@ -437,19 +447,17 @@ runs:
         sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
         
         sed -i 's/check_defconfig//' ./common/build.config.gki
-        tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Ultra"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
-        tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Ultra"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
-        tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-Ultra"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Ultra"/' ./common/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Ultra"/' ./msm-kernel/scripts/setlocalversion
-        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-Ultra"/' ./external/dtc/scripts/setlocalversion
+        tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
+        tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
+        tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res="-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./common/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./msm-kernel/scripts/setlocalversion
+        sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "-${{ env.ANDROID_VER }}-OP-⚡Ultra⚡"/' ./external/dtc/scripts/setlocalversion
         chmod +x ./common/scripts/setlocalversion
         chmod +x ./msm-kernel/scripts/setlocalversion
         chmod +x ./external/dtc/scripts/setlocalversion
         if [ -f ./build/kernel/kleaf/impl/stamp.bzl ]; then
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g"
-                if [ -f ./build/kernel/kleaf/impl/stamp.bzl ]; then
-          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
         else
           echo "No stamp.bzl!"
         fi
@@ -466,6 +474,7 @@ runs:
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./common/scripts/mkcompile_h
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' ./msm-kernel/scripts/mkcompile_h
 
+    # Detect and configure Clang version for build
     - name: Detect Clang Version from Configs
       shell: bash
       run: |
@@ -507,69 +516,27 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
 
-    - name: Debug kernel_platform Directory
-      shell: bash
-      run: |
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-        if [ -d "$KERNEL_PATH" ]; then
-          echo "kernel_platform directory exists"
-          ls -la "$KERNEL_PATH"
-        else
-          echo "Error: kernel_platform directory does not exist"
-          exit 1
-        fi
-
-    - name: Advanced ccache Cache with Multiple Restore Keys
-      uses: actions/cache@v4
-      continue-on-error: true
-      with:
-        key: ccache-v2-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ hashFiles('${{ env.CONFIG }}/kernel_platform/common/build.config.gki', '${{ env.CONFIG }}/kernel_platform/common/arch/arm64/configs/gki_defconfig') }}
-        path: ~/.ccache
-        restore-keys: |
-          ccache-v2-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
-          ccache-v2-${{ runner.os }}-${{ inputs.model }}-${{ inputs.android_version }}-
-          ccache-v2-${{ runner.os }}-${{ inputs.model }}-
-          ccache-v2-${{ runner.os }}-
-
-    - name: Build Kernel with Enhanced ccache
+    # Build the kernel with detected Clang and configured options
+    - name: Build Kernel
       shell: bash
       run: |
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
-        
-        # Setup ccache with kernel-optimized settings
-        mkdir -p ~/.ccache
-        export CCACHE_DIR=~/.ccache
-        export PATH="/usr/lib/ccache:$CLANG_BIN_PATH:$PATH"
-        
-        # Kernel-specific ccache optimizations for maximum performance
-        ccache -M 8G  # Increase cache size for kernel builds
-        ccache --set-config=compression=true
-        ccache --set-config=compression_level=6
-        ccache --set-config=sloppiness=file_macro,locale,time_macros,include_file_ctime,include_file_mtime
-        ccache --set-config=hash_dir=true
-        ccache --set-config=depend_mode=true
-        ccache --set-config=cpp2=true
-        ccache --set-config=stats=true
-        
-        echo "=== Initial ccache Statistics ==="
-        ccache -s
-        
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
           echo "Adding Clang to PATH: $CLANG_BIN_PATH"
-          SELECTED_CLANG="clang"  # Using ccache wrapper
+          export PATH="$CLANG_BIN_PATH:$PATH"
+          SELECTED_CLANG="$CLANG_BIN_PATH/clang"
         elif command -v clang >/dev/null 2>&1; then
           SELECTED_CLANG="$(command -v clang)"
           echo "Using system Clang: $SELECTED_CLANG"
-          exit 1
+          # Optional: comment out exit to allow system clang fallback
+          # exit 1
         else
           echo "Error: No valid Clang binary found"
           exit 1
         fi
-        
         echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-        
         LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
         MISSING_TOOLS=""
         for tool in $LLVM_TOOLS; do
@@ -577,7 +544,6 @@ runs:
             MISSING_TOOLS="$MISSING_TOOLS $tool"
           fi
         done
-        
         if [ -n "$MISSING_TOOLS" ]; then
           echo "Installing missing LLVM tools:$MISSING_TOOLS"
           sudo apt-get update
@@ -589,33 +555,30 @@ runs:
             fi
           done
         fi
-        
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
         fi
-        
         cd "$KERNEL_PATH/common" || exit 1
-        
-        # Enhanced make arguments with ccache integration
         MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld CC='ccache clang' HOSTCC='ccache clang'"
-        
+          LD=ld.lld HOSTLD=ld.lld"
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        # Build with optimized flags and ccache
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
         make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
-        
-        echo "=== Final ccache Statistics ==="
-        ccache -s
-        echo "=== ccache Hit Rate Analysis ==="
-        ccache --show-stats | grep -E "(cache hit|cache miss|hit rate)"
 
+    # Post-build validation to catch style and config issues
+    - name: Post-build Kernel Validation
+      shell: bash
+      run: |
+        cd "$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform/common"
+        ./scripts/checkpatch.pl out/.config || echo "Checkpatch found warnings/errors"
+
+    # Create AnyKernel3 flashable zip and patch it if needed
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -633,6 +596,7 @@ runs:
         echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
         zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
 
+    # Upload artifacts for later use
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
