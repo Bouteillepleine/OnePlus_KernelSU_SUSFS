@@ -185,6 +185,7 @@ runs:
         echo "::endgroup::"
 
     - name: Apply Patches SukiSU Ultra
+      shell: bash
       run: |
         cd "$CONFIG"
         git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
