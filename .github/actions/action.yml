@@ -480,6 +480,8 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
         CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
         CLANG_VERSION="${{ env.CLANG_VERSION }}"
+        
+        # Clang binary check
         if [ -d "$CLANG_BIN_PATH" ] && [ -x "$CLANG_BIN_PATH/clang" ]; then
           echo "Adding Clang to PATH: $CLANG_BIN_PATH"
           export PATH="$CLANG_BIN_PATH:$PATH"
@@ -487,19 +489,22 @@ runs:
         elif command -v clang >/dev/null 2>&1; then
           SELECTED_CLANG="$(command -v clang)"
           echo "Using system Clang: $SELECTED_CLANG"
-          exit 1
         else
           echo "Error: No valid Clang binary found"
           exit 1
         fi
+        
         echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm"
+        
+        # LLVM tools check and installation
+        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip"
         MISSING_TOOLS=""
         for tool in $LLVM_TOOLS; do
           if ! command -v $tool >/dev/null 2>&1; then
             MISSING_TOOLS="$MISSING_TOOLS $tool"
           fi
         done
+        
         if [ -n "$MISSING_TOOLS" ]; then
           echo "Installing missing LLVM tools:$MISSING_TOOLS"
           sudo apt-get update
@@ -511,21 +516,53 @@ runs:
             fi
           done
         fi
+        
+        # Kernel version specific settings
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         if [[ "$KERNEL_VERSION" == "5.10" ]]; then
           USE_LLVM_IAS=true
         fi
+        
+        # Change to kernel directory
         cd "$KERNEL_PATH/common" || exit 1
-        MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
+        
+        # Define optimization flags
+        OPTIMIZATION_FLAGS="-O2 -pipe -fno-semantic-interposition -fno-stack-protector"
+        
+        # Base make arguments
+        MAKE_ARGS="LLVM=1 \
+          ARCH=arm64 \
+          CROSS_COMPILE=aarch64-linux-android- \
           RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
           PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld"
+          LD=ld.lld \
+          HOSTLD=ld.lld \
+          KCFLAGS=-Wno-error \
+          KCPPFLAGS=-DCONFIG_OPTIMIZE_INLINING"
+        
+        # Add LLVM integrated assembler for 5.10 kernels
         if [[ -v USE_LLVM_IAS ]]; then
           MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
         fi
         
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" gki_defconfig || exit 1
-        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="-Wno-error -O2 -flto=thin -fno-stack-protector" || exit 1
+        # Build commands with proper error handling
+        echo "Building defconfig..."
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" gki_defconfig || {
+          echo "Error: defconfig build failed"
+          exit 1
+        }
+        
+        echo "Building kernel..."
+        make -j$(nproc --all) O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" || {
+          echo "Error: kernel build failed"
+          exit 1
+        }
+        
+        # Verify output files
+        if [ ! -f "out/arch/arm64/boot/Image" ]; then
+          echo "Error: Kernel image not found"
+          exit 1
+        fi
         
     - name: Create Kernel ZIP
       id: create_zip
