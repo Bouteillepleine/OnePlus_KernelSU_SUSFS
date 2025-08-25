@@ -278,6 +278,7 @@ runs:
         echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_GRAPHITE=y" >> ./common/arch/arm64/configs/gki_defconfig
         sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -312,12 +313,18 @@ runs:
         echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_MSM_ADRENO_IDLER=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_DAMON=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_CRYPTO_SHA1_ARM64_CE=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_VIRTIO_PCI_LEGACY=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZRAM=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+
 
     - name: Disable OnePlus Kernel Module
       shell: bash
