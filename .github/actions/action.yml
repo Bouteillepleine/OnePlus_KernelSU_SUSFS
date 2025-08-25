@@ -320,12 +320,7 @@ runs:
         echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-
-
-
+        
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
@@ -526,7 +521,7 @@ runs:
         
         cd "$KERNEL_PATH/common" || { echo "Error: Cannot enter kernel directory"; exit 1; }
         
-        OPTIMIZATION_FLAGS="-O2 -pipe -flto=thin -mllvm -polly -ftree-vectorize -fno-semantic-interposition -fstack-protector-strong"
+        OPTIMIZATION_FLAGS="-O2 -Wno-error -pipe -flto=thin -mllvm -polly -ftree-vectorize -fno-semantic-interposition -fno-stack-protector"
         
         MAKE_ARGS="LLVM=1 \
           ARCH=arm64 \
