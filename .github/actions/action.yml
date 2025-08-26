@@ -284,9 +284,7 @@ runs:
         echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
         echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-
+        
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -300,26 +298,62 @@ runs:
     - name: Add Build based configs
       shell: bash
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG/kernel_platform"
-        echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_AUTOFDO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_LLVM_POLLY=y" >> ./common/arch/arm64/configs/gki_defconfig
-        # debug stuff (tests)
-        echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_MSM_ADRENO_IDLER=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_DAMON=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CRYPTO_SHA1_ARM64_CE=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_VIRTIO_PCI_LEGACY=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n" >> ./common/arch/arm64/configs/gki_defconfig
+        set -euo pipefail
+        DEFCONFIG="$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig"
+        echo "Appending build/performance configs to $DEFCONFIG (idempotent)."
+    
+        add_cfg () {
+          # add_cfg SYMBOL VALUE
+          local sym="$1" val="$2"
+          # Remove any existing line (enabled or commented out)
+            sed -i -E "/^${sym}=|^# ${sym} is not set/d" "$DEFCONFIG"
+          case "$val" in
+            y|m) echo "${sym}=$val" >> "$DEFCONFIG" ;;
+            n)   echo "# $sym is not set" >> "$DEFCONFIG" ;;
+            *)   echo "${sym}=$val" >> "$DEFCONFIG" ;;
+          esac
+        }
+    
+        # LTO: prefer THIN; ensure mutually exclusive variants cleaned
+        sed -i -E '/^CONFIG_LTO_CLANG_FULL=/d; /^CONFIG_LTO_NONE=/d; /^CONFIG_LTO_CLANG_NONE=/d' "$DEFCONFIG"
+        add_cfg CONFIG_LTO_CLANG y
+        add_cfg CONFIG_LTO_CLANG_THIN y
+    
+        # Compiler optimization: keep PERFORMANCE and explicitly disable O3 flavor if present
+        add_cfg CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE y
+        sed -i -E '/^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=/d' "$DEFCONFIG"
+        echo "# CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3 is not set" >> "$DEFCONFIG"
+    
+        add_cfg CONFIG_LD_DEAD_CODE_DATA_ELIMINATION y
+        add_cfg CONFIG_WQ_POWER_EFFICIENT_DEFAULT y
+        add_cfg CONFIG_CRYPTO_SHA1_ARM64_CE y
+        add_cfg CONFIG_ARM64_LSE_ATOMICS y
+    
+        # Optional toolchain assisted opts (only if symbols referenced in tree)
+        KROOT="$(dirname "$DEFCONFIG")/../../../../"
+        if grep -Rqs "CONFIG_AUTOFDO_CLANG" "$KROOT"; then
+          add_cfg CONFIG_AUTOFDO_CLANG y
+        fi
+        if grep -Rqs "CONFIG_LLVM_POLLY" "$KROOT"; then
+          add_cfg CONFIG_LLVM_POLLY y
+        fi
+    
+        # Reduce debug / tracing overhead
+        add_cfg CONFIG_DEBUG_KERNEL n
+        add_cfg CONFIG_DEBUG_INFO n
+        add_cfg CONFIG_DYNAMIC_DEBUG n
+    
+        # GPU idler only if available
+        if grep -Rqs "CONFIG_MSM_ADRENO_IDLER" "$KROOT"; then
+          add_cfg CONFIG_MSM_ADRENO_IDLER y
+        fi
+    
+        add_cfg CONFIG_DAMON n
+        add_cfg CONFIG_VIRTIO_PCI_LEGACY y
+        add_cfg CONFIG_HEADERS_INSTALL n
+        add_cfg CONFIG_PROC_MEM_ALWAYS_FORCE n
+
+        echo "Build config tuning complete."
         
     - name: Disable OnePlus Kernel Module
       shell: bash
@@ -438,140 +472,129 @@ runs:
     - name: Detect Clang Version from Configs
       shell: bash
       run: |
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        set -euo pipefail
+        KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
         DEFCONFIG="$KERNEL_PATH/common/arch/arm64/configs/gki_defconfig"
         BUILDCONFIG="$KERNEL_PATH/common/build.config.gki"
-        CONSTANTSCONFIG="$KERNEL_PATH/common/build.config.constants"
+        CONSTANTS="$KERNEL_PATH/common/build.config.constants"
+    
         CLANG_VERSION=""
+        for f in "$DEFCONFIG" "$BUILDCONFIG" "$CONSTANTS"; do
+          [[ -f "$f" ]] || continue
+          if grep -q '^CLANG_VERSION=' "$f"; then
+            CLANG_VERSION="$(grep '^CLANG_VERSION=' "$f" | head -n1 | cut -d'=' -f2 | tr -d '\"' | xargs)"
+            break
+          fi
+          if grep -q '^CONFIG_CLANG_VERSION=' "$f"; then
+            CLANG_VERSION="$(grep '^CONFIG_CLANG_VERSION=' "$f" | head -n1 | cut -d'=' -f2 | tr -d '\"' | xargs)"
+            break
+          fi
+        done
+    
+        pick_toolchain_dir () {
+          local base="$1"
+          [[ -d "$base" ]] || return 1
+          ls -d "$base"/clang-r*/ 2>/dev/null | sort | tail -n1
+        }
+    
         CLANG_BIN_PATH=""
-        if grep -q '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null; then
-          CLANG_VERSION=$(grep '^CONFIG_CLANG_VERSION=' "$DEFCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | tr -d '"' | xargs)
-        elif grep -q '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null; then
-          CLANG_VERSION=$(grep '^CLANG_VERSION=' "$BUILDCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | xargs)
-        elif grep -q '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null; then
-          CLANG_VERSION=$(grep '^CLANG_VERSION=' "$CONSTANTSCONFIG" 2>/dev/null | head -n1 | cut -d'=' -f2 | xargs)
-          CLANG_VERSION="clang-$CLANG_VERSION"
+        if [[ -z "$CLANG_VERSION" ]]; then
+          for root in "$KERNEL_PATH/prebuilts/clang/host/linux-x86" "$KERNEL_PATH/prebuilts-master/clang/host/linux-x86"; do
+            cand="$(pick_toolchain_dir "$root")" || continue
+            CLANG_BIN_PATH="$cand/bin"
+          done
         else
-          echo "No clang version found in config, will auto-detect in prebuilts."
+          for root in "$KERNEL_PATH/prebuilts/clang/host/linux-x86" "$KERNEL_PATH/prebuilts-master/clang/host/linux-x86"; do
+            if [[ -d "$root/$CLANG_VERSION" ]]; then
+              CLANG_BIN_PATH="$root/$CLANG_VERSION/bin"
+              break
+            fi
+          done
         fi
-        if [ -z "$CLANG_VERSION" ]; then
-          if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
-            CLANG_VERSION=$(ls -d "$KERNEL_PATH"/prebuilts/clang/host/linux-x86/clang-r*/ | tail -n 1 | xargs basename)
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
-          elif [ -d "$KERNEL_PATH/prebuilts-master/clang/host/linux-x86" ]; then
-            CLANG_VERSION=$(ls -d "$KERNEL_PATH"/prebuilts-master/clang/host/linux-x86/clang-r*/ | tail -n 1 | xargs basename)
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
-          else
-            CLANG_VERSION="clang"
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin" # dummy
-          fi
+    
+        if [[ -n "$CLANG_BIN_PATH" && -x "$CLANG_BIN_PATH/clang" ]]; then
+          echo "Detected clang toolchain: $CLANG_BIN_PATH"
         else
-          if [ -d "$KERNEL_PATH/prebuilts/clang/host/linux-x86" ]; then
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts/clang/host/linux-x86/$CLANG_VERSION/bin"
-          else
-            CLANG_BIN_PATH="$KERNEL_PATH/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin"
-          fi
+          echo "Warning: Could not locate a matching prebuilt clang; will rely on system clang."
+          CLANG_BIN_PATH=""
         fi
-        echo "Detected CLANG_VERSION: $CLANG_VERSION"
-        echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
-        echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
+    
+        echo "CLANG_VERSION=${CLANG_VERSION:-auto}" >> "$GITHUB_ENV"
+        echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> "$GITHUB_ENV"
 
+    
     - name: Build Kernel
       shell: bash
       run: |
         set -euo pipefail
-
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
-        CLANG_BIN_PATH="${{ env.CLANG_BIN_PATH }}"
-        CLANG_VERSION="${{ env.CLANG_VERSION }}"
-        
-        if [[ -d "$CLANG_BIN_PATH" && -x "$CLANG_BIN_PATH/clang" ]]; then
-          echo "Adding Clang to PATH: $CLANG_BIN_PATH"
-          export PATH="$CLANG_BIN_PATH:$PATH"
-          SELECTED_CLANG="$CLANG_BIN_PATH/clang"
-        elif command -v clang >/dev/null 2>&1; then
-          SELECTED_CLANG="$(command -v clang)"
-          echo "Using system Clang: $SELECTED_CLANG"
+        KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
+        COMMON="$KERNEL_PATH/common"
+        cd "$COMMON" || { echo "Missing common dir"; exit 1; }
+    
+        if [[ -n "${CLANG_BIN_PATH:-}" && -x "${CLANG_BIN_PATH}/clang" ]]; then
+          export PATH="${CLANG_BIN_PATH}:$PATH"
+          echo "Using prebuilt clang at ${CLANG_BIN_PATH}"
         else
-          echo "Error: No valid Clang binary found"
-          exit 1
+          command -v clang >/dev/null || { echo "clang not found"; exit 1; }
+          echo "Using system clang: $(command -v clang)"
         fi
-        
-        echo "Using Clang version: $($SELECTED_CLANG --version | head -n1)"
-        
-        LLVM_TOOLS="clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip"
-        MISSING_TOOLS=()
-        for tool in $LLVM_TOOLS; do
-          if ! command -v "$tool" >/dev/null 2>&1; then
-            MISSING_TOOLS+=("$tool")
-          fi
-        done
-        
-        if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
-          echo "Missing LLVM tools: ${MISSING_TOOLS[*]}"
-          echo "Please pre-install these tools or provide a prebuilt LLVM toolchain."
-          exit 1
+    
+        # Determine if we use LLVM integrated assembler (IAS)
+        USE_LLVM_IAS=0
+        if [[ "${{ inputs.kernel_version }}" == "5.10" ]]; then
+          USE_LLVM_IAS=1
         fi
-        
-        KERNEL_VERSION="${{ inputs.kernel_version }}"
-        USE_LLVM_IAS=false
-        if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-          USE_LLVM_IAS=true
+    
+        # Optimization flags (balanced; avoid unsafe -fno-stack-protector)
+        EXTRA_KCFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
+           
+        # Build arguments
+        MAKE_ARGS=(
+          "LLVM=1"
+          "ARCH=arm64"
+          "CROSS_COMPILE=aarch64-linux-android-"
+          "LD=ld.lld"
+          "HOSTLD=ld.lld"
+          "LOCALVERSION=${LV:-}"
+          "KCFLAGS=${EXTRA_KCFLAGS}"
+          "KCPPFLAGS=-DCONFIG_OPTIMIZE_INLINING"
+        )
+        if [[ "$USE_LLVM_IAS" -eq 1 ]]; then
+          MAKE_ARGS+=("LLVM_IAS=1")
         fi
-        
-        cd "$KERNEL_PATH/common" || { echo "Error: Cannot enter kernel directory"; exit 1; }
-        
-        OPTIMIZATION_FLAGS="-O2 -Wno-error -pipe -flto=thin -mllvm -polly -ftree-vectorize -fno-semantic-interposition -fno-stack-protector"
-        
-        MAKE_ARGS="LLVM=1 \
-          ARCH=arm64 \
-          CROSS_COMPILE=aarch64-linux-android- \
-          RUSTC=$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-          PAHOLE=$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-          LD=ld.lld \
-          HOSTLD=ld.lld \
-          KCFLAGS=-Wno-error \
-          KCPPFLAGS=-DCONFIG_OPTIMIZE_INLINING"
-        
-        if $USE_LLVM_IAS; then
-          MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
-        fi
-        
-        NUM_JOBS=$(nproc)
-        echo "Building defconfig with $NUM_JOBS jobs..."
-        make -j"$NUM_JOBS" O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" gki_defconfig || {
-          echo "Error: defconfig build failed"
-          exit 1
-        }
-        
-        echo "Building kernel with $NUM_JOBS jobs..."
-        make -j"$NUM_JOBS" O=out $MAKE_ARGS KCFLAGS+="$OPTIMIZATION_FLAGS" || {
-          echo "Error: kernel build failed"
-          exit 1
-        }
-        
-        KERNEL_IMAGE="out/arch/arm64/boot/Image"
-        if [[ ! -f "$KERNEL_IMAGE" ]]; then
-          echo "Error: Kernel image not found at $KERNEL_IMAGE"
-          exit 1
-        fi
-        
-    - name: Create Kernel ZIP
-      id: create_zip
-      shell: bash
-      run: |
-        CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
-        KERNEL_PATH="$CONFIG_DIR/kernel_platform"
-        cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-        cd "$GITHUB_WORKSPACE/AnyKernel3"
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
-          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
-          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
-        fi
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
-        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
+    
+        JOBS=$(nproc)
+        echo "Generating defconfig..."
+        make -j"$JOBS" O=out "${MAKE_ARGS[@]}" gki_defconfig
+        echo "Running olddefconfig..."
+        make O=out olddefconfig
+    
+        echo "Building kernel (Image)..."
+        make -j"$JOBS" O=out "${MAKE_ARGS[@]}"
+    
+        IMAGE="out/arch/arm64/boot/Image"
+        [[ -f "$IMAGE" ]] || { echo "Kernel Image not found at $IMAGE"; exit 1; }
+    
+        sha256sum "$IMAGE" | tee out/Image.sha256
+        cp out/.config out/config.final
+        echo "Kernel build complete."
+            
+        - name: Create Kernel ZIP
+          id: create_zip
+          shell: bash
+          run: |
+            CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
+            KERNEL_PATH="$CONFIG_DIR/kernel_platform"
+            cp "$KERNEL_PATH/common/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+            cd "$GITHUB_WORKSPACE/AnyKernel3"
+            if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+              cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/
+              patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
+            fi
+            ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_Next_${{ env.KSUVER }}_SUSFS_${{ env.SUSVER }}.zip"
+            ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+            echo "Creating zip file $ZIP_NAME in $ARTIFACTS_DIR..."
+            zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./*
 
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
