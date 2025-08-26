@@ -392,7 +392,7 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
     
-    - name: Build Kernel
+   - name: Build Kernel
       shell: bash
       run: |
         set -euo pipefail
@@ -431,20 +431,21 @@ runs:
         echo "=== Sync (olddefconfig) ==="
         make O="$OUT_DIR" olddefconfig
     
-        echo "=== Apply custom LOCALVERSION with emojis ==="
+        echo "=== Apply custom LOCALVERSION (single source) ==="
         scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
         scripts/config --file "$OUT_DIR/.config" -d LOCALVERSION_AUTO || true
-        export LOCALVERSION="${CUSTOM_LOCALVERSION}"
-        # Optional: suppress git hash (uncomment if desired)
-        # : > .scmversion
+        : > .scmversion   # suppress git hash / -dirty
         make O="$OUT_DIR" olddefconfig
-        echo "Effective LOCALVERSION: $(grep '^CONFIG_LOCALVERSION=' $OUT_DIR/.config || true)"
+        echo "Effective CONFIG_LOCALVERSION: $(grep '^CONFIG_LOCALVERSION=' $OUT_DIR/.config || true)"
     
-        echo "=== Set reproducible fixed timestamp ==="
-        export SOURCE_DATE_EPOCH=1700000000
-        export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d %H:%M:%S %Z %Y')"
+        echo "=== Set build-day timestamp ==="
+        # Reproducible within the same UTC day (stable for all builds that day).
+        BUILD_DAY_UTC=$(date -u +%Y-%m-%d)
+        export SOURCE_DATE_EPOCH=$(date -u -d "${BUILD_DAY_UTC} 00:00:00" +%s)
+        export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d 00:00:00 %Z %Y')"
         export KBUILD_BUILD_USER=builder
         export KBUILD_BUILD_HOST=github
+        echo "BUILD_DAY_UTC=$BUILD_DAY_UTC"
         echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
         echo "KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
     
@@ -456,14 +457,15 @@ runs:
     
         IMAGE="$OUT_DIR/arch/arm64/boot/Image"
         if [[ ! -f "$IMAGE" ]]; then
-          echo "ERROR: Kernel Image missing"; exit 1
+            echo "ERROR: Kernel Image missing"; exit 1
         fi
         file "$IMAGE" || true
         du -h "$IMAGE" || true
         sha256sum "$IMAGE" | tee "$OUT_DIR/Image.sha256"
         cp "$OUT_DIR/.config" "$OUT_DIR/config.final"
         echo "Kernel build complete."
-    
+        echo "kernelrelease: $(make -s O="$OUT_DIR" kernelrelease)"
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
