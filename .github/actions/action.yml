@@ -67,8 +67,8 @@ runs:
           python3 git curl libelf-dev libelf1 lld \
           build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev \
-          libxml2-utils rsync unzip python3 python-is-python3
-    
+          libxml2-utils rsync unzip dwarves 
+              
     - name: Install Repo Tool
       shell: bash
       run: |
@@ -293,6 +293,7 @@ runs:
           echo "CONFIG_LTO_CLANG=y"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n"
+          echo "CONFIG_OPTIMIZE_INLINING=y" 
           echo "CONFIG_DEBUG_KERNEL=n"
           echo "CONFIG_DYNAMIC_DEBUG=n"
           echo "CONFIG_DEBUG_INFO=n"
@@ -302,30 +303,8 @@ runs:
           echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"
           echo "CONFIG_HEADERS_INSTALL=n"
           echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n"
-        } >> ./common/arch/arm64/configs/gki_defconfig
-    
-    - name: Disable OnePlus Kernel Module
-      shell: bash
-      run: |
-        cd "$CONFIG/kernel_platform"
-        if [ "${ANDROID_VERSION:-android13}" = "android14" ] && [ "${KERNEL_VERSION:-5.15}" = "6.1" ]; then
-          echo "Disabling KUnit test modules (conditions met)"
-          sed -i -e 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' \
-            -e 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' \
-            -e 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' \
-            -e 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' \
-            "$CONFIG_FILE"
-        else
-          echo "Skipping KUnit disable (ANDROID_VERSION=${ANDROID_VERSION:-android13}, KERNEL_VERSION=${KERNEL_VERSION:-5.15})"
-        fi
-    
+        } >> ./common/arch/arm64/configs/gki_defconfig  
+        
     - name: Save Build Metadata
       shell: bash
       id: save_metadata
