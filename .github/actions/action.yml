@@ -224,7 +224,8 @@ runs:
         set -e
         cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
         cp ../../SukiSU_patch/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch || echo "Hide patch failed (ignored)"
+        patch -p1 -F 3 < 69_hide_stuff.patch 
+        echo "Hide patched"
     
     - name: Apply Hook
       shell: bash
