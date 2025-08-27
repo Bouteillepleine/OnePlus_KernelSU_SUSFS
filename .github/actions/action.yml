@@ -74,106 +74,92 @@ runs:
           git curl python3 libelf-dev libelf1 lld build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip dwarves
     
-    - name: Repo Tool / Base Env
+    - name: Install Repo Tool
       shell: bash
       run: |
-        set -e
-        mkdir -p git-repo
-        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > git-repo/repo
-        chmod +x git-repo/repo
-        {
-          echo "REPO=$GITHUB_WORKSPACE/git-repo/repo"
-          echo "CONFIG=${{ inputs.model }}"
-          echo "KANDROID_VERSION=${{ inputs.android_version }}"
-          echo "KERNEL_VERSION=${{ inputs.kernel_version }}"
-        } >> "$GITHUB_ENV"
-    
-    - name: Clone AnyKernel3 + Patch Repos
+        mkdir -p ./git-repo
+        curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
+        chmod a+rx ./git-repo/repo
+        echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> "$GITHUB_ENV"
+        echo "CONFIG=${{ inputs.model }}" >> "$GITHUB_ENV"
+        echo "KANDROID_VERSION=${{ inputs.android_version }}" >> "$GITHUB_ENV"
+        echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> "$GITHUB_ENV"
+
+    - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
-        set -e
-        if [[ -z "${{ inputs.susfs_branch }}" ]]; then
-          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-        else
-          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
-        fi
-        echo "Using SUSFS_BRANCH=$SUSFS_BRANCH"
-        # AnyKernel3
-        if [ ! -d AnyKernel3/.git ]; then
-          git clone --depth=1 https://github.com/Bouteillepleine/AnyKernel3.git -b gki-2.0 AnyKernel3
-        fi
-        # SukiSU_patch
-        if [ -d SukiSU_patch/.git ]; then
-          git -C SukiSU_patch fetch --depth=1 origin
-          git -C SukiSU_patch reset --hard origin/HEAD
-        else
-          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
-        fi
-        # SUSFS repo
-        if [ -d susfs4ksu/.git ]; then
-          git -C susfs4ksu fetch origin "$SUSFS_BRANCH" || true
-          git -C susfs4ksu checkout "$SUSFS_BRANCH" || true
-        else
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git
-          (cd susfs4ksu; git checkout "$SUSFS_BRANCH")
-        fi
-    
-    - name: Initialize & Sync Kernel Source
+        echo "Cloning AnyKernel3 and other dependencies..."
+        ANYKERNEL_BRANCH="gki-2.0"
+        SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        
+        echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
+        echo "Using branch for SUSFS: $SUSFS_BRANCH"
+        git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
+        git clone https://github.com/ShirkNeko/SukiSU_patch.git
+
+    - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
-        set -e
+        echo "Creating folder for configuration: $CONFIG..."
         mkdir -p "$CONFIG"
         cd "$CONFIG"
+        echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
-          curl -Ls "${{ inputs.manifest }}" -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          curl -Ls ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/${{ inputs.soc }} -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "${{ inputs.branch }}" -m "${{ inputs.manifest }}" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git -b ${{ inputs.branch }} -m ${{ inputs.manifest }} --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
-        $REPO sync -c --no-clone-bundle --no-tags --optimized-fetch -j"$(nproc)" --fail-fast
-    
-    - name: Clean ABI Protected Exports
+        $REPO --version
+        $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
+
+    - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
-        set -e
         cd "$CONFIG/kernel_platform"
-        rm -f common/android/abi_gki_protected_exports_* msm-kernel/android/abi_gki_protected_exports_* || true
-    
+        rm -f common/android/abi_gki_protected_exports_* || echo "No protected exports in common!"
+        rm -f msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports in msm-kernel!"
+        df -h
+
     - name: Branding
       shell: bash
       run: |
         set -e
         CUSTOM_LOCALVERSION="-${KANDROID_VERSION}-OP-⚡Ultra⚡"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
-    
+
     - name: Add SukiSU Ultra
       shell: bash
       run: |
-        set -e
-        cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        META="${{ inputs.ksu_meta }}"
-        [ -z "$META" ] && { echo "ksu_meta empty"; exit 1; }
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+        echo "Adding SukiSU Ultra..."
+        META="${{ inputs.KSU_META }}"
         BRANCH_NAME="${META%%/*}"
         CUSTOM_TAG="${META#*/}"
-        if [[ "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then CUSTOM_TAG=""; fi
-        curl -LSs https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh | bash -s "$BRANCH_NAME"
-        cd KernelSU
-        KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | grep -m1 'KSU_VERSION_API :=' | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-        [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
-        GIT_HASH=$(git rev-parse --short HEAD)
-        if [ -n "$CUSTOM_TAG" ]; then
-          VERSION_FULL="v${KSU_API_VERSION}-${CUSTOM_TAG}@${BRANCH_NAME}[${GIT_HASH}]"
-        else
-          VERSION_FULL="v${KSU_API_VERSION}-${GIT_HASH}@${BRANCH_NAME}"
+        echo "Branch name: $BRANCH_NAME"
+        echo "Custom version identifier: $CUSTOM_TAG"
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+        cd ./KernelSU
+        KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
+          grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+          KSU_API_VERSION="3.1.7"
         fi
         echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
-        KSU_LOCAL_COUNT=$(git rev-list --count main 2>/dev/null || echo 13000)
-        KSUVER=$((KSU_LOCAL_COUNT + 10700))
-        echo "KSUVER=$KSUVER" >> $GITHUB_ENV
-        MAKEFILE="kernel/Makefile"
-        perl -0777 -i -pe 's/\ndefine get_ksu_version_full\n.*?\nendef\n//s; s/^\s*KSU_VERSION_API\s*:=.*\n//mg; s/^\s*KSU_VERSION_FULL\s*:=.*\n//mg;' "$MAKEFILE"
-        BLOCK=$(cat <<EOF
+        GIT_HASH=$(git rev-parse --short HEAD)
+        echo "GIT_HASH=$GIT_HASH"
+        if [[ -z "$CUSTOM_TAG" || "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then
+          VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
+        else
+          VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$GIT_HASH]"
+        fi
+        sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
+        sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
+        sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
+        VERSION_DEFINITIONS=$(cat <<EOF
         define get_ksu_version_full
         $VERSION_FULL
         endef
@@ -182,148 +168,251 @@ runs:
         KSU_VERSION_FULL := $VERSION_FULL
         EOF
         )
-        if grep -q '^REPO_OWNER *:=' "$MAKEFILE"; then
-        awk -v blk="$BLOCK" '/^REPO_OWNER *:=/ {print; print blk; next} {print}' "$MAKEFILE" > "$MAKEFILE.tmp" && mv "$MAKEFILE.tmp" "$MAKEFILE"
-        else
-        printf "\n%s\n" "$BLOCK" >> "$MAKEFILE"
-        fi
-        grep -A6 'REPO_OWNER' "$MAKEFILE" || true
-    
-    - name: Apply SUSFS + Ultra Patches
+        awk -v def="$VERSION_DEFINITIONS" '
+          /REPO_OWNER :=/ {print; print def; inserted=1; next}
+          1
+          END {if (!inserted) print def}
+        ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+        KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        echo "::group::Final version information and partial debug output in Makefile"
+        grep -A10 "REPO_OWNER" kernel/Makefile
+        grep "KSU_VERSION_FULL" kernel/Makefile
+        echo "::endgroup::"
+
+    - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
-        set -e
-        cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch common/ || true
-        cp ../../susfs4ksu/kernel_patches/fs/* common/fs/ 2>/dev/null || true
-        cp ../../susfs4ksu/kernel_patches/include/linux/* common/include/linux/ 2>/dev/null || true
-        cd common
-        FILE_INPUT="${{ inputs.file }}"
-        if [ "$KERNEL_VERSION" = "6.6" ] && [ -n "$FILE_INPUT" ]; then
-          if ! grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE_INPUT}.xml" 2>/dev/null; then
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch || true
-            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch || true
+        cd "$CONFIG"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+        git clone https://github.com/ShirkNeko/SukiSU_patch.git
+        cd kernel_platform
+        echo "Pulling susfs patches"
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+        cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+              
+        cd ./common
+        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
+      
+        if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
+          echo "Fixing bugs caused by older C library support in kernel versions 5.15.0 to 5.15.123"
+          curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+          patch -p1 < fix_5.15.legacy.patch
+          echo "fix_5.15_patch completed"
+        fi
+        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+        file="${{ github.event.inputs.FILE }}"
+        TRUSTY_EXISTS="false"
+        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${file}.xml"; then
+            TRUSTY_EXISTS="true"
+          fi
+          echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
+      
+          if [[ "$TRUSTY_EXISTS" == "false" && "$file" != "oneplus_pad_2_pro" && "$file" != "oneplus_pad_3" ]]; then
+            echo "Fixing susfs errors caused by missing Trusty OS in some kernel version 6.6 devices"
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
           fi
         fi
-        if patch --dry-run -p1 < 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch >/dev/null 2>&1; then
-          patch -p1 < 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch
-          echo "SUSFS patch applied"
-        else
-          echo "Warning: SUSFS patch failed to apply cleanly" >&2
-        fi
-        if [ -f include/linux/susfs.h ]; then
-          SUSVER=$(grep '#define SUSFS_VERSION' include/linux/susfs.h | awk -F'"' '{print $2}')
-        else
-          SUSVER="unknown"
-        fi
-        echo "SUSVER=$SUSVER" >> $GITHUB_ENV
-    
-    - name: Apply Hide Stuff
+        echo "Applying susfs patch"
+        patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+        echo "susfs_patch completed"
+
+    - name: Apply Hide Stuff Patches
       shell: bash
       run: |
-        set -e
-        cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform/common"
         cp ../../SukiSU_patch/69_hide_stuff.patch ./
-        patch -p1 -F 3 < 69_hide_stuff.patch 
-        echo "Hide patched"
-    
-    - name: Apply Hook
+        echo "Applying hide application patches..."
+        patch -p1 -F 3 < 69_hide_stuff.patch
+        echo "Hide application patch completed"
+      
+    - name: Apply HOOK
       shell: bash
       run: |
-        set -e
-        cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
-        case "${{ inputs.hook }}" in
-          kprobe) echo "kprobe hook (built-in KPROBES flags)";;
-          manual)
-            cp ../../SukiSU_patch/hooks/syscall_hooks.patch .
-            patch -p1 -F 3 < syscall_hooks.patch
-            ;;
-          tracepoint)
-            cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch .
-            patch -p1 -F 3 < tracepoint_hooks.patch
-            ;;
-        esac
-    
-    - name: Append Config
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform/common"
+        if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
+          echo "Invoking kprobe hook"
+        elif [ "${{ inputs.HOOK }}" = "manual" ]; then
+          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          echo "Invoking manual hook"
+          patch -p1 -F 3 < syscall_hooks.patch
+        elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
+          cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
+          echo "Invoking tracepoint hook"
+          patch -p1 -F 3 < tracepoint_hooks.patch
+        fi
+      
+    - name: Add kernelSU and SUSFS Configuration Settings
       shell: bash
       run: |
-        set -e
-        CFG="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        {
-          echo ""
-          echo "# SukiSU Ultra Core"
-          echo "CONFIG_KSU=y"
-          if [ "${{ inputs.kpm }}" = "true" ]; then echo "CONFIG_KPM=y"; fi
-          case "${{ inputs.hook }}" in
-            kprobe)
-              echo "CONFIG_KSU_SUSFS_SUS_SU=y"
-              echo "CONFIG_KPROBES=y"
-              echo "CONFIG_KSU_KPROBES_HOOK=y"
-              ;;
-            manual) echo "CONFIG_KSU_MANUAL_HOOK=y";;
-            tracepoint) echo "CONFIG_KSU_TRACEPOINT_HOOK=y";;
-          esac
-          echo "CONFIG_KSU_SUSFS=y"
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-          echo ""
-          echo "# Network"
-          echo "CONFIG_TCP_CONG_ADVANCED=y"
-          echo "CONFIG_TCP_CONG_BBR=y"
-          echo "CONFIG_NET_SCH_FQ=y"
-          echo "CONFIG_NET_SCH_FQ_CODEL=y"
-          echo "CONFIG_IP_ECN=y"
-          echo "CONFIG_TCP_ECN=y"
-          echo "CONFIG_IPV6_ECN=y"
-          echo "CONFIG_IP_NF_TARGET_TTL=y"
-          echo "CONFIG_IP6_NF_TARGET_HL=y"
-          echo "CONFIG_IP6_NF_MATCH_HL=y"
-          echo ""
-          echo "# Build Optimizations"
-          echo "CONFIG_LTO_CLANG_THIN=y"
-          echo "CONFIG_LTO_CLANG=y"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n"
-          echo "CONFIG_OPTIMIZE_INLINING=y" 
-          echo "CONFIG_DEBUG_KERNEL=n"
-          echo "CONFIG_DYNAMIC_DEBUG=n"
-          echo "CONFIG_DEBUG_INFO=n"
-          echo "CONFIG_DAMON=n"
-          echo "CONFIG_CRYPTO_SHA1_ARM64_CE=y"
-          echo "CONFIG_VIRTIO_PCI_LEGACY=y"
-          echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"
-          echo "CONFIG_HEADERS_INSTALL=n"
-          echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n"
-        } >> "$CFG"
-        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$CFG"
-    
-    - name: Metadata
+        cd $CONFIG/kernel_platform
+        CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+
+        # SukiSU Ultra configuration
+        echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+
+        # KPM configuration
+        if [ "${{ inputs.KPM }}" = "true" ]; then
+          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+        fi
+
+        # HOOK configuration
+        if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
+        elif [ "${{ inputs.HOOK }}" = "manual" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
+        elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE" 
+        fi
+
+        # SUSFS configuration
+        echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+
+        # TMPFS configuration
+        echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
+
+    - name: Add BBR v1 Support
       shell: bash
       run: |
-        set -e
-        ART="$GITHUB_WORKSPACE/$CONFIG/artifacts"
-        mkdir -p "$ART"
-        cd "$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
-        BRANCH_LINE=$(grep -h '^[[:space:]]*BRANCH=' build.config.* 2>/dev/null | head -n1 || true)
-        [ -z "$BRANCH_LINE" ] && { echo "BRANCH= not found"; exit 1; }
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+        echo "Adding configuration settings to gki_defconfig..."
+        echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
+
+    - name: Add TTL Target Support
+      shell: bash
+      run: |
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+        echo "Adding configuration settings to gki_defconfig..."
+        echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+    - name: Add Build based configs
+      shell: bash
+      run: |
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform"
+        echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_OPTIMIZE_INLINING=y" >> "./common/arch/arm64/configs/gki_defconfig" 
+        echo "CONFIG_DEBUG_KERNEL=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_DYNAMIC_DEBUG=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_DEBUG_INFO=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_DAMON=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_CRYPTO_SHA1_ARM64_CE=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_VIRTIO_PCI_LEGACY=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_HEADERS_INSTALL=n" >> "./common/arch/arm64/configs/gki_defconfig"
+        echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n" >> "./common/arch/arm64/configs/gki_defconfig"
+
+    - name: Disable OnePlus Kernel Module
+        shell: bash
+        run: |
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform"
+          if [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; then
+          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "./common/arch/arm64/configs/gki_defconfig"
+          fi
+
+    - name: Save Build Metadata
+      shell: bash
+      id: save_metadata
+      run: |
+        CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
+        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+        mkdir -p "$ARTIFACTS_DIR"
+        
+        cd "$CONFIG_DIR/kernel_platform/common"
+        CONFIG_FILES=("build.config.common" "build.config.constants")
+        BRANCH_LINE=""
+        
+        for file in "${CONFIG_FILES[@]}"; do
+          if [ -f "$file" ]; then
+            line=$(grep '^[[:space:]]*BRANCH=' "$file" | head -n1 || true)
+            if [ -n "$line" ]; then
+              BRANCH_LINE="$line"
+              echo "Found BRANCH in: $file"
+              break  # Found it — exit loop
+            else
+              echo "File exists but no BRANCH= found: $file"
+            fi
+          else
+            echo "File not found: $file"
+          fi
+        done
+        
+        if [ -z "$BRANCH_LINE" ]; then
+          echo "Error: No BRANCH= found in any of: ${CONFIG_FILES[*]}"
+          exit 1
+        fi
+        
         BRANCH_VALUE="${BRANCH_LINE#*=}"
-        ANDROID_VER="${BRANCH_VALUE%-*}"
+        ANDROID_VERSION="${BRANCH_VALUE%-*}"
+        
+        if [ -z "$ANDROID_VERSION" ]; then
+          echo "Error: Could not extract 'androidXX' from BRANCH='$BRANCH_VALUE'"
+          exit 1
+        fi
+        
+        # Extract values using grep and awk
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
-        echo "ANDROID_VER=$ANDROID_VER" >> $GITHUB_ENV
-        echo "$ANDROID_VER-$VERSION.$PATCHLEVEL.$SUBLEVEL" > "$ART/${CONFIG}.txt"
+        FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
+        
+        echo "Kernel Version: $ANDROID_VERSION-$FULL_VERSION"
+        
+        cd "$ARTIFACTS_DIR"
+        echo "$ANDROID_VERSION-$FULL_VERSION" > ${{ inputs.model }}.txt
+        echo "ANDROID_VER=$ANDROID_VERSION" >> $GITHUB_ENV
     
     - name: Detect Clang
       shell: bash
