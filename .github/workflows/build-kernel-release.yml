@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       make_release:
-        description: 'Do you want to create releases (one per device)?'
+        description: 'Create a GitHub Release per device?'
         required: true
         type: boolean
         default: false
       KSU_META:
-        description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡)'
+        description: 'SukiSU Ultra branch/custom tag (e.g. susfs-main/⚡Ultra⚡)'
         required: false
         type: string
         default: 'susfs-main/⚡Ultra⚡'
       KPM:
-        description: 'Enable Kernel Module (KPM)'
+        description: 'Enable KPM patch'
         required: true
         type: boolean
         default: true
@@ -27,175 +27,17 @@ on:
           - kprobe
           - manual
           - tracepoint
-      android12-5_10_susfs_branch:
-        description: 'Choose SusFS Branch for android12-5.10'
-        type: string
-        default: 'gki-android12-5.10'
-      android13-5_10_susfs_branch:
-        description: 'Choose SusFS Branch for android13-5.10'
-        type: string
-        default: 'gki-android13-5.10'
-      android13-5_15_susfs_branch:
-        description: 'Choose SusFS Branch for android13-5.15'
-        type: string
-        default: 'gki-android13-5.15'
-      android14-5_15_susfs_branch:
-        description: 'Choose SusFS Branch for android14-5.15'
-        type: string
-        default: 'gki-android14-5.15'
-      android14-6_1_susfs_branch:
-        description: 'Choose SusFS Branch for android14-6.1'
-        type: string
-        default: 'gki-android14-6.1'
-      android15-6_6_susfs_branch:
-        description: 'Choose SusFS Branch for android15-6.6'
-        type: string
-        default: 'gki-android15-6.6'
 
 concurrency:
-  group: oneplus-kernel-${{ github.workflow }}-${{ github.ref }}
+  group: kernel-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build-batch-1:
-    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }})
+  build:
+    name: Build (${{ matrix.model }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 3
-      matrix:
-        include:
-          - model: OP11
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_11_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP11r
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_11r_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP-OPEN
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_open_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP-ACE-2
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_ace2_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP10t
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_10t_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP10pro
-            soc: waipio
-            branch: oneplus/sm8450
-            manifest: oneplus_10_pro_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP-ACE-2-PRO
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_ace2_pro_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP12r
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_12r_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-
-    steps:
-      - name: Select Appropriate SusFS Branch
-        id: get-susfs-branch
-        run: |
-          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          case "$KERNEL_STRING" in
-            "android12-5.10") SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}" ;;
-            "android13-5.10") SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}" ;;
-            "android13-5.15") SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}" ;;
-            "android14-5.15") SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}" ;;
-            "android14-6.1")  SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}" ;;
-            "android15-6.6")  SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}" ;;
-            *) echo "Invalid kernel version or unsupported: $KERNEL_STRING"; exit 1 ;;
-          esac
-          if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          fi
-          echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Build Kernel
-        uses: ./.github/actions
-        with:
-          model: ${{ matrix.model }}
-          soc: ${{ matrix.soc }}
-          branch: ${{ matrix.branch }}
-          manifest: ${{ matrix.manifest }}
-          android_version: ${{ matrix.android_version }}
-          kernel_version: ${{ matrix.kernel_version }}
-          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-          KSU_META: ${{ inputs.KSU_META }}
-          KPM: ${{ inputs.KPM }}
-          HOOK: ${{ inputs.HOOK }}
-
-      - name: Create Release (per-device)
-        if: ${{ github.event.inputs.make_release == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ matrix.model }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-v${{ env.KSU_API_VERSION }}-${{ env.GIT_HASH }}
-          name: SukiSU Ultra Kernel for ${{ matrix.model }}
-          body: |
-            # SukiSU Ultra Kernel Release for ${{ matrix.model }}
-
-            **Kernel Version**: ${{ matrix.kernel_version }}
-            **Android Version**: ${{ matrix.android_version }}
-            **SukiSU Ultra Version**: ${{ env.KSU_VERSION_FULL }}
-            **KSU API Version**: ${{ env.KSU_API_VERSION }}
-            **Commit Hash**: ${{ env.GIT_HASH }}
-            **KPM**: ${{ inputs.KPM }}
-            **Hook Type**: ${{ inputs.HOOK }}
-
-            ## Features
-            - Magic Mount (SUSFS integration)
-            - Spoof uname and cmdline / bootconfig
-            - Open redirect + KSTAT
-            - Symbol hiding
-            - BBR congestion control
-            - TTL / ECN related targets
-
-            ## Installation
-            1. Flash the provided AnyKernel3 zip in recovery.
-            2. Reboot and verify.
-
-            ## Notes
-            - Ensure compatibility with your device / Android version.
-            - Always backup before flashing.
-          files: |
-            ${{ matrix.model }}/artifacts/AnyKernel3_${{ matrix.model }}_${{ matrix.android_version }}-${{ matrix.kernel_version }}*.zip
-            ${{ matrix.model }}/artifacts/*sha256*
-          draft: false
-          prerelease: false
-
-  build-batch-2:
-    name: build-batch-2 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 3
       matrix:
         include:
           - model: OP13
@@ -204,18 +46,6 @@ jobs:
             manifest: oneplus_13.xml
             android_version: android15
             kernel_version: '6.6'
-          - model: OPAce5Pro
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_ace5_pro.xml
-            android_version: android15
-            kernel_version: '6.6'
-          - model: OP12
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus12_v.xml
-            android_version: android14
-            kernel_version: '6.1'
           - model: OP13r
             soc: pineapple
             branch: oneplus/sm8650
@@ -228,63 +58,14 @@ jobs:
             manifest: oneplus_ace5.xml
             android_version: android14
             kernel_version: '6.1'
-          - model: OP-ACE-3V
-            soc: pineapple
-            branch: oneplus/sm7675
-            manifest: oneplus_ace_3v_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP-NORD-4
-            soc: pineapple
-            branch: oneplus/sm7675
-            manifest: oneplus_nord_4_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP-PAD-2
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus_pad2_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP13S
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_13s.xml
-            android_version: android15
-            kernel_version: '6.6'
-          - model: OP-Ace3-Pro
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus_ace3_pro_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-
     steps:
-      - name: Select Appropriate SusFS Branch
-        id: get-susfs-branch
-        run: |
-          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          case "$KERNEL_STRING" in
-            "android12-5.10") SUSFS_BRANCH="${{ inputs.android12-5_10_susfs_branch }}" ;;
-            "android13-5.10") SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch }}" ;;
-            "android13-5.15") SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch }}" ;;
-            "android14-5.15") SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch }}" ;;
-            "android14-6.1")  SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch }}" ;;
-            "android15-6.6")  SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch }}" ;;
-            *) echo "Invalid kernel version or unsupported: $KERNEL_STRING"; exit 1 ;;
-          esac
-          if [[ -z "$SUSFS_BRANCH" ]]; then
-            SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          fi
-          echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Build Kernel
-        uses: ./.github/actions
+        uses: ./.github/actions/build
         with:
           model: ${{ matrix.model }}
           soc: ${{ matrix.soc }}
@@ -292,7 +73,7 @@ jobs:
           manifest: ${{ matrix.manifest }}
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
-          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+          susfs_branch: ''
           KSU_META: ${{ inputs.KSU_META }}
           KPM: ${{ inputs.KPM }}
           HOOK: ${{ inputs.HOOK }}
@@ -311,24 +92,24 @@ jobs:
             **SukiSU Ultra Version**: ${{ env.KSU_VERSION_FULL }}
             **KSU API Version**: ${{ env.KSU_API_VERSION }}
             **Commit Hash**: ${{ env.GIT_HASH }}
-            **KPM**: ${{ inputs.KPM }}
+            **KPM Enabled**: ${{ inputs.KPM }}
             **Hook Type**: ${{ inputs.HOOK }}
 
             ## Features
-            - Magic Mount (SUSFS integration)
-            - Spoof uname and cmdline / bootconfig
-            - Open redirect + KSTAT
+            - SukiSU Ultra (Magic Mount + SUSFS integration)
+            - SUSFS spoof uname / cmdline / bootconfig
+            - Open redirect & KSTAT
             - Symbol hiding
-            - BBR congestion control
-            - TTL / ECN related targets
+            - BBR congestion control & queue disciplines
+            - TTL / HL targets
 
             ## Installation
-            1. Flash the provided AnyKernel3 zip in recovery.
-            2. Reboot and verify.
+            1. Flash the AnyKernel3 zip in recovery.
+            2. Reboot.
 
             ## Notes
-            - Ensure compatibility with your device / Android version.
-            - Always backup before flashing.
+            - Backup before flashing.
+            - Ensure correct device & Android version.
           files: |
             ${{ matrix.model }}/artifacts/AnyKernel3_${{ matrix.model }}_${{ matrix.android_version }}-${{ matrix.kernel_version }}*.zip
             ${{ matrix.model }}/artifacts/*sha256*
