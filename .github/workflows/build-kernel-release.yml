@@ -1,4 +1,4 @@
-name: build-kernel-release
+name: Build and Release OnePlus Kernels
 
 on:
   workflow_dispatch:
