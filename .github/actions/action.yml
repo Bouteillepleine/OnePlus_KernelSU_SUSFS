@@ -419,12 +419,28 @@ runs:
       run: |
         set -e
         KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        echo "Searching for Clang in $KP..."
+        CLANG_FOUND=false
         for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
           if [ -d "$base/clang/host/linux-x86" ]; then
-            cand=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | tail -n1 | xargs basename)
-            [ -n "$cand" ] && echo "CLANG_BIN_PATH=$base/clang/host/linux-x86/$cand/bin" >> $GITHUB_ENV && break
+            cand=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 | xargs basename)
+            if [ -n "$cand" ]; then
+              CLANG_PATH="$base/clang/host/linux-x86/$cand/bin"
+              if [ -x "$CLANG_PATH/clang" ]; then
+                CLANG_VERSION=$("$CLANG_PATH/clang" --version | head -n1 | awk '{print $3}')
+                echo "Found Clang: $CLANG_PATH/clang, version: $CLANG_VERSION"
+                echo "CLANG_BIN_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+                echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
+                CLANG_FOUND=true
+                break
+              fi
+            fi
           fi
         done
+        if [ "$CLANG_FOUND" = false ]; then
+          echo "Error: Clang not found in $KP/prebuilts or $KP/prebuilts-master"
+          exit 1
+        fi
     
     - name: Build Kernel
       shell: bash
