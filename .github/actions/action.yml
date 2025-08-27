@@ -185,45 +185,126 @@ runs:
         grep -A12 "get_ksu_version_full" kernel/Makefile || true
         echo "::endgroup::"
 
-    - name: Apply SUSFS Patch
+    - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
-        set -e
-        MODEL="${CONFIG}"
-        KROOT="$GITHUB_WORKSPACE/$MODEL/kernel_platform"
-        SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
-        cd "$KROOT/common"
-        ANDROID="$ANDROID_VER"
-        KV="$KERNEL_VER"
-        candidates=(
-          "50_add_susfs_in_gki-${ANDROID}-${KV}.patch"
-          "50_add_susfs_in_${ANDROID}-${KV}.patch"
-          "50_add_susfs_in_gki-${ANDROID}.patch"
-          "50_add_susfs_in_gki-${KV}.patch"
-          "50_add_susfs_in_gki.patch"
-        )
-        FOUND=""
-        for f in "${candidates[@]}"; do
-          if [ -f "$SUSFS_DIR/kernel_patches/$f" ]; then
-            FOUND="$f"; break
-          fi
-        done
-        if [ -z "$FOUND" ]; then
-          echo "ERROR: No suitable SUSFS patch found. Listing:"
-          ls -1 "$SUSFS_DIR/kernel_patches"
+        set -euo pipefail
+      
+        echo "== Clone required repositories =="
+        cd kernel_workspace
+        SUSFS_BRANCH="gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        if [ ! -d susfs4ksu ]; then
+          git clone --depth=1 -b "$SUSFS_BRANCH" https://gitlab.com/simonpunk/susfs4ksu.git
+        fi
+        if [ ! -d SukiSU_patch ]; then
+          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+        fi
+      
+        cd kernel_platform/common
+        PATCH_FILE="50_add_susfs_in_${SUSFS_BRANCH}.patch"
+        PATCH_PATH="../susfs4ksu/kernel_patches/${PATCH_FILE}"
+      
+        echo "== Validate patch file exists =="
+        if [ ! -f "$PATCH_PATH" ]; then
+          echo "ERROR: Patch file $PATCH_FILE not found."
+          ls -1 ../susfs4ksu/kernel_patches
           exit 1
         fi
-        echo "Using SUSFS patch: $FOUND"
-        cp "$SUSFS_DIR/kernel_patches/$FOUND" .
-        cp "$SUSFS_DIR/kernel_patches/fs/"* ./fs/ 2>/dev/null || true
-        cp "$SUSFS_DIR/kernel_patches/include/linux/"* ./include/linux/ 2>/dev/null || true
-        patch -p1 --forward --fuzz=3 < "$FOUND" || true
-        if grep -q '#define SUSFS_VERSION' ./include/linux/susfs.h 2>/dev/null; then
-          SUSVER=$(grep '#define SUSFS_VERSION' ./include/linux/susfs.h | awk -F'"' '{print $2}')
-        else
-          SUSVER="unknown"
+        echo "Using patch: $PATCH_FILE"
+      
+        echo "== Detect Trusty presence (6.6 only) =="
+        TRUSTY_EXISTS=false
+        if [ "${{ env.KERNEL_VERSION }}" = "6.6" ]; then
+          XML="${GITHUB_WORKSPACE}/.repo/manifests_fallback/${{ github.event.inputs.FILE }}.xml"
+          if [ -f "$XML" ] && grep -q 'common-modules/trusty' "$XML"; then
+            TRUSTY_EXISTS=true
+          fi
         fi
-        echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+        echo "TRUSTY_EXISTS=${TRUSTY_EXISTS}"
+      
+        echo "== Dry-run apply SUSFS patch =="
+        if ! patch -p1 --forward --dry-run < "$PATCH_PATH"; then
+          echo "ERROR: Patch dry-run failed; version mismatch."
+          exit 1
+        fi
+      
+        echo "== Applying SUSFS patch =="
+        patch -p1 --forward < "$PATCH_PATH"
+      
+        echo "== Copy supplemental SUSFS files recursively =="
+        cp -a ../susfs4ksu/kernel_patches/fs/. ./fs/
+        cp -a ../susfs4ksu/kernel_patches/include/linux/. ./include/linux/
+        for EXTRA in security kernel; do
+          if [ -d "../susfs4ksu/kernel_patches/${EXTRA}" ]; then
+            cp -a "../susfs4ksu/kernel_patches/${EXTRA}/." "./${EXTRA}/"
+          fi
+        done
+      
+        echo "== Remove missing trace/hooks/fs.h include if necessary =="
+        if [ "${{ env.KERNEL_VERSION }}" = "6.6" ] && [ "${TRUSTY_EXISTS}" = "false" ]; then
+          if ! [ -f include/trace/hooks/fs.h ]; then
+            sed -i '/#include <trace\/hooks\/fs.h>/d' fs/namespace.c 2>/dev/null || true
+          fi
+        fi
+      
+        echo "== Check for patch rejects (.rej) =="
+        if find . -name '*.rej' | grep -q .; then
+          echo "ERROR: Found patch reject files:"
+          find . -name '*.rej'
+          exit 1
+        fi
+      
+        echo "== Verify required SUSFS symbols exist =="
+        REQUIRED_SYMS=(
+          susfs_mnt_id_ida
+          DEFAULT_SUS_MNT_ID
+          DEFAULT_SUS_MNT_GROUP_ID
+          susfs_is_current_ksu_domain
+          susfs_is_current_zygote_domain
+        )
+        MISSING=0
+        for S in "${REQUIRED_SYMS[@]}"; do
+          if ! grep -R "$S" -n . >/dev/null 2>&1; then
+            echo "Missing symbol: $S"
+            MISSING=1
+          fi
+        done
+        if [ $MISSING -ne 0 ]; then
+          echo "ERROR: One or more SUSFS symbols missing. Aborting."
+          exit 1
+        fi
+      
+        echo "== Optional CL_COPY_MNT_NS compatibility =="
+        if grep -R 'CL_COPY_MNT_NS' ../susfs4ksu/kernel_patches | grep -q .; then
+          if ! grep -R 'CL_COPY_MNT_NS' -n include linux fs >/dev/null 2>&1; then
+            cat > include/linux/susfs_compat.h <<'EOF'
+      #ifndef _LINUX_SUSFS_COMPAT_H
+      #define _LINUX_SUSFS_COMPAT_H
+      #ifndef CL_COPY_MNT_NS
+      #define CL_COPY_MNT_NS 0
+      #endif
+      #endif
+      EOF
+            if ! grep -q 'susfs_compat.h' include/linux/susfs.h 2>/dev/null; then
+              echo '#include <linux/susfs_compat.h>' >> include/linux/susfs.h
+            fi
+          fi
+        fi
+      
+        echo "== Legacy 5.15 fix (conditional) =="
+        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
+        if [ "$GKI_V" = "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
+          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o fix_5.15.legacy.patch \
+            https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+          patch -p1 < fix_5.15.legacy.patch
+        fi
+      
+        echo "== Show a couple of symbol locations =="
+        grep -R "susfs_mnt_id_ida" -n | head -n3 || true
+        grep -R "susfs_is_current_ksu_domain" -n | head -n3 || true
+      
+        echo "== SUSFS patch application complete ==""
 
     - name: Apply Extra Patches (Hide Stuff + Hooks)
       shell: bash
