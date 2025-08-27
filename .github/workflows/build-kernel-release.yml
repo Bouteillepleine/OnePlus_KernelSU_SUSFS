@@ -1,4 +1,4 @@
-name: build-kernel-release.yml
+name: build-kernel-release
 
 on:
   workflow_dispatch:
