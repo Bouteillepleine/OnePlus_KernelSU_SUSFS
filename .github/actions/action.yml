@@ -1,44 +1,35 @@
 name: Build
-
 permissions:
   contents: write
   actions: write
 
 inputs:
   model:
-    description: 'Device model'
     required: true
     type: string
   soc:
-    description: 'System on Chip'
     required: true
     type: string
   branch:
-    description: 'Kernel branch'
     required: true
     type: string
   manifest:
-    description: 'Manifest file or URL'
     required: true
     type: string
   android_version:
-    description: 'Android version'
     required: true
     type: string
   kernel_version:
-    description: 'Kernel version'
     required: true
     type: string
   ksun_branch:
-    description: 'KSU branch'
     required: true
     type: string
-    default: 'stable'
+    default: stable
   susfs_branch:
-    description: 'SusFS branch'
     required: true
     type: string
-    default: ''
+    default: ""
   KSU_META:
     description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡)'
     required: false
