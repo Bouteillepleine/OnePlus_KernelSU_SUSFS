@@ -392,80 +392,80 @@ runs:
         echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
         echo "CLANG_BIN_PATH=$CLANG_BIN_PATH" >> $GITHUB_ENV
     
-     - name: Build Kernel
-       shell: bash
-       run: |
-          set -euo pipefail
-          KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
-          COMMON_DIR="$KERNEL_PATH/common"
-          OUT_DIR="$COMMON_DIR/out"
-          cd "$COMMON_DIR"
+    - name: Build Kernel
+      shell: bash
+      run: |
+         set -euo pipefail
+         KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
+         COMMON_DIR="$KERNEL_PATH/common"
+         OUT_DIR="$COMMON_DIR/out"
+         cd "$COMMON_DIR"
       
-          echo "=== Toolchain Detection ==="
-          if [[ -n "${CLANG_BIN_PATH:-}" && -x "${CLANG_BIN_PATH}/clang" ]]; then
-            export PATH="${CLANG_BIN_PATH}:$PATH"
-            echo "Using prebuilt clang: $(command -v clang)"
-          else
-            if command -v clang >/dev/null 2>&1; then
-              echo "Using system clang: $(command -v clang)"
-            else
-              echo "ERROR: clang not found"; exit 1
-            fi
-          fi
-          clang --version || true
-      
-          JOBS=$(nproc)
-          export LLVM=1 ARCH=arm64 SUBARCH=arm64
-          export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
-          export HOSTCC=clang HOSTCXX=clang++
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CROSS_COMPILE_COMPAT=arm-linux-androidkernel-
-          export KCFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
-          export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
-      
-          mkdir -p "$OUT_DIR"
-      
-          echo "=== Generate base defconfig ==="
-          make -j"$JOBS" O="$OUT_DIR" gki_defconfig
-      
-          echo "=== Sync (olddefconfig) ==="
-          make O="$OUT_DIR" olddefconfig
-      
-          echo "=== Apply custom LOCALVERSION (single source) ==="
-          scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
-          scripts/config --file "$OUT_DIR/.config" -d LOCALVERSION_AUTO || true
-          : > .scmversion   # suppress git hash / -dirty
-          make O="$OUT_DIR" olddefconfig
-          echo "Effective CONFIG_LOCALVERSION: $(grep '^CONFIG_LOCALVERSION=' $OUT_DIR/.config || true)"
-      
-          echo "=== Set build-day timestamp ==="
-          # Reproducible within the same UTC day (stable for all builds that day).
-          BUILD_DAY_UTC=$(date -u +%Y-%m-%d)
-          export SOURCE_DATE_EPOCH=$(date -u -d "${BUILD_DAY_UTC} 00:00:00" +%s)
-          export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d 00:00:00 %Z %Y')"
-          export KBUILD_BUILD_USER=builder
-          export KBUILD_BUILD_HOST=github
-          echo "BUILD_DAY_UTC=$BUILD_DAY_UTC"
-          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
-          echo "KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
-      
-          echo "=== Start Kernel Build ==="
-          START_TS=$(date +%s)
-          make -j"$JOBS" O="$OUT_DIR"
-          END_TS=$(date +%s)
-          echo "Build time: $((END_TS-START_TS)) seconds"
-      
-          IMAGE="$OUT_DIR/arch/arm64/boot/Image"
-          if [[ ! -f "$IMAGE" ]]; then
-              echo "ERROR: Kernel Image missing"; exit 1
-          fi
-          file "$IMAGE" || true
-          du -h "$IMAGE" || true
-          sha256sum "$IMAGE" | tee "$OUT_DIR/Image.sha256"
-          cp "$OUT_DIR/.config" "$OUT_DIR/config.final"
-          echo "Kernel build complete."
-          echo "kernelrelease: $(make -s O="$OUT_DIR" kernelrelease)"
-
+         echo "=== Toolchain Detection ==="
+         if [[ -n "${CLANG_BIN_PATH:-}" && -x "${CLANG_BIN_PATH}/clang" ]]; then
+           export PATH="${CLANG_BIN_PATH}:$PATH"
+           echo "Using prebuilt clang: $(command -v clang)"
+         else
+           if command -v clang >/dev/null 2>&1; then
+             echo "Using system clang: $(command -v clang)"
+           else
+             echo "ERROR: clang not found"; exit 1
+           fi
+         fi
+         clang --version || true
+     
+         JOBS=$(nproc)
+         export LLVM=1 ARCH=arm64 SUBARCH=arm64
+         export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+         export HOSTCC=clang HOSTCXX=clang++
+         export CROSS_COMPILE=aarch64-linux-android-
+         export CROSS_COMPILE_COMPAT=arm-linux-androidkernel-
+         export KCFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
+         export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
+     
+         mkdir -p "$OUT_DIR"
+     
+         echo "=== Generate base defconfig ==="
+         make -j"$JOBS" O="$OUT_DIR" gki_defconfig
+     
+         echo "=== Sync (olddefconfig) ==="
+         make O="$OUT_DIR" olddefconfig
+     
+         echo "=== Apply custom LOCALVERSION (single source) ==="
+         scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+         scripts/config --file "$OUT_DIR/.config" -d LOCALVERSION_AUTO || true
+         : > .scmversion   # suppress git hash / -dirty
+         make O="$OUT_DIR" olddefconfig
+         echo "Effective CONFIG_LOCALVERSION: $(grep '^CONFIG_LOCALVERSION=' $OUT_DIR/.config || true)"
+     
+         echo "=== Set build-day timestamp ==="
+         # Reproducible within the same UTC day (stable for all builds that day).
+         BUILD_DAY_UTC=$(date -u +%Y-%m-%d)
+         export SOURCE_DATE_EPOCH=$(date -u -d "${BUILD_DAY_UTC} 00:00:00" +%s)
+         export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d 00:00:00 %Z %Y')"
+         export KBUILD_BUILD_USER=builder
+         export KBUILD_BUILD_HOST=github
+         echo "BUILD_DAY_UTC=$BUILD_DAY_UTC"
+         echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+         echo "KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
+     
+         echo "=== Start Kernel Build ==="
+         START_TS=$(date +%s)
+         make -j"$JOBS" O="$OUT_DIR"
+         END_TS=$(date +%s)
+         echo "Build time: $((END_TS-START_TS)) seconds"
+     
+         IMAGE="$OUT_DIR/arch/arm64/boot/Image"
+         if [[ ! -f "$IMAGE" ]]; then
+             echo "ERROR: Kernel Image missing"; exit 1
+         fi
+         file "$IMAGE" || true
+         du -h "$IMAGE" || true
+         sha256sum "$IMAGE" | tee "$OUT_DIR/Image.sha256"
+         cp "$OUT_DIR/.config" "$OUT_DIR/config.final"
+         echo "Kernel build complete."
+         echo "kernelrelease: $(make -s O="$OUT_DIR" kernelrelease)"
+         
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
