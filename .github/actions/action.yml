@@ -189,7 +189,7 @@ runs:
         fi
         grep -A6 'REPO_OWNER' "$MAKEFILE" || true
     
-      - name: Apply SUSFS + Ultra Patches
+    - name: Apply SUSFS + Ultra Patches
       shell: bash
       run: |
         set -e
