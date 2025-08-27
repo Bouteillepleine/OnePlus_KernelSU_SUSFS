@@ -185,155 +185,88 @@ runs:
         grep -A12 "get_ksu_version_full" kernel/Makefile || true
         echo "::endgroup::"
 
-    - name: Apply Patches SukiSU Ultra
+    - name: Apply SUSFS Patch (Hardened)
       shell: bash
       run: |
         set -euo pipefail
-      
-        echo "== Clone required repositories =="
-        cd kernel_workspace
-        SUSFS_BRANCH="gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
-        if [ ! -d susfs4ksu ]; then
-          git clone --depth=1 -b "$SUSFS_BRANCH" https://gitlab.com/simonpunk/susfs4ksu.git
+        cd "${CONFIG}/kernel_platform"
+        ANDROID="${ANDROID_VER}"
+        KV="${KERNEL_VER}"
+        SUSFS_BRANCH="gki-${ANDROID}-${KV}"
+        # Allow override from earlier step
+        if [[ -n "${SUSFS_BRANCH_OVERRIDE:-}" ]]; then
+          SUSFS_BRANCH="$SUSFS_BRANCH_OVERRIDE"
         fi
-        if [ ! -d SukiSU_patch ]; then
-          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
-        fi
-      
-        cd kernel_platform/common
+        cd common
         PATCH_FILE="50_add_susfs_in_${SUSFS_BRANCH}.patch"
-        PATCH_PATH="../susfs4ksu/kernel_patches/${PATCH_FILE}"
-      
-        echo "== Validate patch file exists =="
+        PATCH_PATH="../../susfs4ksu/kernel_patches/${PATCH_FILE}"
         if [ ! -f "$PATCH_PATH" ]; then
-          echo "ERROR: Patch file $PATCH_FILE not found."
-          ls -1 ../susfs4ksu/kernel_patches
+          echo "ERROR: SUSFS patch $PATCH_FILE not found."
+          ls -1 ../../susfs4ksu/kernel_patches
           exit 1
         fi
-        echo "Using patch: $PATCH_FILE"
-      
-        echo "== Detect Trusty presence (6.6 only) =="
-        TRUSTY_EXISTS=false
-        if [ "${{ env.KERNEL_VERSION }}" = "6.6" ]; then
-          XML="${GITHUB_WORKSPACE}/.repo/manifests_fallback/${{ github.event.inputs.FILE }}.xml"
-          if [ -f "$XML" ] && grep -q 'common-modules/trusty' "$XML"; then
-            TRUSTY_EXISTS=true
-          fi
-        fi
-        echo "TRUSTY_EXISTS=${TRUSTY_EXISTS}"
-      
-        echo "== Dry-run apply SUSFS patch =="
-        if ! patch -p1 --forward --dry-run < "$PATCH_PATH"; then
-          echo "ERROR: Patch dry-run failed; version mismatch."
-          exit 1
-        fi
-      
-        echo "== Applying SUSFS patch =="
+        echo "Dry-run SUSFS patch"
+        patch -p1 --forward --dry-run < "$PATCH_PATH"
+        echo "Apply SUSFS patch"
         patch -p1 --forward < "$PATCH_PATH"
-      
-        echo "== Copy supplemental SUSFS files recursively =="
-        cp -a ../susfs4ksu/kernel_patches/fs/. ./fs/
-        cp -a ../susfs4ksu/kernel_patches/include/linux/. ./include/linux/
+        echo "Copy supplemental SUSFS files"
+        cp -a ../../susfs4ksu/kernel_patches/fs/. ./fs/
+        cp -a ../../susfs4ksu/kernel_patches/include/linux/. ./include/linux/
         for EXTRA in security kernel; do
-          if [ -d "../susfs4ksu/kernel_patches/${EXTRA}" ]; then
-            cp -a "../susfs4ksu/kernel_patches/${EXTRA}/." "./${EXTRA}/"
+          if [ -d "../../susfs4ksu/kernel_patches/${EXTRA}" ]; then
+            cp -a "../../susfs4ksu/kernel_patches/${EXTRA}/." "./${EXTRA}/"
           fi
         done
-      
-        echo "== Remove missing trace/hooks/fs.h include if necessary =="
-        if [ "${{ env.KERNEL_VERSION }}" = "6.6" ] && [ "${TRUSTY_EXISTS}" = "false" ]; then
-          if ! [ -f include/trace/hooks/fs.h ]; then
-            sed -i '/#include <trace\/hooks\/fs.h>/d' fs/namespace.c 2>/dev/null || true
-          fi
+        # Trusty detection (device manifest fallback)
+        TRUSTY_EXISTS=false
+        XML="../../.repo/manifests_fallback/${CONFIG}.xml"
+        if [ "$KV" = "6.6" ] && [ -f "$XML" ] && grep -q 'common-modules/trusty' "$XML"; then
+          TRUSTY_EXISTS=true
         fi
-      
-        echo "== Check for patch rejects (.rej) =="
+        if [ "$KV" = "6.6" ] && [ "$TRUSTY_EXISTS" = "false" ] && ! [ -f include/trace/hooks/fs.h ]; then
+          sed -i '/#include <trace\/hooks\/fs.h>/d' fs/namespace.c 2>/dev/null || true
+        fi
         if find . -name '*.rej' | grep -q .; then
-          echo "ERROR: Found patch reject files:"
-          find . -name '*.rej'
-          exit 1
+            echo "ERROR: Patch rejections present."
+            find . -name '*.rej'
+            exit 1
         fi
-      
-        echo "== Verify required SUSFS symbols exist =="
-        REQUIRED_SYMS=(
-          susfs_mnt_id_ida
-          DEFAULT_SUS_MNT_ID
-          DEFAULT_SUS_MNT_GROUP_ID
-          susfs_is_current_ksu_domain
-          susfs_is_current_zygote_domain
-        )
-        MISSING=0
-        for S in "${REQUIRED_SYMS[@]}"; do
-          if ! grep -R "$S" -n . >/dev/null 2>&1; then
-            echo "Missing symbol: $S"
-            MISSING=1
-          fi
+        REQD=(susfs_mnt_id_ida DEFAULT_SUS_MNT_ID DEFAULT_SUS_MNT_GROUP_ID susfs_is_current_ksu_domain susfs_is_current_zygote_domain)
+        MISS=0
+        for S in "${REQD[@]}"; do
+          grep -R "$S" -n . >/dev/null 2>&1 || { echo "Missing symbol: $S"; MISS=1; }
         done
-        if [ $MISSING -ne 0 ]; then
-          echo "ERROR: One or more SUSFS symbols missing. Aborting."
-          exit 1
-        fi
-      
-        echo "== Optional CL_COPY_MNT_NS compatibility =="
-        if grep -R 'CL_COPY_MNT_NS' ../susfs4ksu/kernel_patches | grep -q .; then
-          if ! grep -R 'CL_COPY_MNT_NS' -n include linux fs >/dev/null 2>&1; then
-            cat > include/linux/susfs_compat.h <<'EOF'
-      #ifndef _LINUX_SUSFS_COMPAT_H
-      #define _LINUX_SUSFS_COMPAT_H
-      #ifndef CL_COPY_MNT_NS
-      #define CL_COPY_MNT_NS 0
-      #endif
-      #endif
-      EOF
-            if ! grep -q 'susfs_compat.h' include/linux/susfs.h 2>/dev/null; then
-              echo '#include <linux/susfs_compat.h>' >> include/linux/susfs.h
-            fi
-          fi
-        fi
-      
-        echo "== Legacy 5.15 fix (conditional) =="
-        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-        if [ "$GKI_V" = "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o fix_5.15.legacy.patch \
-            https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
-          patch -p1 < fix_5.15.legacy.patch
-        fi
-      
-        echo "== Show a couple of symbol locations =="
-        grep -R "susfs_mnt_id_ida" -n | head -n3 || true
-        grep -R "susfs_is_current_ksu_domain" -n | head -n3 || true
-      
-        echo "== SUSFS patch application complete ==""
-
+        [ $MISS -eq 0 ] || { echo "ERROR: Missing SUSFS symbols"; exit 1; }
+        echo "SUSFS patch completed."
+    
     - name: Apply Extra Patches (Hide Stuff + Hooks)
       shell: bash
       run: |
         set -e
         cd "${CONFIG}/kernel_platform/common"
+        # These use --forward so re-running is safe, but they still swallow failures with || true.
+        # Keep that behavior intentionally (can be hardened later).
         if [ -f ../../SukiSU_patch/69_hide_stuff.patch ]; then
           patch -p1 --forward -F 3 < ../../SukiSU_patch/69_hide_stuff.patch || true
         fi
         case "${{ inputs.HOOK }}" in
           manual)
-            if [ -f ../../SukiSU_patch/hooks/syscall_hooks.patch ]; then
-              patch -p1 --forward -F 3 < ../../SukiSU_patch/hooks/syscall_hooks.patch || true
-            fi
+            [ -f ../../SukiSU_patch/hooks/syscall_hooks.patch ] && patch -p1 --forward -F 3 < ../../SukiSU_patch/hooks/syscall_hooks.patch || true
             ;;
           tracepoint)
-            if [ -f ../../SukiSU_patch/hooks/tracepoint_hooks.patch ]; then
-              patch -p1 --forward -F 3 < ../../SukiSU_patch/hooks/tracepoint_hooks.patch || true
-            fi
+            [ -f ../../SukiSU_patch/hooks/tracepoint_hooks.patch ] && patch -p1 --forward -F 3 < ../../SukiSU_patch/hooks/tracepoint_hooks.patch || true
             ;;
           kprobe)
-            echo "kprobe hook chosen: no static patch."
+            echo "kprobe hook chosen: no static patch"
             ;;
         esac
-
-    - name: Add KernelSU-Next and SUSFS Configuration Settings
+    
+    - name: Add KernelSU + SUSFS Config
       shell: bash
       run: |
+        set -e
         cd "$CONFIG/kernel_platform"
+        CFG=./common/arch/arm64/configs/gki_defconfig
         {
           echo "CONFIG_KSU=y"
           echo "CONFIG_KSU_KPROBES_HOOK=n"
@@ -355,46 +288,48 @@ runs:
           echo "CONFIG_KSU_SUSFS_SUS_SU=n"
           echo "CONFIG_TMPFS_XATTR=y"
           echo "CONFIG_TMPFS_POSIX_ACL=y"
-        } >> ./common/arch/arm64/configs/gki_defconfig
-
+        } >> "$CFG"
+    
     - name: Add BBR v1 Support
       shell: bash
       run: |
+        set -e
         cd "$CONFIG/kernel_platform"
+        CFG=./common/arch/arm64/configs/gki_defconfig
         {
           echo "CONFIG_TCP_CONG_ADVANCED=y"
           echo "CONFIG_TCP_CONG_BBR=y"
-          echo "CONFIG_TCP_CONG_BIC=n"
-          echo "CONFIG_TCP_CONG_WESTWOOD=n"
-          echo "CONFIG_TCP_CONG_HTCP=n"
           echo "CONFIG_NET_SCH_FQ=y"
           echo "CONFIG_NET_SCH_FQ_CODEL=y"
           echo "CONFIG_IP_ECN=y"
           echo "CONFIG_TCP_ECN=y"
           echo "CONFIG_IPV6_ECN=y"
           echo "CONFIG_IP_NF_TARGET_ECN=y"
-        } >> ./common/arch/arm64/configs/gki_defconfig
-        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' ./common/arch/arm64/configs/gki_defconfig
-
+        } >> "$CFG"
+        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$CFG"
+    
     - name: Add TTL Target Support
       shell: bash
       run: |
+        set -e
         cd "$CONFIG/kernel_platform"
+        CFG=./common/arch/arm64/configs/gki_defconfig
         {
           echo "CONFIG_IP_NF_TARGET_TTL=y"
           echo "CONFIG_IP6_NF_TARGET_HL=y"
           echo "CONFIG_IP6_NF_MATCH_HL=y"
-        } >> ./common/arch/arm64/configs/gki_defconfig
-
+        } >> "$CFG"
+    
     - name: Add Build-based Configs
       shell: bash
       run: |
+        set -e
         cd "$CONFIG/kernel_platform"
+        CFG=./common/arch/arm64/configs/gki_defconfig
         {
           echo "CONFIG_LTO_CLANG_THIN=y"
           echo "CONFIG_LTO_CLANG=y"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n"
           echo "CONFIG_OPTIMIZE_INLINING=y"
           echo "CONFIG_DEBUG_KERNEL=n"
           echo "CONFIG_DYNAMIC_DEBUG=n"
@@ -405,23 +340,25 @@ runs:
           echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"
           echo "CONFIG_HEADERS_INSTALL=n"
           echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n"
-        } >> ./common/arch/arm64/configs/gki_defconfig
+        } >> "$CFG"
         if [ "${{ inputs.KPM }}" = "true" ]; then
-          echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KPM=y" >> "$CFG"
         fi
         case "${{ inputs.HOOK }}" in
           kprobe)
-            echo "CONFIG_KPROBES=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_KPROBES_HOOK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            {
+              echo "CONFIG_KPROBES=y"
+              echo "CONFIG_KSU_KPROBES_HOOK=y"
+            } >> "$CFG"
             ;;
           manual)
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CFG"
             ;;
           tracepoint)
-            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CFG"
             ;;
         esac
-
+    
     - name: Save Build Metadata
       shell: bash
       run: |
@@ -434,14 +371,14 @@ runs:
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
         echo "${ANDROID_VER}-${VERSION}.${PATCHLEVEL}.${SUBLEVEL}" > "$ART_DIR/${CONFIG}.txt"
         echo "FULL_KERNEL_VERSION=${VERSION}.${PATCHLEVEL}.${SUBLEVEL}" >> "$GITHUB_ENV"
-
+    
     - name: Customize Kernel Branding
       shell: bash
       run: |
         set -e
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-⚡Ultra⚡"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
-
+    
     - name: Detect Clang
       shell: bash
       run: |
@@ -454,7 +391,7 @@ runs:
           CAND=$(ls -d "$KP"/prebuilts-master/clang/host/linux-x86/clang-r*/ | sort | tail -n1 | xargs basename)
           echo "CLANG_BIN_PATH=$KP/prebuilts-master/clang/host/linux-x86/$CAND/bin" >> "$GITHUB_ENV"
         fi
-
+    
     - name: Build Kernel
       shell: bash
       run: |
@@ -468,11 +405,8 @@ runs:
           export PATH="${CLANG_BIN_PATH}:$PATH"
           echo "Using prebuilt clang: $(command -v clang)"
         else
-          if command -v clang >/dev/null 2>&1; then
-            echo "Using system clang: $(command -v clang)"
-          else
-            echo "ERROR: clang not found"; exit 1
-          fi
+          command -v clang >/dev/null 2>&1 || { echo "ERROR: clang not found"; exit 1; }
+          echo "Using system clang: $(command -v clang)"
         fi
         clang --version || true
         JOBS=$(nproc)
@@ -484,43 +418,35 @@ runs:
         export KCFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
         export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
         mkdir -p "$OUT_DIR"
-        echo "=== Generate base defconfig ==="
+        echo "=== Base defconfig ==="
         make -j"$JOBS" O="$OUT_DIR" gki_defconfig
-        echo "=== Sync (olddefconfig) ==="
+        echo "=== olddefconfig sync ==="
         make O="$OUT_DIR" olddefconfig
-        echo "=== Apply custom LOCALVERSION (single source) ==="
+        echo "=== Custom LOCALVERSION ==="
         scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
         scripts/config --file "$OUT_DIR/.config" -d LOCALVERSION_AUTO || true
         : > .scmversion
         make O="$OUT_DIR" olddefconfig
-        echo "Effective CONFIG_LOCALVERSION: $(grep '^CONFIG_LOCALVERSION=' $OUT_DIR/.config || true)"
-        echo "=== Set build-day timestamp ==="
+        echo "Effective LOCALVERSION: $(grep '^CONFIG_LOCALVERSION=' $OUT_DIR/.config || true)"
         BUILD_DAY_UTC=$(date -u +%Y-%m-%d)
-        export SOURCE_DATE_EPOCH=$(date -u -d "${BUILD_DAY_UTC} 00:00:00" +%s)
-        export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d 00:00:00 %Z %Y')"
-        export KBUILD_BUILD_USER=builder
-        export KBUILD_BUILD_HOST=github
-        echo "BUILD_DAY_UTC=$BUILD_DAY_UTC"
-        echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
-        echo "KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
-        echo "=== Start Kernel Build ==="
+        export SOURCE_DATE_EPOCH
+        SOURCE_DATE_EPOCH=$(date -u -d "${BUILD_DAY_UTC} 00:00:00" +%s)
+        export KBUILD_BUILD_TIMESTAMP
+        KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d 00:00:00 %Z %Y')
+        export KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=github
+        echo "=== Build start ==="
         START_TS=$(date +%s)
         make -j"$JOBS" O="$OUT_DIR"
         END_TS=$(date +%s)
         echo "Build time: $((END_TS-START_TS)) seconds"
         IMAGE="$OUT_DIR/arch/arm64/boot/Image"
-        if [[ ! -f "$IMAGE" ]]; then
-          echo "ERROR: Kernel Image missing"; exit 1
-        fi
-        file "$IMAGE" || true
-        du -h "$IMAGE" || true
+        [ -f "$IMAGE" ] || { echo "ERROR: Kernel Image missing"; exit 1; }
         sha256sum "$IMAGE" | tee "$OUT_DIR/Image.sha256"
         cp "$OUT_DIR/.config" "$OUT_DIR/config.final"
-        echo "Kernel build complete."
         echo "kernelrelease: $(make -s O="$OUT_DIR" kernelrelease)"
-
+    
     - name: Optional KPM Patch
-      if: ${{ inputs.KPM == 'true' }}
+      if: inputs.KPM == 'true'
       shell: bash
       run: |
         set -e
@@ -537,7 +463,7 @@ runs:
         else
           echo "KPM patch failed (oImage absent)"; exit 1
         fi
-
+    
     - name: Create Kernel ZIP
       shell: bash
       run: |
@@ -556,10 +482,9 @@ runs:
         zip -rq "$ART_DIR/$ZIP" .
         (cd "$ART_DIR" && sha256sum "$ZIP" > "$ZIP.sha256")
         echo "ZIP_NAME=$ZIP" >> "$GITHUB_ENV"
-
+    
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ inputs.model }}
-        path: |
-          ${{ env.CONFIG }}/artifacts/*
+        path: ${{ env.CONFIG }}/artifacts/*
