@@ -61,120 +61,120 @@ env:
   TZ: UTC
 
 jobs:
-  build-batch-1:
-    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - model: OP11
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_11_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP11r
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_11r_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP-OPEN
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_open_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP-ACE-2
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_ace2_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP10t
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_10t_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP10pro
-            soc: waipio
-            branch: oneplus/sm8450
-            manifest: oneplus_10_pro_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP-ACE-2-PRO
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_ace2_pro_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP12r
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_12r_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+#  build-batch-1:
+#    name: build-batch-1 (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        include:
+#          - model: OP11
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_11_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#          - model: OP11r
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_11r_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP-OPEN
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_open_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#          - model: OP-ACE-2
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_ace2_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP10t
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_10t_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP10pro
+#            soc: waipio
+#            branch: oneplus/sm8450
+#            manifest: oneplus_10_pro_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP-ACE-2-PRO
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_ace2_pro_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#          - model: OP12r
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_12r_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout Code
+#        uses: actions/checkout@v4
 
-      - name: Setup ccache
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y ccache
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-          mkdir -p "$HOME/.ccache"
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
-          ccache -M 7G || true
+#      - name: Setup ccache
+#        run: |
+#          set -euo pipefail
+#          sudo apt-get update -qq
+#          sudo apt-get install -y ccache
+#          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+#          mkdir -p "$HOME/.ccache"
+#          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
+#          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+#          ccache -M 7G || true
 
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-
-            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-
-            ccache-${{ runner.os }}-${{ matrix.branch }}-
-            ccache-${{ runner.os }}-
+#      - name: Cache ccache
+#        uses: actions/cache@v4
+#        with:
+#          path: ~/.ccache
+#          key: ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}
+#          restore-keys: |
+#            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-
+#            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-
+#            ccache-${{ runner.os }}-${{ matrix.branch }}-
+#            ccache-${{ runner.os }}-
 
-      - name: Select Appropriate SusFS Branch
-        id: get-susfs-branch
-        run: |
-          set -euo pipefail
-          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          case "$KERNEL_STRING" in
-            "android12-5.10") SUSFS="${{ inputs.android12-5_10_susfs_branch }}" ;;
-            "android13-5.10") SUSFS="${{ inputs.android13-5_10_susfs_branch }}" ;;
-            "android13-5.15") SUSFS="${{ inputs.android13-5_15_susfs_branch }}" ;;
-            "android14-5.15") SUSFS="${{ inputs.android14-5_15_susfs_branch }}" ;;
-            *) echo "Unsupported combo $KERNEL_STRING"; exit 1 ;;
-          esac
-          echo "susfs_branch=$SUSFS" >> $GITHUB_OUTPUT
+#      - name: Select Appropriate SusFS Branch
+#        id: get-susfs-branch
+#        run: |
+#          set -euo pipefail
+#          KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+#          case "$KERNEL_STRING" in
+#            "android12-5.10") SUSFS="${{ inputs.android12-5_10_susfs_branch }}" ;;
+#            "android13-5.10") SUSFS="${{ inputs.android13-5_10_susfs_branch }}" ;;
+#            "android13-5.15") SUSFS="${{ inputs.android13-5_15_susfs_branch }}" ;;
+#            "android14-5.15") SUSFS="${{ inputs.android14-5_15_susfs_branch }}" ;;
+#            *) echo "Unsupported combo $KERNEL_STRING"; exit 1 ;;
+#          esac
+#          echo "susfs_branch=$SUSFS" >> $GITHUB_OUTPUT
 
-      - name: Build Kernel
-        uses: ./.github/actions
-        env:
-          CC: 'ccache clang'
-          CXX: 'ccache clang++'
-        with:
-          model: ${{ matrix.model }}
-          soc: ${{ matrix.soc }}
-          branch: ${{ matrix.branch }}
-          manifest: ${{ matrix.manifest }}
-          android_version: ${{ matrix.android_version }}
-          kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.ksun_branch }}
-          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+#      - name: Build Kernel
+#        uses: ./.github/actions
+#        env:
+#          CC: 'ccache clang'
+#          CXX: 'ccache clang++'
+#        with:
+#          model: ${{ matrix.model }}
+#          soc: ${{ matrix.soc }}
+#          branch: ${{ matrix.branch }}
+#          manifest: ${{ matrix.manifest }}
+#          android_version: ${{ matrix.android_version }}
+#          kernel_version: ${{ matrix.kernel_version }}
+#          ksun_branch: ${{ inputs.ksun_branch }}
+#          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
 
-      - name: ccache Stats
-        if: always()
-        run: |
-          command -v ccache && ccache -s || true
+#      - name: ccache Stats
+#        if: always()
+#        run: |
+#          command -v ccache && ccache -s || true
 
   build-batch-2:
     # needs: build-batch-1
@@ -241,18 +241,17 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      # (Optional) Cache previously synced sources (uncomment if your composite uses model/ directory and you trust re-use)
-      # - name: Cache repo sources
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ${{ matrix.model }}/.repo
-      #       ${{ matrix.model }}/kernel_platform
-      #     key: repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-${{ matrix.manifest }}
-      #     restore-keys: |
-      #       repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-
-      #       repo-${{ runner.os }}-${{ matrix.model }}-
+       
+      - name: Cache repo sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ matrix.model }}/.repo
+            ${{ matrix.model }}/kernel_platform
+          key: repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-${{ matrix.manifest }}
+          restore-keys: |
+            repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-
+            repo-${{ runner.os }}-${{ matrix.model }}-
 
       - name: Compute manifest hash
         id: manifest-hash
