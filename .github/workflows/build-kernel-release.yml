@@ -239,19 +239,19 @@ jobs:
           #   kernel_version: '6.6'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+#      - name: Checkout Code
+#        uses: actions/checkout@v4
        
-      - name: Cache repo sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ matrix.model }}/.repo
-            ${{ matrix.model }}/kernel_platform
-          key: repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-${{ matrix.manifest }}
-          restore-keys: |
-            repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-
-            repo-${{ runner.os }}-${{ matrix.model }}-
+#      - name: Cache repo sources
+#        uses: actions/cache@v4
+#        with:
+#          path: |
+#            ${{ matrix.model }}/.repo
+#            ${{ matrix.model }}/kernel_platform
+#          key: repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-${{ matrix.manifest }}
+#          restore-keys: |
+#            repo-${{ runner.os }}-${{ matrix.model }}-${{ matrix.branch }}-
+#            repo-${{ runner.os }}-${{ matrix.model }}-
 
       - name: Compute manifest hash
         id: manifest-hash
@@ -264,28 +264,28 @@ jobs:
             echo "manifest_hash=none" >> $GITHUB_OUTPUT
           fi
 
-      - name: Setup ccache
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y ccache
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-          mkdir -p "$HOME/.ccache"
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+  #    - name: Setup ccache
+  #      run: |
+  #        set -euo pipefail
+  #        sudo apt-get update -qq
+  #        sudo apt-get install -y ccache
+  #        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+  #        mkdir -p "$HOME/.ccache"
+  #        echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
+  #        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
           # Adjust size if you build many variants
-          ccache -M 7G || true
+  #        ccache -M 7G || true
 
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-${{ steps.manifest-hash.outputs.manifest_hash }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-
-            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-
-            ccache-${{ runner.os }}-${{ matrix.branch }}-
-            ccache-${{ runner.os }}-
+#      - name: Cache ccache
+#        uses: actions/cache@v4
+#        with:
+#          path: ~/.ccache
+#          key: ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-${{ steps.manifest-hash.outputs.manifest_hash }}
+#          restore-keys: |
+#            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-
+#            ccache-${{ runner.os }}-${{ matrix.branch }}-${{ matrix.android_version }}-
+#            ccache-${{ runner.os }}-${{ matrix.branch }}-
+#            ccache-${{ runner.os }}-
 
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
@@ -321,10 +321,10 @@ jobs:
           ksun_branch: ${{ inputs.ksun_branch }}
           susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
 
-      - name: ccache Stats
-        if: always()
-        run: |
-          command -v ccache && ccache -s || true
+#      - name: ccache Stats
+#        if: always()
+#        run: |
+#          command -v ccache && ccache -s || true
 
       # (Optional) Collect / Upload artifacts if composite does not already do this
       # - name: Upload Artifacts
