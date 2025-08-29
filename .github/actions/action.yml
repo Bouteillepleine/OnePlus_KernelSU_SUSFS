@@ -345,120 +345,105 @@ runs:
     - name: Detect Clang
       shell: bash
       run: |
-        set -e
+        set -euo pipefail
         KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        echo "Searching for Clang in $KP..."
         CLANG_FOUND=false
         for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
-          if [ -d "$base/clang/host/linux-x86" ]; then
-            cand=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 | xargs basename)
-            if [ -n "$cand" ]; then
-              CLANG_PATH="$base/clang/host/linux-x86/$cand/bin"
-              if [ -x "$CLANG_PATH/clang" ]; then
-                CLANG_VERSION=$("$CLANG_PATH/clang" --version | head -n1)
-                echo "Found Clang: $CLANG_PATH/clang"
-                echo "CLANG_BIN_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
-                echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
-                CLANG_FOUND=true
-                break
-              fi
-            fi
+          [ -d "$base/clang/host/linux-x86" ] || continue
+          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 || true)
+          if [ -n "$latest" ] && [ -x "$latest/bin/clang" ]; then
+            CLANG_BIN="$latest/bin"
+            CLANG_FOUND=true
           fi
         done
-        if [ "$CLANG_FOUND" = false ]; then
-          echo "Error: Clang not found in $KP/prebuilts or $KP/prebuilts-master"
-          exit 1
+        if ! $CLANG_FOUND && command -v clang >/dev/null 2>&1; then
+          CLANG_BIN="$(dirname "$(command -v clang)")"
+          CLANG_FOUND=true
+          echo "Using system clang."
         fi
-
+        $CLANG_FOUND || { echo "No clang toolchain found"; exit 1; }
+        echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
+        CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
+        echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
+        echo "Detected Clang: $CLANG_VERSION"
+    
     - name: Build Kernel
       shell: bash
       run: |
         set -euo pipefail
-
-        CONFIG="${CONFIG:?ENV not set}"
-        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        COM="$KP/common"
-        OUT="$COM/out"
-
-        if [ -z "${CLANG_BIN_PATH:-}" ] || [ ! -x "${CLANG_BIN_PATH}/clang" ]; then
-          echo "ERROR: CLANG_BIN_PATH not set or clang not executable"
-          exit 1
-        fi
-        export PATH="$CLANG_BIN_PATH:$PATH"
-        echo "Using toolchain: ${CLANG_VERSION:-unknown}"
-
-        mkdir -p "$OUT"
-        cd "$COM"
-
-        export ARCH=arm64 SUBARCH=arm64 LLVM=1
-        export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++
-        export CROSS_COMPILE=aarch64-linux-android-
-        export CROSS_COMPILE_COMPAT=arm-linux-androidkernel-
-        export KCFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
-        export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
-
-        echo "==> Generating base defconfig..."
-        make -j"$(nproc)" O="$OUT" gki_defconfig
-        make O="$OUT" olddefconfig
-
-        if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
-          LV="$CUSTOM_LOCALVERSION"
+        # Define kernel path and common directory
+        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        COMMON="$KERNEL_PATH/common"
+        cd "$COMMON"        
+        # Suppress VCS-derived version suffix
+        : > "$COMMON/.scmversion"        
+        # Clang setup
+        if [ -n "${{ env.CLANG_BIN_PATH }}" ] && [ -x "${{ env.CLANG_BIN_PATH }}/clang" ]; then
+            export PATH="${{ env.CLANG_BIN_PATH }}:$PATH"
+        elif command -v clang >/dev/null 2>&1; then
+            : # Clang found, proceed
         else
-          LV="-${ANDROID_VER:-unknown}-OP-Ultra"
+            echo "Error: No clang available"
+            exit 1
         fi
-        echo "Applying LOCALVERSION: $LV"
-        ./scripts/config --file "$OUT/.config" --set-str LOCALVERSION "$LV"
-        ./scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
-
+        CLANG_VERSION="$(clang --version | head -n1 || true)"        
+        # Core build variables
+        export LLVM=1 LLVM_IAS=1
+        export ARCH=arm64 SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
+        export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++        
+        # Rust setup
+        RUSTC_DIR="$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin"
+        MAKE_ARGS="O=out"
+        if [ -x "$RUSTC_DIR/rustc" ]; then
+            MAKE_ARGS+=" RUSTC=$RUSTC_DIR/rustc"
+        fi        
+        # Create output directory
+        OUT=out
+        mkdir -p "$OUT"        
+        # Initial kernel configuration
+        make $MAKE_ARGS gki_defconfig        
+        # Apply custom local version if specified
+        if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
+            scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+            scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
+        fi        
+        # Disable KUnit/test configs for specific conditions
         ALWAYS_DISABLE_KUNIT=${ALWAYS_DISABLE_KUNIT:-false}
         if { [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ]; } || [ "$ALWAYS_DISABLE_KUNIT" = "true" ]; then
-          echo "Disabling KUnit / test configs..."
-          disable_syms=(
-            REGMAP_KUNIT
-            INPUT_KUNIT_TEST
-            SND_SOC_TOPOLOGY_KUNIT_TEST
-            SND_SOC_UTILS_KUNIT_TEST
-            HID_KUNIT_TEST
-            RTC_LIB_KUNIT_TEST
-            CLK_KUNIT_TEST
-            CLK_GATE_KUNIT_TEST
-            IIO_FORMAT_KUNIT_TEST
-            EXT4_KUNIT_TESTS
-            FAT_KUNIT_TEST
-          )
-          for sym in "${disable_syms[@]}"; do
-            ./scripts/config --file "$OUT/.config" -d "$sym" || true
-          done
+            echo "Disabling KUnit / test configs..."
+            disable_syms=(
+                REGMAP_KUNIT
+                INPUT_KUNIT_TEST
+                SND_SOC_TOPOLOGY_KUNIT_TEST
+                SND_SOC_UTILS_KUNIT_TEST
+                HID_KUNIT_TEST
+                RTC_LIB_KUNIT_TEST
+                CLK_KUNIT_TEST
+                CLK_GATE_KUNIT_TEST
+                IIO_FORMAT_KUNIT_TEST
+                EXT4_KUNIT_TESTS
+                FAT_KUNIT_TEST
+            )
+            for sym in "${disable_syms[@]}"; do
+                scripts/config --file "$OUT/.config" -d "$sym" || true
+            done
+        fi        
+        # Recompute defaults after all config edits
+        make $MAKE_ARGS olddefconfig        
+        # Set compiler flags
+        export KCFLAGS="-Wno-error -pipe -O2 -fno-stack-protector"
+        export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"        
+        # Build kernel
+        make -j"$(nproc --all)" $MAKE_ARGS        
+        # Verify kernel image
+        IMG="$OUT/arch/arm64/boot/Image"
+        if [ ! -f "$IMG" ]; then
+            echo "Kernel Image missing"
+            exit 1
         fi
-
-        make O="$OUT" olddefconfig
-        : > .scmversion
-
-        MEM_MB=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')
-        CORES=$(nproc)
-        MAX_MEM_JOBS=$(( MEM_MB / 2000 ))
-        [ $MAX_MEM_JOBS -lt 1 ] && MAX_MEM_JOBS=1
-        TARGET_JOBS=$(( CORES - 1 ))
-        [ $TARGET_JOBS -lt 1 ] && TARGET_JOBS=1
-        if [ $MAX_MEM_JOBS -lt $TARGET_JOBS ]; then
-          JOBS=$MAX_MEM_JOBS
-        else
-          JOBS=$TARGET_JOBS
-        fi
-        echo "Build resources: Mem=${MEM_MB}MB, Cores=$CORES, Using -j$JOBS"
-
-        echo "==> Building kernel..."
-        make -j"$JOBS" O="$OUT"
-
-        IMAGE="$OUT/arch/arm64/boot/Image"
-        if [ ! -f "$IMAGE" ]; then
-          echo "ERROR: Kernel Image not produced"
-          exit 1
-        fi
-        sha256sum "$IMAGE" | tee "$OUT/Image.sha256"
-
-        cp "$IMAGE" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-        echo "Kernel build complete."
+        sha256sum "$IMG" | tee "$OUT/Image.sha256" 
 
     - name: Create Kernel ZIP
       id: create_zip
