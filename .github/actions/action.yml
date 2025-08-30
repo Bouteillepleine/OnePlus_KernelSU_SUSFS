@@ -188,99 +188,75 @@ runs:
         KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 700) + 10700)
         echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
 
-    - name: Apply SUSFS + SukiSU Patches
+    - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
-        set -euo pipefail
-        cd "${CONFIG}"
-        # Determine SUSFS branch
-        if [[ -n "${{ inputs.susfs_branch }}" ]]; then
-          SUSFS_BRANCH="${{ inputs.susfs_branch }}"
-        else
-          SUSFS_BRANCH="gki-${KANDROID_VERSION}-${KERNEL_VERSION}"
-        fi
-        echo "Cloning susfs4ksu branch: $SUSFS_BRANCH"
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-        echo "Cloning SukiSU_patch"
+        cd "$CONFIG"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
         git clone https://github.com/ShirkNeko/SukiSU_patch.git
         cd kernel_platform
-        # Copy supplemental files (only if present)
-        if [[ -d ../susfs4ksu/kernel_patches/fs ]]; then
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
-        fi
-        if [[ -d ../susfs4ksu/kernel_patches/include/linux ]]; then
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
-        fi
-        cd common
-        PATCH_FILE="50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch"
-        if [[ -f "../susfs4ksu/kernel_patches/${PATCH_FILE}" ]]; then
-          cp "../susfs4ksu/kernel_patches/${PATCH_FILE}" .
-        else
-          echo "SUSFS patch ${PATCH_FILE} not found"; exit 1
-        fi
-        SUSVER=$(grep -m1 -E 'SUSFS *v|susfs *v' "${PATCH_FILE}" | sed -n 's/.*SUSFS *v\?\([0-9][^ ]*\).*/\1/p' | head -n1)
-        [[ -z "$SUSVER" ]] && SUSVER="unknown"
-        echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | awk '{print $3}')
-        if [[ "${KANDROID_VERSION}-${KERNEL_VERSION}" == "android13-5.15" && "${SUBLEVEL}" -lt 123 ]]; then
-          curl -Lo fix_5.15.legacy.patch https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+        echo "Pulling susfs patches"
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+        cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+              
+        cd ./common
+        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
+      
+        if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
+          echo "Fixing bugs caused by older C library support in kernel versions 5.15.0 to 5.15.123"
+          curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
           patch -p1 < fix_5.15.legacy.patch
+          echo "fix_5.15_patch completed"
         fi
-        if [[ "${KERNEL_VERSION}" == "6.6" ]]; then
-          TKERNEL_VERSION="${TKERNEL_VERSION}"
-          MANIFEST_PATH="${MANIFEST_PATH}"
-          TRUSTY_EXISTS=false
-          if [[ -f "$MANIFEST_PATH" ]] && grep -q 'common-modules/trusty' "$MANIFEST_PATH"; then
-            TRUSTY_EXISTS=true
+        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+        TKERNEL_VERSION="${{ env.TKERNEL_VERSION }}"
+        file="${{ github.event.inputs.FILE }}"
+        TRUSTY_EXISTS="false"
+        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${file}.xml"; then
+            TRUSTY_EXISTS="true"
           fi
-          if ! $TRUSTY_EXISTS; then
-            if [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/' "${PATCH_FILE}" || true
-              sed -i '/#include <trace\/hooks\/fs.h>/d' "${PATCH_FILE}" || true
-            fi
-          fi
-        fi
-        echo "Applying SUSFS patch..."
-        if patch -p1 --dry-run < "${PATCH_FILE}"; then
-          patch -p1 < "${PATCH_FILE}"
-          echo "SUSFS patch applied."
-        else
-          echo "WARNING: SUSFS patch dry-run failed; continuing without hard failure."
-        fi
+          echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
 
-    - name: Apply Hide Stuff Patch
+          if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
+            echo "6.6Trusty OS susfs"
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+          fi
+        fi
+        echo "susfs"
+        patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+        echo "susfs_patch完成"
+
+    - name: Apply Hide Stuff Patches
       shell: bash
       run: |
-        set -euo pipefail
-        cd "${CONFIG}/kernel_platform/common"
-        cp ../../SukiSU_patch/69_hide_stuff.patch .
-        if patch -p1 -F 3 --dry-run < 69_hide_stuff.patch; then
-          patch -p1 -F 3 < 69_hide_stuff.patch
-          echo "Hide Stuff patch applied."
-        else
-          echo "Hide Stuff patch failed (dry-run)."
-          exit 1
-        fi
-
-    - name: Apply HOOK Patch
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform/common"
+        cp ../../SukiSU_patch/69_hide_stuff.patch ./
+        echo "Applying hide application patches..."
+        patch -p1 -F 3 < 69_hide_stuff.patch
+        echo "Hide application patch completed"
+      
+    - name: Apply HOOK
       shell: bash
       run: |
-        set -euo pipefail
-        cd "${CONFIG}/kernel_platform/common"
-        case "${{ inputs.HOOK }}" in
-          kprobe)
-            echo "Using kprobe hook (no extra patch needed if integrated)."
-            ;;
-          manual)
-            cp ../../SukiSU_patch/hooks/syscall_hooks.patch .
-            patch -p1 -F 3 < syscall_hooks.patch
-            ;;
-          tracepoint)
-            cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch .
-            patch -p1 -F 3 < tracepoint_hooks.patch
-            ;;
-        esac
-
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG/kernel_platform/common"
+        if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
+          echo "Invoking kprobe hook"
+        elif [ "${{ inputs.HOOK }}" = "manual" ]; then
+          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          echo "Invoking manual hook"
+          patch -p1 -F 3 < syscall_hooks.patch
+        elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
+          cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
+          echo "Invoking tracepoint hook"
+          patch -p1 -F 3 < tracepoint_hooks.patch
+        fi
+        
     - name: Convert HMBIRD_OGKI to HMBIRD_GKI (6.6 only)
       if: ${{ inputs.kernel_version == '6.6' }}
       shell: bash
