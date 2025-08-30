@@ -147,22 +147,24 @@ runs:
     - name: Add SukiSU Ultra
       shell: bash
       run: |
-        set -e
+        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
+        echo "Adding SukiSU Ultra..."
         META="${{ inputs.KSU_META }}"
         BRANCH_NAME="${META%%/*}"
         CUSTOM_TAG="${META#*/}"
-        echo "SukiSU meta: branch=$BRANCH_NAME tag=$CUSTOM_TAG"
+        echo "Branch name: $BRANCH_NAME"
+        echo "Custom version identifier: $CUSTOM_TAG"
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/setup.sh" | bash -s "$BRANCH_NAME"
-        cd KernelSU
+        cd ./KernelSU
         KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
           grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-        MIN_API="3.1.7"
-        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$MIN_API" "$KSU_API_VERSION" | sort -V | head -n1)" != "$MIN_API" ]]; then
-          KSU_API_VERSION="$MIN_API"
+        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+          KSU_API_VERSION="3.1.7"
         fi
-        echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
+        echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
         GIT_HASH=$(git rev-parse --short HEAD)
+        echo "GIT_HASH=$GIT_HASH"
         if [[ -z "$CUSTOM_TAG" || "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then
           VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
         else
@@ -171,72 +173,95 @@ runs:
         sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
         sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
         sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
-        awk -v block="define get_ksu_version_full
+        VERSION_DEFINITIONS=$(cat <<EOF
+        define get_ksu_version_full
         $VERSION_FULL
         endef
         
         KSU_VERSION_API := $KSU_API_VERSION
         KSU_VERSION_FULL := $VERSION_FULL
-        " '
-        /REPO_OWNER :=/ {print; print block; next}
-        {print}
-        ' kernel/Makefile > kernel/Makefile.new && mv kernel/Makefile.new kernel/Makefile
-        # Fallback version calculation
+        EOF
+        )
+        awk -v def="$VERSION_DEFINITIONS" '
+          /REPO_OWNER :=/ {print; print def; inserted=1; next}
+          1
+          END {if (!inserted) print def}
+        ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
         KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
-        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        echo "::group::Final version information and partial debug output in Makefile"
+        grep -A10 "REPO_OWNER" kernel/Makefile
+        grep "KSU_VERSION_FULL" kernel/Makefile
+        echo "::endgroup::"
 
-    - name: Apply SUSFS + Related Patches
+    - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
-        set -e
-        cd "$CONFIG/kernel_platform/common"
-        # Copy SUSFS patch resources
-        cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch" .
-        cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/"* ./fs/
-        cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/"* ./include/linux/
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
-        if [ "${KANDROID_VERSION}-${KERNEL_VERSION}" = "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-          echo "Applying legacy libc compatibility fix for 5.15 < 123"
-          curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+        cd "$CONFIG"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+        git clone https://github.com/ShirkNeko/SukiSU_patch.git
+        cd kernel_platform
+        echo "Pulling susfs patches"
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+        cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+              
+        cd ./common
+        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
+      
+        if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
+          echo "Fixing bugs caused by older C library support in kernel versions 5.15.0 to 5.15.123"
+          curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
           patch -p1 < fix_5.15.legacy.patch
+          echo "fix_5.15_patch completed"
         fi
-        if [[ "$KERNEL_VERSION" = "6.6" ]]; then
-          # Optionally adapt patch if Trusty not present (best-effort heuristic—manifest path may differ)
-          if ! grep -Rqs "common-modules/trusty" "$GITHUB_WORKSPACE/$CONFIG/.repo" 2>/dev/null; then
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch || true
-            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch || true
+        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+        file="${{ github.event.inputs.FILE }}"
+        TRUSTY_EXISTS="false"
+        if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${file}.xml"; then
+            TRUSTY_EXISTS="true"
+          fi
+          echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
+      
+          if [[ "$TRUSTY_EXISTS" == "false" && "$file" != "oneplus_pad_2_pro" && "$file" != "oneplus_pad_3" ]]; then
+            echo "Fixing susfs errors caused by missing Trusty OS in some kernel version 6.6 devices"
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
           fi
         fi
-        echo "Applying SUSFS patch..."
-        patch -p1 < 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch
+        echo "Applying susfs patch"
+        patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+        echo "susfs_patch completed"
 
-    - name: Apply Hide Stuff Patch
+    - name: Apply Hide Stuff Patches
       shell: bash
       run: |
-        set -e
+        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
-        cp "$GITHUB_WORKSPACE/SukiSU_patch/69_hide_stuff.patch" .
+        cp ../../SukiSU_patch/69_hide_stuff.patch ./
+        echo "Applying hide application patches..."
         patch -p1 -F 3 < 69_hide_stuff.patch
-
-    - name: Apply Hook Patch (Selected)
+        echo "Hide application patch completed"
+      
+    - name: Apply HOOK
       shell: bash
       run: |
-        set -e
+        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
-        case "${{ inputs.HOOK }}" in
-          kprobe)
-            echo "Using kprobe hook (no extra patch file needed if integrated)."
-            ;;
-          manual)
-            cp "$GITHUB_WORKSPACE/SukiSU_patch/hooks/syscall_hooks.patch" .
-            patch -p1 -F 3 < syscall_hooks.patch
-            ;;
-          tracepoint)
-            cp "$GITHUB_WORKSPACE/SukiSU_patch/hooks/tracepoint_hooks.patch" .
-            patch -p1 -F 3 < tracepoint_hooks.patch
-            ;;
-        esac
-
+        if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
+          echo "Invoking kprobe hook"
+        elif [ "${{ inputs.HOOK }}" = "manual" ]; then
+          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          echo "Invoking manual hook"
+          patch -p1 -F 3 < syscall_hooks.patch
+        elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
+          cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
+          echo "Invoking tracepoint hook"
+          patch -p1 -F 3 < tracepoint_hooks.patch
+        fi
+        
     - name: Append Kernel Config Options
       shell: bash
       run: |
