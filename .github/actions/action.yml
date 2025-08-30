@@ -73,7 +73,7 @@ runs:
         sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
           git curl python3 libelf-dev libelf1 lld build-essential flex bison libssl-dev \
           libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip dwarves zip \
-          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf bc
 
     - name: Install Repo Tool / Export Base Vars
       shell: bash
@@ -465,7 +465,7 @@ runs:
         export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_COMPAT=arm-linux-gnueabihf-
-        export KCFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
+        export KBUILD_CFLAGS="-O2 -pipe -Wno-error -fno-stack-protector"
         make -j"$(nproc)" O="$OUT" gki_defconfig
         make O="$OUT" olddefconfig
         if [[ -x scripts/config ]]; then
