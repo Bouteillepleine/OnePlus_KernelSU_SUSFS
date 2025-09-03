@@ -222,7 +222,7 @@ runs:
       shell: bash
       run: |
         cd "$CONFIG/kernel_platform/common"
-        wget https://github.com/Bouteillepleine/kernel_patches/rekernel.patch        
+        wget https://github.com/Bouteillepleine/kernel_patches/blob/main/rekernel.patch        
         patch -p1 < rekernel.patch
 
 
