@@ -363,13 +363,30 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+      
+        # Safeguard inputs (defaults if not provided)
+        KPM_VALUE='${{ inputs.KPM }}'
+        HOOK_VALUE='${{ inputs.HOOK }}'
+        KPM_VALUE="${KPM_VALUE:-false}"
+        HOOK_VALUE="${HOOK_VALUE:-manual}"
+      
+        # Validate CONFIG variable
+        if [[ -z "${CONFIG:-}" ]]; then
+          echo "Error: CONFIG variable is not set" >&2
+          exit 1
+        fi
+      
         DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
+        mkdir -p "$(dirname "$DEF")"
+      
         {
           echo "CONFIG_KSU=y"
-          if [[ "${{ inputs.KPM }}" == "true" ]]; then
+      
+          if [[ "$KPM_VALUE" == "true" ]]; then
             echo "CONFIG_KPM=y"
           fi
-          case "${{ inputs.HOOK }}" in
+      
+          case "$HOOK_VALUE" in
             kprobe)
               echo "CONFIG_KSU_SUSFS_SUS_SU=y"
               echo "CONFIG_KPROBES=y"
@@ -383,7 +400,12 @@ runs:
               echo "CONFIG_KSU_SUSFS_SUS_SU=n"
               echo "CONFIG_KSU_TRACEPOINT_HOOK=y"
               ;;
+            *)
+              echo "Unknown HOOK method: $HOOK_VALUE" >&2
+              exit 1
+              ;;
           esac
+      
           cat <<'EOF'
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
@@ -404,6 +426,8 @@ runs:
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
         } >> "$DEF"
+      
+        echo "Successfully updated $DEF with KernelSU/SUSFS configurations"
 
     - name: Add BBR v1 Support
       shell: bash
