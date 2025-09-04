@@ -420,19 +420,19 @@ jobs:
             printf "| %s | %s |\n" "$model" "$ver" >> release_notes.md
           done
           cat >> release_notes.md <<'EOF'
-Features
-[+] KernelSU-Next
-[+] SUSFS v1.5.9
-[+] Wireguard Support
-[+] Maphide LineageOS Detections
-[+] Futile Maphide for jit-zygote-cache Detections
-[+] Magic Mount Support
-[+] Ptrace message leak fix for kernels < 5.16
-[+] Manual Hooks [scope_min_manual_hooks_v1.4]
-[+] CONFIG_TMPFS_XATTR Support [Mountify Support]
-[+] BBR v1 Support
-[+] HMBIRD scx support (select models)
-EOF
+          Features
+          [+] KernelSU-Next
+          [+] SUSFS v1.5.9
+          [+] Wireguard Support
+          [+] Maphide LineageOS Detections
+          [+] Futile Maphide for jit-zygote-cache Detections
+          [+] Magic Mount Support
+          [+] Ptrace message leak fix for kernels < 5.16
+          [+] Manual Hooks [scope_min_manual_hooks_v1.4]
+          [+] CONFIG_TMPFS_XATTR Support [Mountify Support]
+          [+] BBR v1 Support
+          [+] HMBIRD scx support (select models)
+          EOF
           echo "--- Release Notes ---"
           cat release_notes.md
 
