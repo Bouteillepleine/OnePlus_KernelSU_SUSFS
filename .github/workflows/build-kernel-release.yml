@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       make_release:
-        description: 'Create a release?'
+        description: "Create a release?"
         required: true
         type: boolean
         default: false
@@ -28,11 +28,6 @@ on:
           - O2
           - O3
         default: O2
-      # (Re-add SUSFS per-version overrides if needed)
-      # android15-6_6_susfs_branch:
-      #   description: "Override SusFS branch for android15-6.6"
-      #   type: string
-      #   default: "gki-android15-6.6"
 
 concurrency:
   group: build-kernel-${{ github.ref }}
@@ -69,6 +64,7 @@ jobs:
     steps:
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
+        shell: bash
         run: |
           set -euo pipefail
           KERNEL_STRING="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
@@ -80,21 +76,21 @@ jobs:
           echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Build Kernel
         id: build
         uses: ./.github/actions
         with:
-            model: ${{ matrix.model }}
-            soc: ${{ matrix.soc }}
-            branch: ${{ matrix.branch }}
-            manifest: ${{ matrix.manifest }}
-            android_version: ${{ matrix.android_version }}
-            kernel_version: ${{ matrix.kernel_version }}
-            ksun_branch: ${{ inputs.ksun_branch }}
-            susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
-            optimize_level: ${{ inputs.optimize_level }}
+          model: ${{ matrix.model }}
+          soc: ${{ matrix.soc }}
+          branch: ${{ matrix.branch }}
+          manifest: ${{ matrix.manifest }}
+          android_version: ${{ matrix.android_version }}
+          kernel_version: ${{ matrix.kernel_version }}
+          ksun_branch: ${{ inputs.ksun_branch }}
+          susfs_branch: ${{ steps.get-susfs-branch.outputs.susfs_branch }}
+          optimize_level: ${{ inputs.optimize_level }}
 
   trigger-release:
     needs:
@@ -106,7 +102,7 @@ jobs:
       RELEASE_NAME: "*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS *TEST BUILD*"
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -114,26 +110,23 @@ jobs:
           path: ./downloaded-artifacts
 
       - name: Aggregate SHA256SUMS
+        shell: bash
         run: |
           set -euo pipefail
-            find downloaded-artifacts -type f -name "SHA256SUMS.txt" -exec cat {} \; > ALL_SHA256SUMS.txt
-            echo "Combined SHA256SUMS:"
-            cat ALL_SHA256SUMS.txt
+          find downloaded-artifacts -type f -name "SHA256SUMS.txt" -exec cat {} \; > ALL_SHA256SUMS.txt
+          echo "Combined SHA256SUMS:"
+          cat ALL_SHA256SUMS.txt
 
       - name: Create Draft Release
+        shell: bash
         run: |
           set -euo pipefail
           TAG="test-${{ github.run_id }}"
-          NOTES="Automated test build.
-
-Artifacts include KernelSU Next & SUSFS.
-Optimization: ${{ inputs.optimize_level }}
-
-SHA256SUMS:
-$(cat ALL_SHA256SUMS.txt)
-"
+          echo "Creating draft release with tag: $TAG"
+          NOTES=$'Automated test build.\n\nArtifacts include KernelSU Next & SUSFS.\nOptimization: ${{ inputs.optimize_level }}\n\nSHA256SUMS:\n'"$(cat ALL_SHA256SUMS.txt)"
           gh release create "$TAG" \
             --draft \
             --title "${RELEASE_NAME}" \
             --notes "$NOTES" \
             $(find downloaded-artifacts -type f -name "*.zip")
+          echo "Release created (draft)."
