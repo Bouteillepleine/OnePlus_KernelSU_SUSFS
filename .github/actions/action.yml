@@ -217,15 +217,7 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
-  
-    - name: Rekernel
-      shell: bash
-      run: |
-        cd "$CONFIG/kernel_platform/common"
-        wget https://github.com/Bouteillepleine/kernel_patches/blob/main/rekernel.patch        
-        patch -p1 < rekernel.patch
-
-
+      
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -292,7 +284,6 @@ runs:
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n"
           echo "CONFIG_OPTIMIZE_INLINING=y"
-          echo "CONFIG_REKERNEL=y"
           echo "CONFIG_DEBUG_KERNEL=n"
           echo "CONFIG_DYNAMIC_DEBUG=n"
           echo "CONFIG_DEBUG_INFO=n"
