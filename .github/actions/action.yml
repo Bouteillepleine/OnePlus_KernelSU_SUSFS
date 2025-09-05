@@ -95,18 +95,6 @@ runs:
         echo "KANDROID_VERSION=${{ inputs.android_version }}" >> "$GITHUB_ENV"
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> "$GITHUB_ENV"
 
-    - name: Disk / Cleanup (optional)
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Pre-clean"
-        df -h
-        for p in /usr/share/dotnet /usr/local/lib/android; do
-          if [ -d "$p" ]; then sudo rm -rf "$p"; fi
-        done
-        df -h
-        echo "::endgroup::"
-
     - name: Install Minimal Dependencies
       shell: bash
       run: |
