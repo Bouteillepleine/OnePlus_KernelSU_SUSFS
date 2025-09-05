@@ -2,7 +2,7 @@ name: Build
 permissions:
   contents: write
   actions: write
-  
+
 inputs:
   model:
     required: true
@@ -57,7 +57,7 @@ runs:
         av='${{ inputs.android_version }}'
         kv='${{ inputs.kernel_version }}'
         model='${{ inputs.model }}'
-        if ! [[ "$kv" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        if ! [[ "$kv" =~ ^[0-9]+.[0-9]+$ ]]; then
           echo "kernel_version must look like Major.Minor (e.g. 6.6) got: $kv"
           exit 1
         fi
@@ -91,39 +91,9 @@ runs:
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
           git curl ca-certificates build-essential clang lld flex bison \
           libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
-          libxml2-utils rsync unzip dwarves ccache file
+          libxml2-utils rsync unzip dwarves file
         sudo apt-get clean
         echo "::endgroup::"
-
-    - name: Prepare ccache directory
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p "$HOME/.ccache"
-        # Configure a reasonable size (adjust if desired)
-        printf 'max_size = 7.0G\n' > "$HOME/.ccache/ccache.conf"
-        echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-
-    - name: Detect clang (for cache key)
-      shell: bash
-      run: |
-        set -euo pipefail
-        if command -v clang >/dev/null 2>&1; then
-          CLANG_TAG=$(clang --version | head -n1 | tr -cs '0-9A-Za-z._-' '_')
-        else
-          CLANG_TAG=unknown
-        fi
-        echo "CLANG_TAG=$CLANG_TAG" >> "$GITHUB_ENV"
-        echo "Using CLANG_TAG=$CLANG_TAG for cache key"
-
-    - name: Setup ccache
-      uses: actions/cache@v4
-      with:
-        path: $HOME/.ccache
-        key: ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ env.CLANG_TAG }}
-        restore-keys: |
-          ccache-${{ inputs.model }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
-          ccache-${{ inputs.model }}-
 
     - name: Install Repo Tool
       shell: bash
@@ -217,6 +187,7 @@ runs:
     - name: Apply SUSFS Patches
       shell: bash
       run: |
+        set -euo pipefail
         cd "$CONFIG/kernel_platform"
         echo "Applying SUSFS patches..."
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
@@ -294,12 +265,14 @@ runs:
     - name: Apply KSUN Hooks
       shell: bash
       run: |
+        set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
 
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
+        set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
@@ -387,7 +360,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
+        CONFIG_DIR="$GITHUB_WORKSPACE/${CONFIG}"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
         cd "$CONFIG_DIR/kernel_platform/common"
@@ -423,7 +396,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
         cd "$KERNEL_PATH/common"
         mkdir -p out
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-⚡Ultra⚡"
@@ -458,7 +431,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
         : > "$COMMON/.scmversion"
@@ -470,13 +443,7 @@ runs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
         export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++
-        # Enable ccache
-        if command -v ccache >/dev/null 2>&1; then
-          export CC="ccache clang"
-          ccache -z || true
-        else
-          export CC="clang"
-        fi
+        export CC="clang"
         OUT=out
         mkdir -p "$OUT"
         make O="$OUT" gki_defconfig
@@ -512,17 +479,13 @@ runs:
           echo "Kernel Image missing"; exit 1
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
-        if command -v ccache >/dev/null 2>&1; then
-          echo "ccache stats after build:"
-          ccache -s || true
-        fi
 
     - name: Collect Build Stats / Validate Image
       id: collect_stats
       shell: bash
       run: |
         set -euo pipefail
-        KERNEL_PATH="$GITHUB_WORKSPACE/${{ env.CONFIG }}/kernel_platform"
+        KERNEL_PATH="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
         IMG="$OUT/arch/arm64/boot/Image"
@@ -549,7 +512,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        CONFIG_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG }}"
+        CONFIG_DIR="$GITHUB_WORKSPACE/${CONFIG}"
         KERNEL_PATH="$CONFIG_DIR/kernel_platform"
         COMMON_OUT="$KERNEL_PATH/common/out"
         IMAGE_PATH="$COMMON_OUT/arch/arm64/boot/Image"
@@ -609,15 +572,4 @@ runs:
       with:
         name: kernel-${{ env.CONFIG }}
         path: |
-          ${{ env.CONFIG }}/artifacts/*
-
-    - name: Debug ccache (always)
-      if: always()
-      shell: bash
-      run: |
-        echo "== ccache debug =="
-        echo "CCACHE_DIR=${CCACHE_DIR:-unset}"
-        ls -al "$HOME/.ccache" || echo "No ccache dir"
-        command -v ccache && ccache -s || echo "ccache not available"
-        du -sh "$HOME/.ccache" 2>/dev/null || true
           ${{ env.CONFIG }}/artifacts/*
