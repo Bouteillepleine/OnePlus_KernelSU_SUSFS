@@ -50,4 +50,9 @@
 		<td align="center"> OnePlus Nord 4 </td>
 		<td align="center"> android14-6.1.75 </td>
 	</tr>
+	<tr> 
+		<td align="center"> Realme GT 2 Pro </td>
+		<td align="center"> OnePlus 10 Pro </td>
+		<td align="center"> android12-5.10.209 </td>
+	</tr>
 </table>
