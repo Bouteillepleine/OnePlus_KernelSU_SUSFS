@@ -26,7 +26,7 @@ inputs:
     type: string
     default: ""
   KSU_META:
-    description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡)'
+    description: 'SukiSU Ultra branch/custom)'
     required: false
     type: string
     default: 'susfs-main/⚡Ultra⚡'
@@ -244,6 +244,18 @@ runs:
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-${KERNEL_VER}-OP-⚡Ultra⚡"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
+    - name: Reset Base gki_defconfig
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${CONFIG}/kernel_platform/common"
+        if git ls-files --error-unmatch arch/arm64/configs/gki_defconfig >/dev/null 2>&1; then
+          git checkout -- arch/arm64/configs/gki_defconfig
+          echo "Restored pristine gki_defconfig"
+        else
+          echo "Warning: gki_defconfig not tracked (unexpected)."
+        fi
+
     - name: Add SukiSU Ultra
       shell: bash
       run: |
@@ -254,7 +266,8 @@ runs:
         CUSTOM_TAG="${META#*/}"
         echo "Branch name: $BRANCH_NAME"
         echo "Custom version tag: $CUSTOM_TAG"
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+        curl -fLSs -o setup.sh "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
+        bash setup.sh "$BRANCH_NAME"
         cd ./KernelSU
         KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
           grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
@@ -362,16 +375,14 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Validate CONFIG environment variable
         if [ -z "$CONFIG" ] || [ ! -d "$CONFIG/kernel_platform" ]; then
-          echo "Error: CONFIG is unset or directory $CONFIG/kernel_platform does not exist"
+          echo "Error: CONFIG invalid"
           exit 1
         fi
         cd "$CONFIG/kernel_platform"
         DEF="common/arch/arm64/configs/gki_defconfig"
-        # Verify config file exists
         if [ ! -f "$DEF" ]; then
-          echo "Error: Config file $DEF not found"
+          echo "Error: $DEF not found"
           exit 1
         fi
         {
@@ -423,7 +434,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        cd "${CONFIG}/kernel_platform"      
+        cd "${CONFIG}/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
@@ -439,9 +450,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        cd "${CONFIG}/kernel_platform"      
+        cd "${CONFIG}/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF       
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
@@ -451,7 +461,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        cd "${CONFIG}/kernel_platform"      
+        cd "${CONFIG}/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_LTO_CLANG_THIN=y
         CONFIG_LTO_CLANG=y
@@ -659,7 +669,7 @@ runs:
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
         echo "Creating flashable zip: $ZIP_NAME"
-        ( zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null )
+        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
         find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
