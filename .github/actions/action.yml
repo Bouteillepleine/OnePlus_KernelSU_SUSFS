@@ -345,14 +345,8 @@ runs:
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n"
           echo "CONFIG_OPTIMIZE_INLINING=y"
           echo "CONFIG_DEBUG_KERNEL=n"
-          echo "CONFIG_DYNAMIC_DEBUG=n"
-          echo "CONFIG_DEBUG_INFO=n"
-          echo "CONFIG_DAMON=n"
-          echo "CONFIG_CRYPTO_SHA1_ARM64_CE=y"
-          echo "CONFIG_VIRTIO_PCI_LEGACY=y"
-          echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"
-          echo "CONFIG_HEADERS_INSTALL=n"
-          echo "CONFIG_PROC_MEM_ALWAYS_FORCE=n"
+          echo "CONFIG_DYNAMIC_DEBUG=n"          
+          echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"          
         } >> ./common/arch/arm64/configs/gki_defconfig
 
     - name: Save Build Metadata
