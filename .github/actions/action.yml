@@ -47,7 +47,15 @@ inputs:
   optimize_level:
     required: false
     type: string
-    default: O2  # Choices: O2 or O3
+    default: O2
+  android_version:
+    required: false
+    type: string
+    default: ""
+  kernel_version:
+    required: false
+    type: string
+    default: ""
 
 outputs:
   kernel_version:
@@ -70,7 +78,8 @@ runs:
         set -euo pipefail
         model='${{ inputs.model }}'
         if [[ -z "$model" ]]; then
-          echo "Empty model not allowed"; exit 1
+          echo "Empty model not allowed"
+          exit 1
         fi
         echo "Input validation OK."
 
@@ -99,7 +108,7 @@ runs:
           chmod +x "$REPO"
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
-    
+
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
@@ -110,7 +119,7 @@ runs:
         echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
-            curl --fail --show-error --location --proto '=https' \
+          curl --fail --show-error --location --proto '=https' \
             "${{ inputs.manifest }}" -o .repo/manifests/temp_manifest.xml
           "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 \
@@ -121,15 +130,15 @@ runs:
             --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         "$REPO" --version
-        # FIX 10: explicit retry loop without boolean misuse
         for attempt in 1 2 3; do
           if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-             -j"$(nproc --all)" --fail-fast; then
+            -j"$(nproc --all)" --fail-fast; then
             echo "repo sync succeeded on attempt $attempt"
             break
           fi
           if [ "$attempt" -eq 3 ]; then
-            echo "repo sync failed after 3 attempts"; exit 1
+            echo "repo sync failed after 3 attempts"
+            exit 1
           fi
           echo "repo sync attempt $attempt failed; retrying..."
           sleep 30
@@ -152,7 +161,8 @@ runs:
           fi
         done
         if [ -z "$BRANCH_LINE" ]; then
-          echo "Error: No BRANCH= found"; exit 1
+          echo "Error: No BRANCH= found"
+          exit 1
         fi
         BRANCH_VALUE="${BRANCH_LINE#*=}"
         ANDROID_VERSION="${BRANCH_VALUE%-*}"
@@ -177,7 +187,7 @@ runs:
         set -euo pipefail
         echo "Cloning AnyKernel3..."
         git clone https://github.com/Bouteillepleine/AnyKernel3.git -b gki-2.0
-    
+
     - name: Initialize and Sync Kernel Source (Second Pass)
       shell: bash
       run: |
@@ -227,7 +237,6 @@ runs:
         echo "TKERNEL_VERSION=$FULL" >> "$GITHUB_ENV"
         echo "Full kernel version: $FULL"
 
-    # Apply branding
     - name: Branding
       shell: bash
       run: |
@@ -235,7 +244,6 @@ runs:
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-${KERNEL_VER}-OP-⚡Ultra⚡"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
-    # Add SukiSU Ultra (includes FIX 8 variable naming)
     - name: Add SukiSU Ultra
       shell: bash
       run: |
@@ -253,7 +261,7 @@ runs:
         if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
           KSU_API_VERSION="3.1.7"
         fi
-        echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
+        echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
         GIT_HASH=$(git rev-parse --short HEAD)
         if [[ -z "$CUSTOM_TAG" || "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then
           KSU_VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
@@ -271,12 +279,11 @@ runs:
           echo "KSU_VERSION_FULL := $KSU_VERSION_FULL"
         } >> kernel/Makefile
         KSU_BUILD_ID=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
-        echo "KSU_BUILD_ID=$KSU_BUILD_ID" >> $GITHUB_ENV
+        echo "KSU_BUILD_ID=$KSU_BUILD_ID" >> "$GITHUB_ENV"
         echo "::group::KernelSU version preview"
         grep -A6 "get_ksu_version_full" kernel/Makefile || true
         echo "::endgroup::"
 
-    # Apply SukiSU Ultra patches
     - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
@@ -306,7 +313,6 @@ runs:
           echo "Warning: SUSFS patch file not found."
         fi
 
-    # Record SUSFS version
     - name: Record SUSFS Version
       shell: bash
       run: |
@@ -315,7 +321,6 @@ runs:
         SUSVER=$(git rev-parse --short HEAD || echo unknown)
         echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
 
-    # Apply hide stuff patches
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
@@ -324,7 +329,6 @@ runs:
         cp ../../SukiSU_patch/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
 
-    # Apply hook patches based on input
     - name: Apply HOOK
       shell: bash
       run: |
@@ -344,7 +348,6 @@ runs:
             ;;
         esac
 
-    # Convert HMBIRD_OGKI to HMBIRD_GKI (6.6 only)
     - name: Convert HMBIRD_OGKI to HMBIRD_GKI (6.6 only)
       if: ${{ env.KERNEL_VER == '6.6' }}
       shell: bash
@@ -355,7 +358,6 @@ runs:
         grep -q 'hmbird_patch.o' drivers/Makefile || echo 'obj-y += hmbird_patch.o' >> drivers/Makefile
         patch -p1 -F 3 < hmbird_patch.patch || echo "hmbird patch failed (non-fatal)"
 
-    # Add KernelSU and SUSFS configurations
     - name: Add KernelSU / SUSFS Config
       shell: bash
       run: |
@@ -402,8 +404,7 @@ runs:
           EOF
         } >> "$DEF"
 
-    # Add OnePlus BBR support
-    - name: Add Oneplus BBR Support
+    - name: Add OnePlus BBR Support
       shell: bash
       run: |
         set -euo pipefail
@@ -417,9 +418,8 @@ runs:
         CONFIG_IP_NF_TARGET_ECN=y
         CONFIG_NET_SCH_FQ=y
         CONFIG_NET_SCH_FQ_CODEL=y
-        EOF        
+        EOF
 
-    # Add TTL target support
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -431,7 +431,6 @@ runs:
         CONFIG_IP6_NF_MATCH_HL=y
         EOF
 
-    # Add build-based configurations
     - name: Add Build Based Configs
       shell: bash
       run: |
@@ -447,10 +446,9 @@ runs:
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DYNAMIC_DEBUG=n
         CONFIG_DEBUG_INFO=n
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y 
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
         EOF
 
-    # Add sched_ext for kernel 6.6 
     - name: Add sched_ext (6.6 only)
       if: ${{ env.KERNEL_VER == '6.6' }}
       shell: bash
@@ -461,7 +459,6 @@ runs:
         cp -r sched_ext/* ./common/kernel/sched/
         rm -rf sched_ext/.git
 
-    # Save build metadata 
     - name: Save Build Metadata
       id: save_metadata
       shell: bash
@@ -484,7 +481,6 @@ runs:
         echo "ksu_version=${KSU_BUILD_ID:-unknown}" >> "$GITHUB_OUTPUT"
         echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
 
-    # Detect Clang
     - name: Detect Clang
       shell: bash
       run: |
@@ -507,7 +503,7 @@ runs:
         CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
         echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
         echo "Detected Clang: $CLANG_VERSION"
-    
+
     - name: Build Kernel
       shell: bash
       run: |
@@ -547,7 +543,7 @@ runs:
           export KCFLAGS="-Wno-error -pipe -O3 -fno-stack-protector"
         else
           scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE
-            scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
           export KCFLAGS="-Wno-error -pipe -O2 -fno-stack-protector"
         fi
         export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
@@ -557,12 +553,12 @@ runs:
         make -j"$(nproc --all)" O="$OUT" 2>&1 | tee build.log
         IMG="$OUT/arch/arm64/boot/Image"
         if [ ! -f "$IMG" ]; then
-          echo "Kernel Image missing"; exit 1
+          echo "Kernel Image missing"
+          exit 1
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
 
-    # Apply KPM patch if enabled
-    - name: Apply KPM patch (optional)
+    - name: Apply KPM Patch (Optional)
       if: ${{ inputs.KPM }}
       shell: bash
       run: |
@@ -583,7 +579,6 @@ runs:
           cp Image "$GITHUB_WORKSPACE/AnyKernel3/Image"
         fi
 
-    # Collect Build Stats / Validate Image 
     - name: Collect Build Stats / Validate Image
       id: collect_stats
       shell: bash
@@ -596,37 +591,37 @@ runs:
         WARNINGS=$(grep -i 'warning:' "$COMMON/build.log" 2>/dev/null | grep -v '0 warnings' | wc -l || true)
         echo "$WARNINGS" > "$OUT/warnings.txt"
         if [ ! -f "$IMG" ]; then
-            echo "ERROR: Kernel Image not found at $IMG"
-            exit 1
+          echo "ERROR: Kernel Image not found at $IMG"
+          exit 1
         fi
         file "$IMG" > "$OUT/Image.file"
         if KERNEL_UNAME_LINE=$(strings "$IMG" 2>/dev/null | grep -E -m1 'Linux version'); then
-            KERNEL_UNAME="$KERNEL_UNAME_LINE"
+          KERNEL_UNAME="$KERNEL_UNAME_LINE"
         else
-            echo "Warning: Could not extract Linux version string from Image."
-            KERNEL_UNAME="(unknown)"
+          echo "Warning: Could not extract Linux version string from Image."
+          KERNEL_UNAME="(unknown)"
         fi
         echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
         if ! file "$IMG" | grep -qi 'ARM64'; then
-            echo "Image does not appear to be ARM64:"
-            file "$IMG"
-            exit 1
+          echo "Image does not appear to be ARM64:"
+          file "$IMG"
+          exit 1
         fi
-        MIN_SIZE=$((10 * 1024 * 1024))  # FIX 19: 10 MiB
+        MIN_SIZE=$((10 * 1024 * 1024))
         ACTUAL_SIZE=$(stat -c %s "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
-            echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"
-            exit 1
+          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"
+          exit 1
         fi
         if [ -f "$OUT/Image.sha256" ]; then
-            IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
+          IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
         else
-            IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
-            echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
+          IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
+          echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
         fi
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
-    
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -663,7 +658,7 @@ runs:
           echo "Kernel full: ${{ env.KERNEL_FULL_VER }}"
           echo "Kernel Uname: ${{ env.KERNEL_UNAME }}"
           echo "KSU Build ID: ${KSU_BUILD_ID:-unknown}"
-            echo "KSU API Version: ${KSU_API_VERSION:-unknown}"
+          echo "KSU API Version: ${KSU_API_VERSION:-unknown}"
           echo "KSU Version Full: ${KSU_VERSION_FULL:-unknown}"
           echo "SUSFS Version: ${SUSVER:-unknown}"
           echo "Optimization: ${{ inputs.optimize_level }}"
