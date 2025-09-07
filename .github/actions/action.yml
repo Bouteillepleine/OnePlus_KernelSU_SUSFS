@@ -362,7 +362,18 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
+        # Validate CONFIG environment variable
+        if [ -z "$CONFIG" ] || [ ! -d "$CONFIG/kernel_platform" ]; then
+          echo "Error: CONFIG is unset or directory $CONFIG/kernel_platform does not exist"
+          exit 1
+        fi
+        cd "$CONFIG/kernel_platform"
+        DEF="common/arch/arm64/configs/gki_defconfig"
+        # Verify config file exists
+        if [ ! -f "$DEF" ]; then
+          echo "Error: Config file $DEF not found"
+          exit 1
+        fi
         {
           echo "CONFIG_KSU=y"
           if [[ "${{ inputs.KPM }}" == "true" ]]; then
@@ -381,6 +392,10 @@ runs:
             tracepoint)
               echo "CONFIG_KSU_SUSFS_SUS_SU=n"
               echo "CONFIG_KSU_TRACEPOINT_HOOK=y"
+              ;;
+            *)
+              echo "Error: Invalid HOOK value: ${{ inputs.HOOK }}"
+              exit 1
               ;;
           esac
           cat <<'EOF'
@@ -408,8 +423,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        grep -q 'CONFIG_TCP_CONG_ADVANCED=y' "$DEF" || cat >> "$DEF" <<'EOF'
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
         CONFIG_IP_ECN=y
@@ -424,8 +438,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        grep -q 'CONFIG_IP_NF_TARGET_TTL=y' "$DEF" || cat >> "$DEF" <<'EOF'
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF       
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
@@ -435,8 +448,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        cat >> "$DEF" <<'EOF'
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_LTO_CLANG_THIN=y
         CONFIG_LTO_CLANG=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
