@@ -329,22 +329,7 @@ runs:
         else
           echo "Warning: SUSFS patch file not found."
         fi
-
-    - name: Record SUSFS Version
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "${CONFIG}/susfs4ksu"
-        SUSVER_SHORT=$(git rev-parse --short HEAD || echo unknown)
-        SUSFS_HUMAN_VERSION=$(grep -R -E -m1 'SUSFS_VERSION' . 2>/dev/null | sed -E 's/.*SUSFS_VERSION[^"]*"([^"]+)".*/\1/' || true)
-        if [ -z "$SUSFS_HUMAN_VERSION" ]; then
-          SUSFS_HUMAN_VERSION="v1.5.9"
-        elif [[ "$SUSFS_HUMAN_VERSION" != v* ]]; then
-          SUSFS_HUMAN_VERSION="v${SUSFS_HUMAN_VERSION}"
-        fi
-        echo "SUSVER=$SUSVER_SHORT" >> "$GITHUB_ENV"
-        echo "SUSFS_HUMAN_VERSION=$SUSFS_HUMAN_VERSION" >> "$GITHUB_ENV"
-
+    
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
