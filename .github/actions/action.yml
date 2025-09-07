@@ -362,7 +362,7 @@ runs:
         CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
         CONFIG_OPTIMIZE_INLINING=y
         CONFIG_DEBUG_KERNEL=n
-        ONFIG_DYNAMIC_DEBUG=n
+        CONFIG_DYNAMIC_DEBUG=n
         CONFIG_DEBUG_INFO=n          
         CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y 
         EOF
@@ -481,28 +481,52 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Define paths
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
-        IMG="$OUT/arch/arm64/boot/Image"
-        WARNINGS=$(grep -i -E 'warning:' "$COMMON/build.log" | wc -l || true)
-        echo "$WARNINGS" > "$OUT/warnings.txt"
-        file "$IMG" > "$OUT/Image.file"
-        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
-        echo "Kernel Uname: $KERNEL_UNAME"
-        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
-        if ! file "$IMG" | grep -qi 'ARM64'; then
-          echo "Image does not appear to be ARM64:"
-          file "$IMG"
-          exit 1
+        IMG="$OUT/arch/arm64/boot/Image"        
+        # Count warnings (non-failing)
+        WARNINGS=$(grep -i -E 'warning:' "$COMMON/build.log" 2>/dev/null | wc -l || true)
+        echo "$WARNINGS" > "$OUT/warnings.txt"        
+        # Check if kernel image exists
+        if [ ! -f "$IMG" ]; then
+            echo "ERROR: Kernel Image not found at $IMG"
+            exit 1
+        fi        
+        # Get basic file info
+        file "$IMG" > "$OUT/Image.file"        
+        # Extract kernel version string (non-failing)
+        if KERNEL_UNAME_LINE=$(strings "$IMG" 2>/dev/null | grep -E -m1 'Linux version'); then
+            KERNEL_UNAME="$KERNEL_UNAME_LINE"
+        else
+            echo "Warning: Could not extract Linux version string from Image."
+            KERNEL_UNAME="(unknown)"
         fi
-        MIN_SIZE=$((6*1024*1024))
+        echo "Kernel Uname: $KERNEL_UNAME"
+        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"        
+        # Validate architecture
+        if ! file "$IMG" | grep -qi 'ARM64'; then
+            echo "Image does not appear to be ARM64:"
+            file "$IMG"
+            exit 1
+        fi        
+        # Check image size (minimum 6 MiB)
+        MIN_SIZE=$((6 * 1024 * 1024))  # 6 MiB in bytes
         ACTUAL_SIZE=$(stat -c %s "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
-          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
+            echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"
+            exit 1
+        fi        
+        # Calculate or retrieve SHA256
+        if [ -f "$OUT/Image.sha256" ]; then
+            IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
+        else
+            IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
+            echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
         fi
-        IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
-        echo "Image sha256: $IMAGE_SHA256"
+        echo "Image sha256: $IMAGE_SHA256"        
+        # Set GitHub Action outputs
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
 
