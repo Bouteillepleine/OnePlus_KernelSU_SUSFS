@@ -423,7 +423,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cd "${CONFIG}G/kernel_platform"      
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
         CONFIG_IP_ECN=y
@@ -438,6 +439,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        cd "${CONFIG}/kernel_platform"      
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF       
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
@@ -448,7 +451,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cd "${CONFIG}/kernel_platform"      
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_LTO_CLANG_THIN=y
         CONFIG_LTO_CLANG=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
