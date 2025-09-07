@@ -130,19 +130,17 @@ runs:
             --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         "$REPO" --version
-        for attempt in 1 2 3; do
+        success=false
+        for i in 1 2 3; do
           if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-            -j"$(nproc --all)" --fail-fast; then
-            echo "repo sync succeeded on attempt $attempt"
+             -j"$(nproc --all)" --fail-fast; then
+            success=true
             break
           fi
-          if [ "$attempt" -eq 3 ]; then
-            echo "repo sync failed after 3 attempts"
-            exit 1
-          fi
-          echo "repo sync attempt $attempt failed; retrying..."
+          echo "repo sync attempt $i failed; retrying..."
           sleep 30
         done
+        $success || { echo "repo sync failed after 3 attempts"; exit 1; }
 
     - name: Get Kernel Version Info
       shell: bash
