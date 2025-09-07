@@ -412,13 +412,7 @@ runs:
         CONFIG_OPTIMIZE_INLINING=y
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DYNAMIC_DEBUG=n
-        CONFIG_DEBUG_INFO=n
-        CONFIG_DAMON=n
-        CONFIG_CRYPTO_SHA1_ARM64_CE=y
-        CONFIG_VIRTIO_PCI_LEGACY=y
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
-        CONFIG_HEADERS_INSTALL=n
-        CONFIG_PROC_MEM_ALWAYS_FORCE=n
+        CONFIG_DEBUG_INFO=n       
         EOF
 
     # Add sched_ext for kernel 6.6
