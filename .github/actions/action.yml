@@ -423,7 +423,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        cd "${CONFIG}G/kernel_platform"      
+        cd "${CONFIG}/kernel_platform"      
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
