@@ -113,41 +113,34 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        : "${CONFIG:?Must set CONFIG}"
-        : "${manifest:?Must set manifest (URL or local manifest path)}"
-        : "${REPO:?Must set REPO (path to repo tool)}"
-        
         echo "Creating folder for configuration: $CONFIG"
         mkdir -p "$CONFIG"
         cd "$CONFIG"
         echo "Initializing and syncing kernel source..."
-        if [[ "$manifest" == https://* ]]; then
+        if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
           curl --fail --show-error --location --proto '=https' \
-            "$manifest" -o .repo/manifests/temp_manifest.xml
-          MANIFEST_OPTION=(-m .repo/manifests/temp_manifest.xml)
+            "${{ inputs.manifest }}" -o .repo/manifests/temp_manifest.xml
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+            -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 \
+            --depth=1 --no-clone-bundle --no-tags
         else
-          MANIFEST_OPTION=(-m "$manifest")
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+            -b "${{ inputs.branch }}" -m "${{ inputs.manifest }}" \
+            --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
         "$REPO" --version
-        # Optionally add: --depth=1 if acceptable
-        "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git "${MANIFEST_OPTION[@]}"
         success=false
-        max_attempts=3
-        for attempt in $(seq 1 "$max_attempts"); do
-          echo "repo sync attempt $attempt..."
+        for i in 1 2 3; do
           if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-              -j"$(nproc --all)" --fail-fast; then
+             -j"$(nproc --all)" --fail-fast; then
             success=true
             break
           fi
-          echo "repo sync attempt $attempt failed."
-          sleep $((attempt * 30))   # simple linear backoff (30, 60, 90)
+          echo "repo sync attempt $i failed; retrying..."
+          sleep 30
         done
-        if ! $success; then
-          echo "repo sync failed after $max_attempts attempts"
-          exit 1
-        fi
+        $success || { echo "repo sync failed after 3 attempts"; exit 1; }
 
     - name: Get Kernel Version Info
       shell: bash
