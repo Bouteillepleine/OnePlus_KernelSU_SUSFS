@@ -46,7 +46,7 @@ inputs:
   localversion_suffix:
     required: false
     type: string
-    default: ⚡Ultra⚡
+    default: "⚡Ultra⚡"
   susfs_commit_hash_or_branch:
     required: false
     type: string
@@ -111,92 +111,24 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-    
-        CONFIG='${{ inputs.model }}'
-        MANIFEST_INPUT='${{ inputs.manifest }}'
-        SOC_INPUT='${{ inputs.soc }}'
-        BRANCH_INPUT='${{ inputs.branch }}'
-    
+        : "${REPO:?missing REPO}"
+        : "${CONFIG:?missing CONFIG}"
         mkdir -p "$CONFIG"
         cd "$CONFIG"
-    
-        echo "== Manifest resolution =="
-        echo "Raw manifest input: $MANIFEST_INPUT"
-    
-        # Decide if input is a remote URL
-        if [[ "$MANIFEST_INPUT" == http://* || "$MANIFEST_INPUT" == https://* ]]; then
-          echo "Manifest is a remote URL. Downloading..."
-          mkdir -p .repo/manifests
-          curl --fail --show-error --location "$MANIFEST_INPUT" -o .repo/manifests/temp_manifest.xml
-          MANIFEST_FILE="temp_manifest.xml"
-        else
-          # Treat as local path. Search common locations.
-            # 1. As given (relative to repo root) via $GITHUB_WORKSPACE
-            # 2. .github/manifests/<name>
-            # 3. Already inside CONFIG (user pre-copied)
-          CANDIDATES=(
-            "$GITHUB_WORKSPACE/$MANIFEST_INPUT"
-            "$GITHUB_WORKSPACE/.github/manifests/$MANIFEST_INPUT"
-            "$PWD/$MANIFEST_INPUT"
-          )
-          FOUND=""
-          for c in "${CANDIDATES[@]}"; do
-            if [ -f "$c" ]; then
-              FOUND="$c"
-              break
-            fi
-          done
-          if [ -z "$FOUND" ]; then
-            echo "ERROR: Manifest file '$MANIFEST_INPUT' not found."
-            echo "Searched:"
-            printf '  - %s\n' "${CANDIDATES[@]}"
-            echo "Listing *.xml in top 3 levels for debug:"
-            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -name '*.xml' -printf '%P\n' || true
-            exit 1
-          fi
-          echo "Found manifest at: $FOUND"
-          mkdir -p .repo/manifests
-          cp "$FOUND" .repo/manifests/temp_manifest.xml
-          MANIFEST_FILE="temp_manifest.xml"
-        fi
-
-    # Choose branch: allow soc to override if provided and non-empty
-    if [[ -n "$SOC_INPUT" ]]; then
-      BRANCH_CHOSEN="oneplus/$SOC_INPUT"
-    else
-      BRANCH_CHOSEN="$BRANCH_INPUT"
-    fi
-    echo "Using branch: $BRANCH_CHOSEN"
-    echo "Using manifest file: $MANIFEST_FILE"
-
-    REPO='${{ env.REPO }}'
-    if [ ! -x "$REPO" ]; then
-      echo "ERROR: repo tool not found at $REPO"
-      exit 1
-    fi
-
-    # Initialize
-    "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-      -b "$BRANCH_CHOSEN" -m "$MANIFEST_FILE" \
-      --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-
-    "$REPO" --version
-
-    # Sync with retry
-    attempt=0
-    until "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch -j"$(nproc --all)" --fail-fast; do
-      attempt=$((attempt+1))
-      if [ $attempt -ge 3 ]; then
-        echo "repo sync failed after $attempt attempts"
-        exit 1
-      fi
-      echo "Retrying repo sync ($attempt)..."
-      sleep 25
-    done
-
-    echo "Repo sync completed successfully."
-
-
+        BRANCH="${{ inputs.soc && format('oneplus/{0}', inputs.soc) || inputs.branch }}"
+        echo "Using branch: $BRANCH"
+        "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+           -b "$BRANCH" -m "${{ inputs.manifest }}" \
+           --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        tries=0
+        until "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch -j"$(nproc --all)" --fail-fast; do
+          tries=$((tries+1))
+          (( tries >= 3 )) && { echo "repo sync failed after $tries tries"; exit 1; }
+          echo "Retry #$tries..."
+          sleep 25
+        done
+        echo "Sync OK."
+        
     - name: Extract Version Info
       id: versions
       shell: bash
@@ -389,24 +321,24 @@ runs:
               ;;
           esac
           cat <<'EOF'
-        CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_PATH=y
-        CONFIG_KSU_SUSFS_SUS_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_KSTAT=y
-        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-        CONFIG_KSU_SUSFS_ENABLE_LOG=y
-        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-        CONFIG_TMPFS_XATTR=y
-        CONFIG_TMPFS_POSIX_ACL=y
-        EOF
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_TMPFS_XATTR=y
+CONFIG_TMPFS_POSIX_ACL=y
+EOF
         } >> "$DEF"
 
     - name: Add Network / Performance Config
@@ -416,27 +348,27 @@ runs:
         DEF="$CONFIG/kernel_platform/common/arch/arm64/configs/gki_defconfig"
         {
           cat <<'EOF'
-        CONFIG_TCP_CONG_ADVANCED=y
-        CONFIG_TCP_CONG_BBR=y
-        CONFIG_NET_SCH_FQ=y
-        CONFIG_NET_SCH_FQ_CODEL=y
-        CONFIG_IP_ECN=y
-        CONFIG_TCP_ECN=y
-        CONFIG_IPV6_ECN=y
-        CONFIG_IP_NF_TARGET_TTL=y
-        CONFIG_IP6_NF_TARGET_HL=y
-        CONFIG_IP6_NF_MATCH_HL=y
-        CONFIG_LTO_CLANG_THIN=y
-        CONFIG_LTO_CLANG=y
-        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
-        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
-        CONFIG_OPTIMIZE_INLINING=y
-        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
-        CONFIG_DEBUG_KERNEL=n
-        CONFIG_DYNAMIC_DEBUG=n
-        CONFIG_DEBUG_INFO=n
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
-        EOF
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_NET_SCH_FQ=y
+CONFIG_NET_SCH_FQ_CODEL=y
+CONFIG_IP_ECN=y
+CONFIG_TCP_ECN=y
+CONFIG_IPV6_ECN=y
+CONFIG_IP_NF_TARGET_TTL=y
+CONFIG_IP6_NF_TARGET_HL=y
+CONFIG_IP6_NF_MATCH_HL=y
+CONFIG_LTO_CLANG_THIN=y
+CONFIG_LTO_CLANG=y
+CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
+CONFIG_OPTIMIZE_INLINING=y
+CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
+CONFIG_DEBUG_KERNEL=n
+CONFIG_DYNAMIC_DEBUG=n
+CONFIG_DEBUG_INFO=n
+CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+EOF
         } >> "$DEF"
 
     - name: Add sched_ext (6.6 only)
