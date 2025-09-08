@@ -648,11 +648,7 @@ runs:
           exit 1
         fi
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-        cd "$GITHUB_WORKSPACE/AnyKernel3"
-        if [ "${{ inputs.model }}" = "OPAce5Pro" ] || [ "${{ inputs.model }}" = "OP13" ]; then
-          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
-          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" || true
-        fi
+        cd "$GITHUB_WORKSPACE/AnyKernel3"        
         ZIP_NAME="AnyKernel3_${{ inputs.model }}_${KERNEL_FULL_VER}_KSU_${KSU_BUILD_ID}_SUS_${SUSVER}.zip"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
