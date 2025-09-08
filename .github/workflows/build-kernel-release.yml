@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       KSU_META:
-        description: 'SukiSU Ultra branch/custom tag (e.g., susfs-main/⚡Ultra⚡)'
+        description: 'SukiSU Ultra branch/custom tag (e.g. susfs-main/⚡Ultra⚡)'
         required: false
         type: string
         default: 'susfs-main/⚡Ultra⚡'
@@ -40,29 +40,18 @@ on:
           - O2
           - O3
       susfs_overrides:
-        description: 'SusFS branch overrides'
+        description: 'Optional per (android-version)-(kernel) SusFS branch overrides (multiline: android15-6.6=branch-name)'
         required: false
         type: string
         default: ''
-      ksun_branch:
-        description: 'KernelSU base branch'
-        required: false
-        type: string
-        default: 'stable'
-      release_suffix:
-        description: 'Optional suffix appended to release title'
-        required: false
-        type: string
-        default: ''
-
+     
 concurrency:
   group: build-oneplus-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build-batch-1:
-    name: Build Batch 1 (${{ matrix.model }})
-    runs-on: ubuntu-latest
+    name: build-batch-1 (${{ matrix.model }})
     strategy:
       fail-fast: false
       matrix:
@@ -73,36 +62,37 @@ jobs:
             manifest: oneplus_13.xml
             android_version: android15
             kernel_version: '6.6'
-          - model: OPAce5Pro
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_ace5_pro.xml
-            android_version: android15
-            kernel_version: '6.6'
-          - model: OP13S
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_13s.xml
-            android_version: android15
-            kernel_version: '6.6'
-          - model: OP-PAD-3
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_pad_3.xml
-            android_version: android15
-            kernel_version: '6.6'
-          - model: OP13T
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_13t.xml
-            android_version: android15
-            kernel_version: '6.6'
-          - model: OP-PAD-2-PRO
-            soc: sun
-            branch: oneplus/sm8750
-            manifest: oneplus_pad_2_pro.xml
-            android_version: android15
-            kernel_version: '6.6'
+#          - model: OPAce5Pro
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_ace5_pro.xml
+#            android_version: android15
+#            kernel_version: '6.6'
+#          - model: OP13S
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_13s.xml
+#            android_version: android15
+#            kernel_version: '6.6'
+#          - model: OP-PAD-3
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_pad_3.xml
+#            android_version: android15
+#            kernel_version: '6.6'
+#          - model: OP13T
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_13t.xml
+#            android_version: android15
+#            kernel_version: '6.6'
+#          - model: OP-PAD-2-PRO
+#            soc: sun
+#            branch: oneplus/sm8750
+#            manifest: oneplus_pad_2_pro.xml
+#            android_version: android15
+#            kernel_version: '6.6'
+    runs-on: ubuntu-latest
     steps:
       - name: Select SusFS Branch
         id: susfs
@@ -113,7 +103,7 @@ jobs:
           DEFAULT="gki-${KS}"
           BR="$DEFAULT"
           while IFS= read -r line; do
-            line="${line%%#*}"
+            line="${line%%#}"
             [ -z "$line" ] && continue
             key="${line%%=}"
             val="${line#*=}"
@@ -142,25 +132,24 @@ jobs:
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
           ksun_branch: ${{ inputs.ksun_branch }}
-          susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
+          susfs_branch: ${{ steps.susfs.outputs.susfs_branch }}
           KSU_META: ${{ inputs.KSU_META }}
           KPM: ${{ inputs.KPM }}
           HOOK: ${{ inputs.HOOK }}
           optimize_level: ${{ inputs.optimize_level }}
 
   build-batch-2:
-    name: Build Batch 2 (${{ matrix.model }})
-    runs-on: ubuntu-latest
+    name: build-batch-2 (${{ matrix.model }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - model: OP12
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus12_v.xml
-            android_version: android14
-            kernel_version: '6.1'
+#          - model: OP12
+#            soc: pineapple
+#            branch: oneplus/sm8650
+#            manifest: oneplus12_v.xml
+#            android_version: android14
+#            kernel_version: '6.1'
           - model: OP13r
             soc: pineapple
             branch: oneplus/sm8650
@@ -173,136 +162,37 @@ jobs:
             manifest: oneplus_ace5.xml
             android_version: android14
             kernel_version: '6.1'
-          - model: OP-ACE-3V
-            soc: pineapple
-            branch: oneplus/sm7675
-            manifest: oneplus_ace_3v_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP-NORD-4
-            soc: pineapple
-            branch: oneplus/sm7675
-            manifest: oneplus_nord_4_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP-PAD-2
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus_pad2_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP-Ace3-Pro
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus_ace3_pro_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-          - model: OP-PAD-Pro
-            soc: pineapple
-            branch: oneplus/sm8650
-            manifest: oneplus_pad_pro_v.xml
-            android_version: android14
-            kernel_version: '6.1'
-    steps:
-      - name: Select SusFS Branch
-        id: susfs
-        shell: bash
-        run: |
-          set -euo pipefail
-          KS="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          DEFAULT="gki-${KS}"
-          BR="$DEFAULT"
-          while IFS= read -r line; do
-            line="${line%%#*}"
-            [ -z "$line" ] && continue
-            key="${line%%=}"
-            val="${line#*=}"
-            if [ "$key" = "$KS" ]; then
-              BR="$val"
-              break
-            fi
-          done <<'EOF_OVR'
-          ${{ inputs.susfs_overrides }}
-          EOF_OVR
-          echo "Selected SusFS branch: $BR (default was $DEFAULT)"
-          echo "susfs_branch=$BR" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout Repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Build Kernel
-        uses: ./.github/actions
-        with:
-          model: ${{ matrix.model }}
-          soc: ${{ matrix.soc }}
-          branch: ${{ matrix.branch }}
-          manifest: ${{ matrix.manifest }}
-          android_version: ${{ matrix.android_version }}
-          kernel_version: ${{ matrix.kernel_version }}
-          ksun_branch: ${{ inputs.ksun_branch }}
-          susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
-          KSU_META: ${{ inputs.KSU_META }}
-          KPM: ${{ inputs.KPM }}
-          HOOK: ${{ inputs.HOOK }}
-          optimize_level: ${{ inputs.optimize_level }}
-
-  build-batch-3:
-    name: Build Batch 3 (${{ matrix.model }})
+#          - model: OP-ACE-3V
+#            soc: pineapple
+#            branch: oneplus/sm7675
+#            manifest: oneplus_ace_3v_v.xml
+#            android_version: android14
+#            kernel_version: '6.1'
+#          - model: OP-NORD-4
+#            soc: pineapple
+#            branch: oneplus/sm7675
+#            manifest: oneplus_nord_4_v.xml
+#            android_version: android14
+#            kernel_version: '6.1'
+#          - model: OP-PAD-2
+#            soc: pineapple
+#            branch: oneplus/sm8650
+#            manifest: oneplus_pad2_v.xml
+#            android_version: android14
+#            kernel_version: '6.1'
+#          - model: OP-Ace3-Pro
+#            soc: pineapple
+#            branch: oneplus/sm8650
+#            manifest: oneplus_ace3_pro_v.xml
+#            android_version: android14
+#            kernel_version: '6.1'
+#          - model: OP-PAD-Pro
+#            soc: pineapple
+#            branch: oneplus/sm8650
+#            manifest: oneplus_pad_pro_v.xml
+#            android_version: android14
+#            kernel_version: '6.1'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - model: OP11
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_11_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP11r
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_11r_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP-OPEN
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_open_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP-ACE-2
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_ace2_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP10t
-            soc: waipio
-            branch: oneplus/sm8475
-            manifest: oneplus_10t_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP10pro
-            soc: waipio
-            branch: oneplus/sm8450
-            manifest: oneplus_10_pro_v.xml
-            android_version: android12
-            kernel_version: '5.10'
-          - model: OP-ACE-2-PRO
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_ace2_pro_v.xml
-            android_version: android13
-            kernel_version: '5.15'
-          - model: OP12r
-            soc: kalama
-            branch: oneplus/sm8550
-            manifest: oneplus_12r_v.xml
-            android_version: android13
-            kernel_version: '5.15'
     steps:
       - name: Select SusFS Branch
         id: susfs
@@ -313,7 +203,7 @@ jobs:
           DEFAULT="gki-${KS}"
           BR="$DEFAULT"
           while IFS= read -r line; do
-            line="${line%%#*}"
+            line="${line%%#}"
             [ -z "$line" ] && continue
             key="${line%%=}"
             val="${line#*=}"
@@ -324,7 +214,6 @@ jobs:
           done <<'EOF_OVR'
           ${{ inputs.susfs_overrides }}
           EOF_OVR
-          echo "Selected SusFS branch: $BR (default was $DEFAULT)"
           echo "susfs_branch=$BR" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Repo
@@ -342,17 +231,116 @@ jobs:
           android_version: ${{ matrix.android_version }}
           kernel_version: ${{ matrix.kernel_version }}
           ksun_branch: ${{ inputs.ksun_branch }}
-          susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
+          susfs_branch: ${{ steps.susfs.outputs.susfs_branch }}
           KSU_META: ${{ inputs.KSU_META }}
           KPM: ${{ inputs.KPM }}
           HOOK: ${{ inputs.HOOK }}
           optimize_level: ${{ inputs.optimize_level }}
+
+#  build-batch-3:
+#    name: build-batch-3 (${{ matrix.model }})
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        include:
+#          - model: OP11
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_11_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#          - model: OP11r
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_11r_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP-OPEN
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_open_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#          - model: OP-ACE-2
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_ace2_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP10t
+#            soc: waipio
+#            branch: oneplus/sm8475
+#            manifest: oneplus_10t_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP10pro
+#            soc: waipio
+#            branch: oneplus/sm8450
+#            manifest: oneplus_10_pro_v.xml
+#            android_version: android12
+#            kernel_version: '5.10'
+#          - model: OP-ACE-2-PRO
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_ace2_pro_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#          - model: OP12r
+#            soc: kalama
+#            branch: oneplus/sm8550
+#            manifest: oneplus_12r_v.xml
+#            android_version: android13
+#            kernel_version: '5.15'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Select SusFS Branch
+#        id: susfs
+#        shell: bash
+#        run: |
+#          set -euo pipefail
+#          KS="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+#          DEFAULT="gki-${KS}"
+#          BR="$DEFAULT"
+#          while IFS= read -r line; do
+#            line="${line%%#}"
+#            [ -z "$line" ] && continue
+#            key="${line%%=}"
+#            val="${line#*=}"
+#            if [ "$key" = "$KS" ]; then
+#              BR="$val"
+#              break
+#            fi
+#          done <<'EOF_OVR'
+#          ${{ inputs.susfs_overrides }}
+#          EOF_OVR
+#          echo "susfs_branch=$BR" >> "$GITHUB_OUTPUT"
+
+#      - name: Checkout Repo
+#        uses: actions/checkout@v4
+#        with:
+#          fetch-depth: 1
+
+#      - name: Build Kernel
+#        uses: ./.github/actions
+#        with:
+#          model: ${{ matrix.model }}
+#          soc: ${{ matrix.soc }}
+#          branch: ${{ matrix.branch }}
+#          manifest: ${{ matrix.manifest }}
+#          android_version: ${{ matrix.android_version }}
+#          kernel_version: ${{ matrix.kernel_version }}
+#          ksun_branch: ${{ inputs.ksun_branch }}
+#          susfs_branch: ${{ steps.susfs.outputs.susfs_branch }}
+#          KSU_META: ${{ inputs.KSU_META }}
+#          KPM: ${{ inputs.KPM }}
+#          HOOK: ${{ inputs.HOOK }}
+#          optimize_level: ${{ inputs.optimize_level }}
 
   trigger-release:
     needs:
       - build-batch-1
       - build-batch-2
-      - build-batch-3
+#      - build-batch-3
     runs-on: ubuntu-latest
     if: ${{ inputs.make_release }}
     env:
@@ -362,7 +350,7 @@ jobs:
       RELEASE_NAME_BASE: 'TEST BUILD OnePlus Kernels With KernelSU Next & SUSFS v1.5.9 TEST BUILD'
       BASE_VERSION: 'v1.5.9'
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -428,18 +416,18 @@ jobs:
             printf "| %s | %s |\n" "$model" "$ver" >> release_notes.md
           done
           cat >> release_notes.md <<'EOF'
-          Features:
-            - KernelSU-Next
-            - SUSFS v1.5.9
-            - Wireguard Support
-            - Maphide LineageOS Detections
-            - Futile Maphide for jit-zygote-cache Detections
-            - Magic Mount Support
-            - Ptrace message leak fix for kernels < 5.16
-            - Manual Hooks [scope_min_manual_hooks_v1.4]
-            - CONFIG_TMPFS_XATTR Support (Mountify)
-            - BBR v1 Support
-            - HMBIRD scx support (select models)
+          Features
+          [+] KernelSU-Next
+          [+] SUSFS v1.5.9
+          [+] Wireguard Support
+          [+] Maphide LineageOS Detections
+          [+] Futile Maphide for jit-zygote-cache Detections
+          [+] Magic Mount Support
+          [+] Ptrace message leak fix for kernels < 5.16
+          [+] Manual Hooks [scope_min_manual_hooks_v1.4]
+          [+] CONFIG_TMPFS_XATTR Support (Mountify)
+          [+] BBR v1 Support
+          [+] HMBIRD scx support (select models)
           EOF
           echo "--- Release Notes ---"
           cat release_notes.md
