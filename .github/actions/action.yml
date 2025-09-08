@@ -111,38 +111,91 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+    
+        CONFIG='${{ inputs.model }}'
+        MANIFEST_INPUT='${{ inputs.manifest }}'
+        SOC_INPUT='${{ inputs.soc }}'
+        BRANCH_INPUT='${{ inputs.branch }}'
+    
         mkdir -p "$CONFIG"
         cd "$CONFIG"
-        # Support remote manifest URL or local file path
-        if [[ '${{ inputs.manifest }}' == https://* ]]; then
+    
+        echo "== Manifest resolution =="
+        echo "Raw manifest input: $MANIFEST_INPUT"
+    
+        # Decide if input is a remote URL
+        if [[ "$MANIFEST_INPUT" == http://* || "$MANIFEST_INPUT" == https://* ]]; then
+          echo "Manifest is a remote URL. Downloading..."
           mkdir -p .repo/manifests
-          curl --fail --show-error --location \
-            '${{ inputs.manifest }}' -o .repo/manifests/temp_manifest.xml
-          MANIFEST_ARG="-m temp_manifest.xml"
+          curl --fail --show-error --location "$MANIFEST_INPUT" -o .repo/manifests/temp_manifest.xml
+          MANIFEST_FILE="temp_manifest.xml"
         else
-          if [ ! -f '${{ inputs.manifest }}' ]; then
-            echo "Manifest file '${{ inputs.manifest }}' not found in working dir"; exit 1
+          # Treat as local path. Search common locations.
+            # 1. As given (relative to repo root) via $GITHUB_WORKSPACE
+            # 2. .github/manifests/<name>
+            # 3. Already inside CONFIG (user pre-copied)
+          CANDIDATES=(
+            "$GITHUB_WORKSPACE/$MANIFEST_INPUT"
+            "$GITHUB_WORKSPACE/.github/manifests/$MANIFEST_INPUT"
+            "$PWD/$MANIFEST_INPUT"
+          )
+          FOUND=""
+          for c in "${CANDIDATES[@]}"; do
+            if [ -f "$c" ]; then
+              FOUND="$c"
+              break
+            fi
+          done
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: Manifest file '$MANIFEST_INPUT' not found."
+            echo "Searched:"
+            printf '  - %s\n' "${CANDIDATES[@]}"
+            echo "Listing *.xml in top 3 levels for debug:"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -name '*.xml' -printf '%P\n' || true
+            exit 1
           fi
-          MANIFEST_ARG="-m '${{ inputs.manifest }}'"
+          echo "Found manifest at: $FOUND"
+          mkdir -p .repo/manifests
+          cp "$FOUND" .repo/manifests/temp_manifest.xml
+          MANIFEST_FILE="temp_manifest.xml"
         fi
-        BRANCH_CHOSEN='${{ inputs.branch }}'
-        if [[ -n '${{ inputs.soc }}' ]]; then
-          BRANCH_CHOSEN="oneplus/${{ inputs.soc }}"
-        fi
-        echo "Using branch: $BRANCH_CHOSEN"
-        "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-          -b "$BRANCH_CHOSEN" $MANIFEST_ARG --repo-rev=v2.16 \
-          --depth=1 --no-clone-bundle --no-tags
-        "$REPO" --version
-        attempt=0
-        until "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch -j"$(nproc --all)" --fail-fast; do
-          attempt=$((attempt+1))
-          if [ $attempt -ge 3 ]; then
-            echo "repo sync failed after $attempt attempts"; exit 1
-          fi
-          echo "Retrying repo sync ($attempt)..."
-          sleep 25
-        done
+
+    # Choose branch: allow soc to override if provided and non-empty
+    if [[ -n "$SOC_INPUT" ]]; then
+      BRANCH_CHOSEN="oneplus/$SOC_INPUT"
+    else
+      BRANCH_CHOSEN="$BRANCH_INPUT"
+    fi
+    echo "Using branch: $BRANCH_CHOSEN"
+    echo "Using manifest file: $MANIFEST_FILE"
+
+    REPO='${{ env.REPO }}'
+    if [ ! -x "$REPO" ]; then
+      echo "ERROR: repo tool not found at $REPO"
+      exit 1
+    fi
+
+    # Initialize
+    "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+      -b "$BRANCH_CHOSEN" -m "$MANIFEST_FILE" \
+      --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+
+    "$REPO" --version
+
+    # Sync with retry
+    attempt=0
+    until "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch -j"$(nproc --all)" --fail-fast; do
+      attempt=$((attempt+1))
+      if [ $attempt -ge 3 ]; then
+        echo "repo sync failed after $attempt attempts"
+        exit 1
+      fi
+      echo "Retrying repo sync ($attempt)..."
+      sleep 25
+    done
+
+    echo "Repo sync completed successfully."
+
 
     - name: Extract Version Info
       id: versions
