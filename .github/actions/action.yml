@@ -636,20 +636,30 @@ runs:
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
 
-    - name: Create Flashable ZIP
+    - name: Create Kernel ZIP
       id: create_zip
       shell: bash
       run: |
         set -euo pipefail
-        ART="$CONFIG/artifacts"
-        mkdir -p "$ART"
-        cd AnyKernel3
-        ZIP="AnyKernel3_${{ inputs.model }}_${COMBINED_VERSION}_SukiSU_${KSU_VERSION_FULL}_SUSFS_${SUSFS_VERSION}.zip"
-        rm -rf .git || true
-        echo "Creating $ZIP"
-        zip -r9 "$ZIP" ./* >/dev/null
-        mv "$ZIP" "../$ART/"
-        echo "Created artifact: $ART/$ZIP"
+        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+        IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
+        if [ ! -f "$IMAGE_PATH" ]; then
+          echo "ERROR: Built Image not found"
+          exit 1
+        fi
+        cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+        cd "$GITHUB_WORKSPACE/AnyKernel3"
+        if [ "${{ inputs.model }}" = "OPAce5Pro" ] || [ "${{ inputs.model }}" = "OP13" ]; then
+          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
+          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch" || true
+        fi
+        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${KERNEL_FULL_VER}_KSU_${KSU_BUILD_ID}_SUS_${SUSVER}.zip"
+        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+        mkdir -p "$ARTIFACTS_DIR"
+        echo "Creating flashable zip: $ZIP_NAME"
+        zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
+        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
+        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
     - name: Final Build Summary
       shell: bash
