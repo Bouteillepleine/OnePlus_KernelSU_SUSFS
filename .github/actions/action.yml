@@ -1,5 +1,4 @@
 name: Build
-
 permissions:
   contents: write
   actions: write
@@ -41,6 +40,8 @@ outputs:
     value: ${{ steps.collect_stats.outputs.image_sha256 }}
   warnings:
     value: ${{ steps.collect_stats.outputs.warnings }}
+  kernel_release:
+    value: ${{ steps.collect_stats.outputs.kernel_release }}
 
 runs:
   using: composite
@@ -72,10 +73,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Derive a unique build directory name
         CONFIG="${{ inputs.model }}"
         echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
-        # Install repo tool if missing
         REPO="/usr/local/bin/repo"
         if [ ! -x "$REPO" ]; then
           curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
@@ -292,14 +291,13 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
-        
+
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        # Remove indentation to avoid leading spaces
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
         CONFIG_KSU_SUSFS=y
@@ -327,7 +325,7 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
         CONFIG_NET_SCH_FQ=y
@@ -343,7 +341,7 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
@@ -354,35 +352,45 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_LTO_CLANG_THIN=y
         CONFIG_LTO_CLANG=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
         CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
         CONFIG_OPTIMIZE_INLINING=y
+        CONFIG_PREEMPT_DYNAMIC=y
+        CONFIG_ENERGY_MODEL=y
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DYNAMIC_DEBUG=n
-        CONFIG_DEBUG_INFO=n          
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y 
+        CONFIG_DEBUG_INFO=n
+        CONFIG_SCHED_DEBUG=n
+        CONFIG_DEBUG_PREEMPT=n
+        CONFIG_DEBUG_MUTEXES=n
+        CONFIG_DEBUG_SPINLOCK=n
+        CONFIG_LOCK_DEBUGGING_SUPPORT=n
+        CONFIG_LEGACY_PTYS=n
+        CONFIG_DEVKMEM=n
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
         EOF
 
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
-          cd "$CONFIG/kernel_platform"
-          CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "$CONFIG_FILE"
-          sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        CONFIG_FILE="./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_REGMAP_KUNIT=m/CONFIG_REGMAP_KUNIT=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_INPUT_KUNIT_TEST=m/CONFIG_INPUT_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=m/CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_SND_SOC_UTILS_KUNIT_TEST=m/CONFIG_SND_SOC_UTILS_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_HID_KUNIT_TEST=m/CONFIG_HID_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_RTC_LIB_KUNIT_TEST=m/CONFIG_RTC_LIB_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_CLK_KUNIT_TEST=m/CONFIG_CLK_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_CLK_GATE_KUNIT_TEST=m/CONFIG_CLK_GATE_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "$CONFIG_FILE"
+        sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
 
     - name: Save Build Metadata
       id: save_metadata
@@ -395,16 +403,6 @@ runs:
         echo "kernel_version=${{ env.KERNEL_FULL_VER }}" >> "$GITHUB_OUTPUT"
         echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
         echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
-
-    - name: Customize Kernel Branding
-      shell: bash
-      run: |
-        set -euo pipefail
-        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        cd "$KERNEL_PATH/common"
-        mkdir -p out
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-⚡Ultra⚡"
-        echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Detect Clang (toolchain for build)
       shell: bash
@@ -438,7 +436,6 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
-        : > "$COMMON/.scmversion"
         if [ -n "${CLANG_BIN_PATH:-}" ] && [ -x "${CLANG_BIN_PATH}/clang" ]; then
           export PATH="${CLANG_BIN_PATH}:$PATH"
         fi
@@ -451,11 +448,7 @@ runs:
         OUT=out
         mkdir -p "$OUT"
         make O="$OUT" gki_defconfig
-        if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
-          scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
-          scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
-          sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
-        fi
+        scripts/config --file "$OUT/.config" -e LOCALVERSION_AUTO || true
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
           scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
@@ -468,7 +461,6 @@ runs:
         export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
         make O="$OUT" olddefconfig
         echo "Starting build with $(nproc --all) threads..."
-        set -o pipefail
         make -j"$(nproc --all)" O="$OUT" 2>&1 | tee build.log
         IMG="$OUT/arch/arm64/boot/Image"
         if [ ! -f "$IMG" ]; then
@@ -481,22 +473,17 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Define paths
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
-        IMG="$OUT/arch/arm64/boot/Image"        
-        # Count warnings (non-failing)
+        IMG="$OUT/arch/arm64/boot/Image"
         WARNINGS=$(grep -i -E 'warning:' "$COMMON/build.log" 2>/dev/null | wc -l || true)
-        echo "$WARNINGS" > "$OUT/warnings.txt"        
-        # Check if kernel image exists
+        echo "$WARNINGS" > "$OUT/warnings.txt"
         if [ ! -f "$IMG" ]; then
             echo "ERROR: Kernel Image not found at $IMG"
             exit 1
-        fi        
-        # Get basic file info
-        file "$IMG" > "$OUT/Image.file"        
-        # Extract kernel version string (non-failing)
+        fi
+        file "$IMG" > "$OUT/Image.file"
         if KERNEL_UNAME_LINE=$(strings "$IMG" 2>/dev/null | grep -E -m1 'Linux version'); then
             KERNEL_UNAME="$KERNEL_UNAME_LINE"
         else
@@ -504,29 +491,33 @@ runs:
             KERNEL_UNAME="(unknown)"
         fi
         echo "Kernel Uname: $KERNEL_UNAME"
-        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"        
-        # Validate architecture
+        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
+        KREL=$(make -s O="$OUT" kernelrelease 2>/dev/null || true)
+        if [ -n "$KREL" ]; then
+          echo "Kernel release (uname -r): $KREL"
+          echo "KERNEL_RELEASE=$KREL" >> "$GITHUB_ENV"
+          echo "kernel_release=$KREL" >> "$GITHUB_OUTPUT"
+        else
+          echo "kernel_release=unknown" >> "$GITHUB_OUTPUT"
+        fi
         if ! file "$IMG" | grep -qi 'ARM64'; then
             echo "Image does not appear to be ARM64:"
             file "$IMG"
             exit 1
-        fi        
-        # Check image size (minimum 6 MiB)
-        MIN_SIZE=$((6 * 1024 * 1024))  # 6 MiB in bytes
+        fi
+        MIN_SIZE=$((6 * 1024 * 1024))
         ACTUAL_SIZE=$(stat -c %s "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
             echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"
             exit 1
-        fi        
-        # Calculate or retrieve SHA256
+        fi
         if [ -f "$OUT/Image.sha256" ]; then
             IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
         else
             IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
             echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
         fi
-        echo "Image sha256: $IMAGE_SHA256"        
-        # Set GitHub Action outputs
+        echo "Image sha256: $IMAGE_SHA256"
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
 
@@ -541,30 +532,25 @@ runs:
           echo "ERROR: Built Image not found"
           exit 1
         fi
-    
-        # Put Image into AnyKernel3
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
-    
-        # Optional hmbird patch logic
         if [ "${{ inputs.model }}" = "OPAce5Pro" ] || [ "${{ inputs.model }}" = "OP13" ]; then
           cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
           patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
         fi
-    
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip"
+        COMMON_DIR="$CONFIG_DIR/kernel_platform/common"
+        SHORTSHA=$(git -C "$COMMON_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        KREL_SAFE="${KERNEL_RELEASE:-unknown}"
+        KREL_SAFE="$(echo "$KREL_SAFE" | sed 's/[^A-Za-z0-9._-]/_/g')"
+        ZIP_NAME="AnyKernel3-${{ inputs.model }}-${KREL_SAFE}-KSU${KSUVER:-NA}-SUS${SUSVER:-NA}-${{ inputs.optimize_level }}-${SHORTSHA}.zip"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
-    
         echo "Creating flashable zip: $ZIP_NAME"
         ( cd "$GITHUB_WORKSPACE/AnyKernel3" && zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null )
-    
-        # Keep only the flashable zip and the model metadata file (assumed already created earlier)
         find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
-    
-        # Output for later steps (optional)
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-    
+        echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+
     - name: Final Build Summary
       shell: bash
       run: |
@@ -573,29 +559,47 @@ runs:
           echo "Model: ${{ inputs.model }}"
           echo "Android: ${{ env.ANDROID_VER }}"
           echo "Kernel base: ${{ env.KERNEL_VER }}"
-          echo "Kernel full: ${{ env.KERNEL_FULL_VER }}"
-          echo "Kernel Uname: ${{ env.KERNEL_UNAME }}"
+          echo "Kernel full (Makefile-derived): ${{ env.KERNEL_FULL_VER }}"
+          echo "Kernel release (uname -r): ${KERNEL_RELEASE:-unknown}"
+          echo "Kernel Uname banner: ${KERNEL_UNAME:-unknown}"
           echo "KSU Version: ${KSUVER:-unknown}"
           echo "SUSFS Version: ${SUSVER:-unknown}"
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "Compiler: ${CLANG_VERSION:-unknown}"
           echo "Warnings: ${{ steps.collect_stats.outputs.warnings }}"
+          echo "ZIP: ${ZIP_NAME:-unknown}"
         } | tee summary.txt
         {
           echo "### Kernel Build Summary"
           echo ""
           echo "- Model: ${{ inputs.model }}"
           echo "- Android: ${{ env.ANDROID_VER }}"
-          echo "- Kernel Version: ${{ steps.save_metadata.outputs.kernel_version }}"
-          echo "- Kernel Uname: ${{ env.KERNEL_UNAME }}"
+          echo "- Kernel Version (Makefile base): ${{ steps.save_metadata.outputs.kernel_version }}"
+          echo "- Kernel Release (uname -r): ${KERNEL_RELEASE:-unknown}"
+          echo "- Kernel Uname (full banner): ${KERNEL_UNAME:-unknown}"
           echo "- KSU Version: ${KSUVER:-unknown}"
-          echo "- SUSFS Version: ${SUSVER:-unknown }}"
+          echo "- SUSFS Version: ${SUSVER:-unknown}"
           echo "- Optimization: ${{ inputs.optimize_level }}"
           echo "- Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "- Warnings: ${{ steps.collect_stats.outputs.warnings }}"
+          echo "- Compiler: ${CLANG_VERSION:-unknown}"
+          echo "- ZIP Name: ${ZIP_NAME:-unknown}"
         } >> "$GITHUB_STEP_SUMMARY"
-    
+
+    - name: Workspace Cleanup (reduce artifact size)
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Disk usage before cleanup:"
+        du -sh $GITHUB_WORKSPACE/* || true
+        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+        find "$CONFIG_DIR" -mindepth 1 -maxdepth 1 -type d ! -name artifacts -exec rm -rf {} +
+        rm -rf "$GITHUB_WORKSPACE/kernel_patches" || true
+        rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git" || true
+        echo "Disk usage after cleanup:"
+        du -sh $GITHUB_WORKSPACE/* || true
+
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
