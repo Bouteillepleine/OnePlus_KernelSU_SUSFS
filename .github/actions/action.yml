@@ -68,7 +68,7 @@ runs:
           libxml2-utils rsync unzip dwarves file python3
         sudo apt-get clean
         echo "::endgroup::"
-
+    
     - name: Setup Base Environment
       shell: bash
       run: |
@@ -81,7 +81,7 @@ runs:
           chmod +x "$REPO"
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
-
+    
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
@@ -114,7 +114,7 @@ runs:
           sleep 30
         done
         $success || { echo "repo sync failed after 3 attempts"; exit 1; }
-
+    
     - name: Get Kernel Version Info
       shell: bash
       run: |
@@ -150,7 +150,7 @@ runs:
         echo "KERNEL_VER=$VERSION.$PATCHLEVEL" >> "$GITHUB_ENV"
         echo "KERNEL_FULL_VER=$ANDROID_VERSION-$FULL_VERSION" >> "$GITHUB_ENV"
         echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL" >> "$GITHUB_ENV"
-
+    
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
@@ -164,7 +164,7 @@ runs:
         fi
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         echo "Using SUSFS branch: $SUSFS_BRANCH"
-        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone --depth=1 https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu
@@ -174,7 +174,7 @@ runs:
           echo "Error: SUSFS branch or ref '$SUSFS_BRANCH' not found."
           exit 1
         fi
-
+    
     - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
@@ -183,7 +183,7 @@ runs:
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         df -h
-
+    
     - name: Add KernelSU Next
       shell: bash
       run: |
@@ -198,7 +198,7 @@ runs:
             -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "${{ inputs.ksun_branch }}"
         fi
         git submodule update --init --recursive
-
+    
     - name: Apply SUSFS Patches
       shell: bash
       run: |
@@ -273,17 +273,18 @@ runs:
           cd ./kernel/sched
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
+          cd ../../
         else
           echo "Not OPAce5Pro / OP13 , skipping fengchi patch"
         fi
-
+    
     - name: Apply KSUN Hooks
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
-
+    
     - name: Apply Hide Stuff Patches
       shell: bash
       run: |
@@ -291,7 +292,7 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         cp ../../../kernel_patches/69_hide_stuff.patch ./
         patch -p1 -F 3 < 69_hide_stuff.patch
-
+    
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -319,7 +320,7 @@ runs:
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
         EOF
-
+    
     - name: Add Oneplus BBR
       shell: bash
       run: |
@@ -335,7 +336,7 @@ runs:
         CONFIG_IPV6_ECN=y
         CONFIG_IP_NF_TARGET_ECN=y
         EOF
-
+    
     - name: Add TTL Target Support
       shell: bash
       run: |
@@ -346,7 +347,7 @@ runs:
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
         EOF
-
+    
     - name: Add Build based configs
       shell: bash
       run: |
@@ -373,7 +374,7 @@ runs:
         CONFIG_DEVKMEM=n
         CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
         EOF
-
+    
     - name: Disable OnePlus Kernel Module
       shell: bash
       run: |
@@ -391,7 +392,35 @@ runs:
         sed -i 's/CONFIG_IIO_FORMAT_KUNIT_TEST=m/CONFIG_IIO_FORMAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
         sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "$CONFIG_FILE"
         sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
-
+    
+    - name: Commit Changes To Remove -dirty
+      shell: bash
+      run: |
+        set -euo pipefail
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        COMMON="$KP/common"
+        cd "$COMMON"
+        git config user.name "CI"
+        git config user.email "ci@localhost"
+        # Commit submodule modifications (KernelSU-Next) first if present
+        if [ -d KernelSU-Next ]; then
+          cd KernelSU-Next
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            git add -A
+            git commit -m "CI: Apply KernelSU-Next patches" || true
+          fi
+          cd ..
+        fi
+        # Commit all kernel changes
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+          git add -A
+          git commit -m "CI: Apply patches and config for clean build" || true
+        else
+          echo "No changes to commit; tree already clean."
+        fi
+        echo "Post-commit git status:"
+        git status --short
+    
     - name: Save Build Metadata
       id: save_metadata
       shell: bash
@@ -403,7 +432,7 @@ runs:
         echo "kernel_version=${{ env.KERNEL_FULL_VER }}" >> "$GITHUB_OUTPUT"
         echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
         echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
-
+    
     - name: Detect Clang (toolchain for build)
       shell: bash
       run: |
@@ -428,7 +457,7 @@ runs:
         CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
         echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
         echo "Detected Clang: $CLANG_VERSION"
-
+    
     - name: Build Kernel
       shell: bash
       run: |
@@ -467,7 +496,7 @@ runs:
           echo "Kernel Image missing"; exit 1
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
-
+    
     - name: Collect Build Stats / Validate Image
       id: collect_stats
       shell: bash
@@ -476,51 +505,63 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
+        cd "$COMMON"
         IMG="$OUT/arch/arm64/boot/Image"
         WARNINGS=$(grep -i -E 'warning:' "$COMMON/build.log" 2>/dev/null | wc -l || true)
         echo "$WARNINGS" > "$OUT/warnings.txt"
         if [ ! -f "$IMG" ]; then
-            echo "ERROR: Kernel Image not found at $IMG"
-            exit 1
+          echo "ERROR: Kernel Image not found at $IMG"
+          exit 1
         fi
         file "$IMG" > "$OUT/Image.file"
         if KERNEL_UNAME_LINE=$(strings "$IMG" 2>/dev/null | grep -E -m1 'Linux version'); then
-            KERNEL_UNAME="$KERNEL_UNAME_LINE"
+          KERNEL_UNAME="$KERNEL_UNAME_LINE"
         else
-            echo "Warning: Could not extract Linux version string from Image."
-            KERNEL_UNAME="(unknown)"
+          echo "Warning: Could not extract Linux version string from Image."
+          KERNEL_UNAME="(unknown)"
         fi
         echo "Kernel Uname: $KERNEL_UNAME"
         echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
-        KREL=$(make -s O="$OUT" kernelrelease 2>/dev/null || true)
-        if [ -n "$KREL" ]; then
-          echo "Kernel release (uname -r): $KREL"
+    
+        # Get raw kernelrelease (header first, then make)
+        KREL_RAW=$(sed -n 's/^#define UTS_RELEASE "\(.*\)"/\1/p' "$OUT/include/generated/utsrelease.h" 2>/dev/null || true)
+        if [ -z "$KREL_RAW" ]; then
+          KREL_RAW=$(make -s O="$OUT" kernelrelease 2>/dev/null || true)
+        fi
+    
+        if [ -n "$KREL_RAW" ]; then
+          KREL="${KREL_RAW%-dirty}"
+          echo "Kernel release raw: $KREL_RAW"
+          echo "Kernel release cleaned: $KREL"
+          echo "KERNEL_RELEASE_RAW=$KREL_RAW" >> "$GITHUB_ENV"
           echo "KERNEL_RELEASE=$KREL" >> "$GITHUB_ENV"
           echo "kernel_release=$KREL" >> "$GITHUB_OUTPUT"
         else
+          echo "Could not determine kernelrelease"
           echo "kernel_release=unknown" >> "$GITHUB_OUTPUT"
         fi
+    
         if ! file "$IMG" | grep -qi 'ARM64'; then
-            echo "Image does not appear to be ARM64:"
-            file "$IMG"
-            exit 1
+          echo "Image does not appear to be ARM64:"
+          file "$IMG"
+          exit 1
         fi
         MIN_SIZE=$((6 * 1024 * 1024))
         ACTUAL_SIZE=$(stat -c %s "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
-            echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"
-            exit 1
+          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"
+          exit 1
         fi
         if [ -f "$OUT/Image.sha256" ]; then
-            IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
+          IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
         else
-            IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
-            echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
+          IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
+          echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
         fi
         echo "Image sha256: $IMAGE_SHA256"
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
-
+    
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -550,7 +591,7 @@ runs:
         find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
         echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-
+    
     - name: Final Build Summary
       shell: bash
       run: |
@@ -559,8 +600,9 @@ runs:
           echo "Model: ${{ inputs.model }}"
           echo "Android: ${{ env.ANDROID_VER }}"
           echo "Kernel base: ${{ env.KERNEL_VER }}"
-          echo "Kernel full (Makefile-derived): ${{ env.KERNEL_FULL_VER }}"
+            echo "Kernel full (Makefile-derived): ${{ env.KERNEL_FULL_VER }}"
           echo "Kernel release (uname -r): ${KERNEL_RELEASE:-unknown}"
+          echo "Kernel release raw: ${KERNEL_RELEASE_RAW:-unknown}"
           echo "Kernel Uname banner: ${KERNEL_UNAME:-unknown}"
           echo "KSU Version: ${KSUVER:-unknown}"
           echo "SUSFS Version: ${SUSVER:-unknown}"
@@ -577,6 +619,7 @@ runs:
           echo "- Android: ${{ env.ANDROID_VER }}"
           echo "- Kernel Version (Makefile base): ${{ steps.save_metadata.outputs.kernel_version }}"
           echo "- Kernel Release (uname -r): ${KERNEL_RELEASE:-unknown}"
+          echo "- Kernel Release (raw): ${KERNEL_RELEASE_RAW:-unknown}"
           echo "- Kernel Uname (full banner): ${KERNEL_UNAME:-unknown}"
           echo "- KSU Version: ${KSUVER:-unknown}"
           echo "- SUSFS Version: ${SUSVER:-unknown}"
@@ -586,7 +629,7 @@ runs:
           echo "- Compiler: ${CLANG_VERSION:-unknown}"
           echo "- ZIP Name: ${ZIP_NAME:-unknown}"
         } >> "$GITHUB_STEP_SUMMARY"
-
+    
     - name: Workspace Cleanup (reduce artifact size)
       shell: bash
       run: |
@@ -599,7 +642,7 @@ runs:
         rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git" || true
         echo "Disk usage after cleanup:"
         du -sh $GITHUB_WORKSPACE/* || true
-
+    
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
