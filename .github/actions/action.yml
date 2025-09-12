@@ -385,132 +385,179 @@ runs:
         sed -i 's/CONFIG_EXT4_KUNIT_TESTS=m/CONFIG_EXT4_KUNIT_TESTS=n/g' "$CONFIG_FILE"
         sed -i 's/CONFIG_FAT_KUNIT_TEST=m/CONFIG_FAT_KUNIT_TEST=n/g' "$CONFIG_FILE"
 
+    - name: Sanitize Version Decoration (no + / -dirty)
+      id: sanitize_versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        cd "$KP"
+    
+        echo "[info] Sanitizing version / suffix scripts."
+    
+        backup_file() {
+          local f="$1"
+          [ -f "$f" ] || return 0
+          local b="${f}.orig.keep"
+          if [ ! -f "$b" ]; then
+            cp -p "$f" "$b"
+            echo "  [backup] $f -> $b"
+          fi
+        }
+    
+        atomic_edit() {
+          # atomic_edit <file> <sed/awk shell block>
+          local f="$1"; shift
+          [ -f "$f" ] || return 0
+          local tmp
+            tmp="$(mktemp "${f##*/}.XXXXXX")"
+          # shellcheck disable=SC2016
+          if ! bash -c "$*" < "$f" > "$tmp"; then
+            echo "[error] atomic edit failed for $f"; rm -f "$tmp"; return 1
+          fi
+          if ! cmp -s "$f" "$tmp"; then
+            mv "$tmp" "$f"
+            echo "  [edit] $f"
+          else
+            rm -f "$tmp"
+          fi
+        }
+    
+        # Disable a lone 'check_defconfig' invocation line (exact match)
+        if [ -f common/build.config.gki ]; then
+          backup_file common/build.config.gki
+          atomic_edit common/build.config.gki '
+            awk '\''{
+              if($0 ~ /^[[:space:]]*check_defconfig[[:space:]]*$/){
+                print "# DISABLED: check_defconfig"
+              } else {
+                print
+              }
+            }'\''
+          '
+        fi
+    
+        patch_setlocalversion() {
+          local f="$1"
+          [ -f "$f" ] || { echo "  [skip] $f"; return; }
+          backup_file "$f"
+          atomic_edit "$f" '
+            awk '\''{
+              # Drop lines that are ONLY res="$res+"
+              if($0 ~ /^[[:space:]]*res="\$res\+";?[[:space:]]*$/) next
+              line=$0
+              gsub(/-maybe-dirty/,"", line)
+              gsub(/-dirty/,"", line)
+              # Normalize multiple dashes (avoid collapsing start of shebang etc.)
+              # Only operate on lines that changed or contain two consecutive dashes
+              while(line ~ /--/) { gsub(/--+/, "-", line) }
+              print line
+            }'\''
+          '
+          # Harden final echo to strip trailing plus if any other logic re-adds it.
+          if grep -q 'echo "$res"' "$f"; then
+            sed -i 's|echo "\$res"|echo "${res%%+}"|' "$f"
+            echo "  [harden] replaced echo \$res in $f"
+          fi
+          if grep -q 'echo "$res"' "$f"; then
+            # If alternative quoting remains (rare), patch those too.
+            sed -i 's|echo "$res"|echo "${res%%+}"|g' "$f"
+          fi
+        }
+    
+        patch_setlocalversion common/scripts/setlocalversion
+        patch_setlocalversion msm-kernel/scripts/setlocalversion
+        patch_setlocalversion external/dtc/scripts/setlocalversion
+    
+        # KLeaf stamp logic
+        if [ -f build/kernel/kleaf/impl/stamp.bzl ]; then
+          backup_file build/kernel/kleaf/impl/stamp.bzl
+          sed -i 's/-maybe-dirty//g; s/-dirty//g' build/kernel/kleaf/impl/stamp.bzl
+        fi
+    
+        if [ -f build/kernel/kleaf/workspace_status_stamp.py ]; then
+          backup_file build/kernel/kleaf/workspace_status_stamp.py
+          sed -i 's/-maybe-dirty//g; s/-dirty//g' build/kernel/kleaf/workspace_status_stamp.py
+        fi
+    
+        echo "[info] Verifying removal..."
+        FAIL=0
+        check_residual() {
+          local pat="$1" desc="$2"
+          if grep -R -q -- "$pat" common msm-kernel external build 2>/dev/null; then
+            echo "[warn] Residual $desc ($pat):"
+            grep -R -n -- "$pat" common msm-kernel external build || true
+            FAIL=1
+          fi
+        }
+        check_residual "-dirty" "-dirty token"
+        check_residual "-maybe-dirty" "-maybe-dirty token"
+        if grep -R -q -E '^[[:space:]]*res="\$res\+"' common msm-kernel external 2>/dev/null; then
+          echo "[warn] Residual res=\"\$res+\" appender:"
+          grep -R -n -E '^[[:space:]]*res="\$res\+"' common msm-kernel external || true
+          FAIL=1
+        fi
+    
+        if [ $FAIL -eq 1 ]; then
+          echo "[error] Sanitization incomplete."
+          exit 1
+        fi
+    
+        echo "SANITIZE_DONE=1" >> "$GITHUB_ENV"
+        echo "[info] Version decoration sanitized successfully."
+
     - name: Commit Applied Patches & Config Edits
       shell: bash
       run: |
         set -euo pipefail
         KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        COMMON="$KP/common"
-        cd "$COMMON"
-        git config user.name "CI"
-        git config user.email "ci@localhost"
-        if [ -d KernelSU-Next ]; then
-          cd KernelSU-Next
+    
+        git_user_cfg() {
+          git config user.name "CI"
+          git config user.email "ci@localhost"
+        }
+    
+        REPOS=(
+          "common"
+          "common/KernelSU-Next"
+          "msm-kernel"
+          "external/dtc"
+          "build/kernel/kleaf"
+        )
+    
+        for r in "${REPOS[@]}"; do
+          [ -d "$KP/$r/.git" ] || continue
+          cd "$KP/$r"
+          git_user_cfg
           if ! git diff --quiet || ! git diff --cached --quiet; then
             git add -A
-            git commit -m "CI: Apply KernelSU-Next patches" || true
+            msg="CI: Apply patches + config (${r})"
+            git commit -m "$msg" || true
+            echo "[commit] $r -> $msg"
+          else
+            echo "[clean] $r has no changes"
           fi
-          cd ..
-        fi
-        if ! git diff --quiet || ! git diff --cached --quiet; then
-          git add -A
-          git commit -m "CI: Apply patches and config for clean build" || true
-        else
-          echo "No changes to commit; tree already clean."
-        fi
-        git status --short
-
-    - name: Customize Kernel Branding
-      id: branding
-      shell: bash
-      run: |
-        set -euo pipefail
-  
-        MAX_UTS_LEN=64
-  
-        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        COMMON="$KERNEL_PATH/common"
-        cd "$COMMON"
-  
-        # Extract kernel numeric version parts
-        KV_MAJOR=$(grep -E '^VERSION[[:space:]]=' Makefile | awk '{print $3}')
-        KV_MINOR=$(grep -E '^PATCHLEVEL[[:space:]]=' Makefile | awk '{print $3}')
-        KV_SUBLVL=$(grep -E '^SUBLEVEL[[:space:]]*=' Makefile | awk '{print $3}')
-        : "${KV_MAJOR:?Missing VERSION in Makefile}"
-        : "${KV_MINOR:?Missing PATCHLEVEL in Makefile}"
-        : "${KV_SUBLVL:?Missing SUBLEVEL in Makefile}"
-  
-        BASE_NUM="${KV_MAJOR}.${KV_MINOR}.${KV_SUBLVL}"
-        ANDROID_VER="${ANDROID_VER:-androidX}"
-        RAW_BRANCH="${BRANCH_VALUE:-unknown-branch}"
-  
-        # Sanitize branch token:
-        # - Allow only A-Za-z0-9 . _ + -
-        # - Replace others with '-'
-        # - Collapse repeated '-'
-        # - Trim leading/trailing '-'
-        sanitize_branch() {
-          local in="$1" out
-          out="${in//[^A-Za-z0-9._+-]/-}"
-          out="$(printf '%s' "$out" | sed -E 's/-+/-/g; s/^-//; s/-$//')"
-          [ -z "$out" ] && out="branch"
-          printf '%s' "$out"
-        }
-  
-        BRANCH_TOKEN="$(sanitize_branch "$RAW_BRANCH")"
-        ORIGINAL_BRANCH_TOKEN="$BRANCH_TOKEN"
-  
-        # Full git hash (40 chars)
-        FULL_HASH="$(git rev-parse HEAD 2>/dev/null || echo 0000000000000000000000000000000000000000)"
-  
-        # Compute maximum allowed branch length
-        # Pattern: BASE_NUM - ANDROID_VER - KV_SUBLVL - BRANCH_TOKEN - FULL_HASH
-        # Hyphens = 4, hash = 40 chars
-        calc_max_branch_len() {
-          local base_len=${#BASE_NUM}
-          local android_len=${#ANDROID_VER}
-          local sub_len=${#KV_SUBLVL}
-          echo $(( MAX_UTS_LEN - ( base_len + 1 + android_len + 1 + sub_len + 1 + 1 + 40 ) ))
-        }
-  
-        MAX_BRANCH_LEN="$(calc_max_branch_len)"
-  
-        if [ "$MAX_BRANCH_LEN" -lt 1 ]; then
-          echo "ERROR: Pattern cannot fit even a 1-char branch token while preserving full hash."
-          exit 1
-        fi
-  
-        if [ "${#BRANCH_TOKEN}" -gt "$MAX_BRANCH_LEN" ]; then
-          BRANCH_TOKEN="${BRANCH_TOKEN:0:$MAX_BRANCH_LEN}"
-          echo "Trimming branch token from '${ORIGINAL_BRANCH_TOKEN}' to '${BRANCH_TOKEN}' (max $MAX_BRANCH_LEN chars)."
-        fi
-  
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-${KV_SUBLVL}-${BRANCH_TOKEN}-${FULL_HASH}"
-        CANDIDATE="${BASE_NUM}${CUSTOM_LOCALVERSION}"
-  
-        if [ "${#CANDIDATE}" -gt "$MAX_UTS_LEN" ]; then
-          echo "ERROR: UTS_RELEASE still exceeds ${MAX_UTS_LEN} chars (${#CANDIDATE})."
-          echo "Computed: ${CANDIDATE}"
-          exit 1
-        fi
-  
-        echo "Planned UTS_RELEASE: $CANDIDATE"
-        echo " Length: ${#CANDIDATE} / ${MAX_UTS_LEN}"
-        echo " Components:"
-        echo "   BASE_NUM        = ${BASE_NUM}"
-        echo "   ANDROID_VER     = ${ANDROID_VER}"
-        echo "   KV_SUBLVL       = ${KV_SUBLVL}"
-        echo "   BRANCH_TOKEN    = ${BRANCH_TOKEN} (original: ${ORIGINAL_BRANCH_TOKEN})"
-        echo "   FULL_HASH       = ${FULL_HASH}"
-  
-        {
-          echo "CUSTOM_LOCALVERSION=${CUSTOM_LOCALVERSION}"
-          echo "FULL_HASH=${FULL_HASH}"
-          echo "BRANCH_TOKEN=${BRANCH_TOKEN}"
-          echo "FINAL_UTS_CANDIDATE=${CANDIDATE}"
-        } >> "$GITHUB_ENV"
-
-    - name: Save Build Metadata
-      id: save_metadata
-      shell: bash
-      run: |
-        set -euo pipefail
-        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        cd "$ARTIFACTS_DIR"
-        echo "kernel_version=${{ env.KERNEL_FULL_VER }}" >> "$GITHUB_OUTPUT"
-        echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
-        echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
+        done
+    
+        echo "[status] Final short status:"
+        for r in "${REPOS[@]}"; do
+          [ -d "$KP/$r/.git" ] || continue
+          cd "$KP/$r"
+          echo "--- $r ---"
+          git status --short
+        done
+    
+        - name: Save Build Metadata
+          id: save_metadata
+          shell: bash
+          run: |
+            set -euo pipefail
+            CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+            ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+            cd "$ARTIFACTS_DIR"
+            echo "kernel_version=${{ env.KERNEL_FULL_VER }}" >> "$GITHUB_OUTPUT"
+            echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
+            echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
 
     - name: Detect Clang (toolchain for build)
       shell: bash
