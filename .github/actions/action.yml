@@ -415,43 +415,90 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+  
+        MAX_UTS_LEN=64
+  
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
-        KV_MAJOR=$(grep '^VERSION *=' Makefile | awk '{print $3}')
-        KV_MINOR=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
-        KV_SUBLVL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
+  
+        # Extract kernel numeric version parts
+        KV_MAJOR=$(grep -E '^VERSION[[:space:]]=' Makefile | awk '{print $3}')
+        KV_MINOR=$(grep -E '^PATCHLEVEL[[:space:]]=' Makefile | awk '{print $3}')
+        KV_SUBLVL=$(grep -E '^SUBLEVEL[[:space:]]*=' Makefile | awk '{print $3}')
+        : "${KV_MAJOR:?Missing VERSION in Makefile}"
+        : "${KV_MINOR:?Missing PATCHLEVEL in Makefile}"
+        : "${KV_SUBLVL:?Missing SUBLEVEL in Makefile}"
+  
         BASE_NUM="${KV_MAJOR}.${KV_MINOR}.${KV_SUBLVL}"
         ANDROID_VER="${ANDROID_VER:-androidX}"
         RAW_BRANCH="${BRANCH_VALUE:-unknown-branch}"
-        BRANCH_TOKEN="$(printf '%s' "$RAW_BRANCH" | tr -c 'A-Za-z0-9._-+' '-')"
-        [ -z "$BRANCH_TOKEN" ] && BRANCH_TOKEN="branch"
+  
+        # Sanitize branch token:
+        # - Allow only A-Za-z0-9 . _ + -
+        # - Replace others with '-'
+        # - Collapse repeated '-'
+        # - Trim leading/trailing '-'
+        sanitize_branch() {
+          local in="$1" out
+          out="${in//[^A-Za-z0-9._+-]/-}"
+          out="$(printf '%s' "$out" | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+          [ -z "$out" ] && out="branch"
+          printf '%s' "$out"
+        }
+  
+        BRANCH_TOKEN="$(sanitize_branch "$RAW_BRANCH")"
+        ORIGINAL_BRANCH_TOKEN="$BRANCH_TOKEN"
+  
+        # Full git hash (40 chars)
         FULL_HASH="$(git rev-parse HEAD 2>/dev/null || echo 0000000000000000000000000000000000000000)"
+  
+        # Compute maximum allowed branch length
+        # Pattern: BASE_NUM - ANDROID_VER - KV_SUBLVL - BRANCH_TOKEN - FULL_HASH
+        # Hyphens = 4, hash = 40 chars
+        calc_max_branch_len() {
+          local base_len=${#BASE_NUM}
+          local android_len=${#ANDROID_VER}
+          local sub_len=${#KV_SUBLVL}
+          echo $(( MAX_UTS_LEN - ( base_len + 1 + android_len + 1 + sub_len + 1 + 1 + 40 ) ))
+        }
+  
+        MAX_BRANCH_LEN="$(calc_max_branch_len)"
+  
+        if [ "$MAX_BRANCH_LEN" -lt 1 ]; then
+          echo "ERROR: Pattern cannot fit even a 1-char branch token while preserving full hash."
+          exit 1
+        fi
+  
+        if [ "${#BRANCH_TOKEN}" -gt "$MAX_BRANCH_LEN" ]; then
+          BRANCH_TOKEN="${BRANCH_TOKEN:0:$MAX_BRANCH_LEN}"
+          echo "Trimming branch token from '${ORIGINAL_BRANCH_TOKEN}' to '${BRANCH_TOKEN}' (max $MAX_BRANCH_LEN chars)."
+        fi
+  
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-${KV_SUBLVL}-${BRANCH_TOKEN}-${FULL_HASH}"
         CANDIDATE="${BASE_NUM}${CUSTOM_LOCALVERSION}"
-        if [ "${#CANDIDATE}" -gt 64 ]; then
-          FIXED_LEN=$(( ${#BASE_NUM} + 1 + ${#ANDROID_VER} + 1 + ${#KV_SUBLVL} + 1 + 1 + 40 ))
-          MAX_BRANCH_LEN=$((64 - FIXED_LEN))
-          if [ "$MAX_BRANCH_LEN" -lt 1 ]; then
-            echo "ERROR: Pattern too long even with 1-char branch."
-            exit 1
-          fi
-          ORIG_BRANCH="$BRANCH_TOKEN"
-          BRANCH_TOKEN="$(printf '%s' "$BRANCH_TOKEN" | cut -c1-$MAX_BRANCH_LEN)"
-          [ -z "$BRANCH_TOKEN" ] && BRANCH_TOKEN="b"
-          echo "Trimming branch token from '$ORIG_BRANCH' to '$BRANCH_TOKEN'."
-          CUSTOM_LOCALVERSION="-${ANDROID_VER}-${KV_SUBLVL}-${BRANCH_TOKEN}-${FULL_HASH}"
-          CANDIDATE="${BASE_NUM}${CUSTOM_LOCALVERSION}"
-          if [ "${#CANDIDATE}" -gt 64 ]; then
-            echo "ERROR: Still exceeds 64 chars after trimming."
-            exit 1
-          fi
+  
+        if [ "${#CANDIDATE}" -gt "$MAX_UTS_LEN" ]; then
+          echo "ERROR: UTS_RELEASE still exceeds ${MAX_UTS_LEN} chars (${#CANDIDATE})."
+          echo "Computed: ${CANDIDATE}"
+          exit 1
         fi
+  
         echo "Planned UTS_RELEASE: $CANDIDATE"
-        echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
-        echo "FULL_HASH=$FULL_HASH" >> "$GITHUB_ENV"
-        echo "BRANCH_TOKEN=$BRANCH_TOKEN" >> "$GITHUB_ENV"
-        echo "FINAL_UTS_CANDIDATE=$CANDIDATE" >> "$GITHUB_ENV"
+        echo " Length: ${#CANDIDATE} / ${MAX_UTS_LEN}"
+        echo " Components:"
+        echo "   BASE_NUM        = ${BASE_NUM}"
+        echo "   ANDROID_VER     = ${ANDROID_VER}"
+        echo "   KV_SUBLVL       = ${KV_SUBLVL}"
+        echo "   BRANCH_TOKEN    = ${BRANCH_TOKEN} (original: ${ORIGINAL_BRANCH_TOKEN})"
+        echo "   FULL_HASH       = ${FULL_HASH}"
+  
+        {
+          echo "CUSTOM_LOCALVERSION=${CUSTOM_LOCALVERSION}"
+          echo "FULL_HASH=${FULL_HASH}"
+          echo "BRANCH_TOKEN=${BRANCH_TOKEN}"
+          echo "FINAL_UTS_CANDIDATE=${CANDIDATE}"
+        } >> "$GITHUB_ENV"
 
     - name: Save Build Metadata
       id: save_metadata
