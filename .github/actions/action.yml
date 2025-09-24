@@ -268,7 +268,7 @@ runs:
         fi
         echo "susfs"
         patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
-        echo "susfs_patch完成"
+        echo "susfs_patch"
 
     - name: Record SUSFS Version
       shell: bash
@@ -298,13 +298,13 @@ runs:
         if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
           echo "Invoking kprobe hook"
         elif [ "${{ inputs.HOOK }}" = "manual" ]; then
-          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          cp ../../SukiSU_patch/hooks/scope_min_manual_hooks_v1.5.patch ./
           echo "Invoking manual hook"
-          patch -p1 -F 3 < syscall_hooks.patch
+          patch -p1 -F 3 < scope_min_manual_hooks_v1.5.patch
         elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
-          cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
+          cp ../../SukiSU_patch/hooks/sukisu_tracepoint_hooks_v1.1.patch ./
           echo "Invoking tracepoint hook"
-          patch -p1 -F 3 < tracepoint_hooks.patch
+          patch -p1 -F 3 < sukisu_tracepoint_hooks_v1.1.patch
         fi
 
     - name: Convert HMBIRD_OGKI to HMBIRD_GKI (6.6 only)
@@ -546,25 +546,25 @@ runs:
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
 
-    - name: Apply KPM patch (optional)
-      if: ${{ inputs.KPM }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        OUT="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform/common/out"
-        FINAL="$OUT/Final-Image"
-        mkdir -p "$FINAL"
-        cp "$OUT/arch/arm64/boot/Image" "$FINAL/Image"
-        cd "$FINAL"
-        curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
-        chmod +x patch_linux
-        if ./patch_linux; then
-          [[ -f oImage ]] && mv oImage Image
-          cp Image "$GITHUB_WORKSPACE/AnyKernel3/Image"
-          echo "KPM patch applied."
-        else
-          echo "KPM patch failed; using original Image."
-        fi
+#    - name: Apply KPM patch (optional)
+#      if: ${{ inputs.KPM }}
+#      shell: bash
+#      run: |
+#        set -euo pipefail
+#        OUT="$GITHUB_WORKSPACE/${CONFIG}/kernel_platform/common/out"
+#        FINAL="$OUT/Final-Image"
+#        mkdir -p "$FINAL"
+#        cp "$OUT/arch/arm64/boot/Image" "$FINAL/Image"
+#        cd "$FINAL"
+#        curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
+#        chmod +x patch_linux
+#        if ./patch_linux; then
+#          [[ -f oImage ]] && mv oImage Image
+#          cp Image "$GITHUB_WORKSPACE/AnyKernel3/Image"
+#          echo "KPM patch applied."
+#        else
+#          echo "KPM patch failed; using original Image."
+#        fi
 
     - name: Create Flashable ZIP
       id: create_zip
