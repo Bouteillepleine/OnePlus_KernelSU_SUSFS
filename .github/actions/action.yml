@@ -1,4 +1,4 @@
-name: Build
+name: Build and Release OnePlus Kernels
 
 permissions:
   contents: write
@@ -313,7 +313,7 @@ runs:
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
         EOF
-
+        
     - name: Add Oneplus BBR
       shell: bash
       run: |
