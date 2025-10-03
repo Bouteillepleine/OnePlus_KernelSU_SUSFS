@@ -160,7 +160,7 @@ runs:
         fi
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         echo "Using SUSFS branch: $SUSFS_BRANCH"
-        git clone --depth=1 https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu
@@ -179,16 +179,6 @@ runs:
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         df -h
-
-    - name: Add BBG
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        echo "Adding BBG..."
-        wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
-        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/landlock/landlock,baseband_guard/ } }' common/security/Kconfig
 
     - name: Add KernelSU Next
       shell: bash
@@ -271,7 +261,7 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13-CN" ] || [ "${{ inputs.model }}" == "OP13-GLO" ]; then
+        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ] || [ "${{ inputs.model }}" == "OP13-GLO" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
           patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
@@ -280,7 +270,7 @@ runs:
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13-CN / OP13-GLO , skipping fengchi patch"
+          echo "Not OPAce5Pro / OP13 / OP13-GLO , skipping fengchi patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -332,8 +322,7 @@ runs:
         CONFIG_IP_ECN=y
         CONFIG_TCP_ECN=y
         CONFIG_IPV6_ECN=y
-        CONFIG_IP_NF_TARGET_ECN=y
-        CONFIG_BBG=y
+        CONFIG_IP_NF_TARGET_ECN=y        
         EOF
 
     - name: Add TTL Target Support
