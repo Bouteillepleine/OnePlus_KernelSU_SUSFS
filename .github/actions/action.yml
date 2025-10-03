@@ -160,9 +160,9 @@ runs:
         fi
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         echo "Using SUSFS branch: $SUSFS_BRANCH"
-        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone --depth=1 https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
-        git clone https://gitlab.com/luigimak/susfs4ksu.git
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
         cd susfs4ksu
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
           git checkout "$SUSFS_BRANCH"
@@ -179,6 +179,16 @@ runs:
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         df -h
+
+    - name: Add BBG
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        echo "Adding BBG..."
+        wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/landlock/landlock,baseband_guard/ } }' common/security/Kconfig
 
     - name: Add KernelSU Next
       shell: bash
@@ -231,7 +241,7 @@ runs:
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
             patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
-          "v1.5.9")
+          "v1.5.9"|"v1.5.10"|"v1.5.11")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
@@ -239,10 +249,6 @@ runs:
               patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
             done
             patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
-            ;;
-          "v1.5.10")
-            cp ../../../susfs4ksu/kernel_patches/KernelSU-Next/enable_susfs_1.5.10_for_ksuN_1.1.1.patch ./
-            patch -p1 --forward < enable_susfs_1.5.10_for_ksuN_1.1.1.patch  || true
             ;;
           *)
             echo "Invalid version: $susfs_version"
@@ -265,7 +271,7 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
-        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ] || [ "${{ inputs.model }}" == "OP13-GLO" ]; then
+        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13-CN" ] || [ "${{ inputs.model }}" == "OP13-GLO" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
           patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
@@ -274,7 +280,7 @@ runs:
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not OPAce5Pro / OP13 / OP13-GLO , skipping fengchi patch"
+          echo "Not OPAce5Pro / OP13-CN / OP13-GLO , skipping fengchi patch"
         fi
 
     - name: Apply KSUN Hooks
@@ -283,7 +289,7 @@ runs:
         set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
-
+        
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -327,6 +333,7 @@ runs:
         CONFIG_TCP_ECN=y
         CONFIG_IPV6_ECN=y
         CONFIG_IP_NF_TARGET_ECN=y
+        CONFIG_BBG=y
         EOF
 
     - name: Add TTL Target Support
