@@ -28,7 +28,7 @@ inputs:
   optimize_level:
     required: false
     type: string
-    default: O2  # Choices: O2 or O3
+    default: O2
   build_only_modules:
     required: false
     type: boolean
@@ -76,10 +76,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Derive a unique build directory name
         CONFIG="${{ inputs.model }}"
         echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
-        # Install repo tool if missing
         REPO="/usr/local/bin/repo"
         if [ ! -x "$REPO" ]; then
           curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
@@ -116,7 +114,7 @@ runs:
         $success || { echo "repo sync failed after 3 attempts"; exit 1; }
 
     - name: Get Kernel Version Info
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -153,7 +151,7 @@ runs:
         echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL" >> "$GITHUB_ENV"
 
     - name: Clone AnyKernel3 and Other Dependencies
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -178,7 +176,7 @@ runs:
         fi
 
     - name: Clean Up ABI Protected Exports
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -188,7 +186,7 @@ runs:
         df -h
 
     - name: Add BBG
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -199,7 +197,7 @@ runs:
         sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/landlock/landlock,baseband_guard/ } }' common/security/Kconfig
 
     - name: Add KernelSU Next
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -215,7 +213,7 @@ runs:
         git submodule update --init --recursive
 
     - name: Apply SUSFS Patches
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -283,7 +281,7 @@ runs:
         fi
 
     - name: Apply KSUN Hooks
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -291,13 +289,12 @@ runs:
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
 
     - name: Add KernelSU-Next and SUSFS Configuration Settings
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        # Remove indentation to avoid leading spaces
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
         CONFIG_KSU_SUSFS=y
@@ -321,12 +318,12 @@ runs:
         EOF
 
     - name: Add Oneplus BBR
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
         CONFIG_NET_SCH_FQ=y
@@ -334,40 +331,40 @@ runs:
         EOF
 
     - name: Add Nethunter inline configs
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_BT_HCIBTUSB=y
         CONFIG_BT_HCIBTUSB_BCM=y
         CONFIG_BT_HCIBTUSB_RTL=y
         CONFIG_BT_HCIVHCI=y
-        
+
         CONFIG_USB_AIRSPY=y
         CONFIG_USB_HACKRF=y
         EOF
 
     - name: Add TTL Target Support
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
         EOF
 
     - name: Add Build based configs
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_LTO_CLANG_THIN=y
         CONFIG_LTO_CLANG=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
@@ -376,7 +373,7 @@ runs:
         EOF
 
     - name: Save Build Metadata
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       id: save_metadata
       shell: bash
       run: |
@@ -389,7 +386,7 @@ runs:
         echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
 
     - name: Customize Kernel Branding
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -400,7 +397,7 @@ runs:
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Detect Clang (toolchain for build)
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -426,7 +423,7 @@ runs:
         echo "Detected Clang: $CLANG_VERSION"
 
     - name: Build Common Kernel
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -471,20 +468,20 @@ runs:
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
 
-    - name: Add nethunter specfic drivers already present in kernel to be built as modules
+    - name: Add nethunter specific drivers built as modules
       shell: bash
       run: |
         set -euo pipefail
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         MSM="$KERNEL_PATH/msm-kernel"
         cd "$MSM"
-        cat >> arch/arm64/configs/gki_defconfig <<EOF
+        cat >> arch/arm64/configs/gki_defconfig <<'EOF'
 
         CONFIG_WLAN_VENDOR_REALTEK=y
 
         CONFIG_WLAN_VENDOR_ATH=y
         CONFIG_ATH_COMMON=m
-        
+
         CONFIG_ATH9K=m
         CONFIG_ATH9K_HW=m
         CONFIG_ATH9K_HTC=m
@@ -536,33 +533,36 @@ runs:
         sed -i 's/$(CONFIG_RTW88)/m/g' Makefile
         sed -i '/^source "drivers\/net\/wireless\/realtek\/rtw88\/Kconfig"$/s/.*/ /' Kconfig
 
-    - name: Build Kernel Modules 
+    - name: Build Kernel Modules
       shell: bash
       run: |
         set -euo pipefail
         KERNEL_PLATFORM="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-
-        export CLANG_BIN_PATH="$KERNEL_PLATFORM/prebuilts/clang/host/linux-x86/clang-r450784e/bin"
-        export PATH="$CLANG_BIN_PATH:$PATH"  
-        
         MSM="$KERNEL_PLATFORM/msm-kernel"
         cd "$MSM"
+
+        # Use detected clang if available
+        if [ -n "${CLANG_BIN_PATH:-}" ] && [ -x "${CLANG_BIN_PATH}/clang" ]; then
+          export PATH="${CLANG_BIN_PATH}:$PATH"
+        fi
 
         # Merge defconfig fragments from vendor/kalama_GKI.config
         cat arch/arm64/configs/vendor/kalama_GKI.config >> ./arch/arm64/configs/gki_defconfig
 
-        # Thin LTO
-        echo "CONFIG_LTO_CLANG_THIN=y" >> ./arch/arm64/configs/gki_defconfig                                                                            
-        echo "CONFIG_LTO_CLANG=y" >> ./arch/arm64/configs/gki_defconfig
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "./arch/arm64/configs/gki_defconfig"
-        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "./arch/arm64/configs/gki_defconfig"
+        # Thin LTO and performance flags
+        {
+          echo "CONFIG_LTO_CLANG_THIN=y"
+          echo "CONFIG_LTO_CLANG=y"
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y"
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n"
+        } >> "./arch/arm64/configs/gki_defconfig"
 
         INSTALL_MOD_PATH="$MSM/out"
-        
+
         echo "Building kernel modules..."
-        make ARCH=arm64 LLVM=1 O=out gki_defconfig   
-        make -j$(nproc --all) ARCH=arm64 LLVM=1 O=out modules       
-        make -j$(nproc --all) ARCH=arm64 LLVM=1 O=out INSTALL_MOD_PATH=$INSTALL_MOD_PATH modules_install
+        make ARCH=arm64 LLVM=1 O=out gki_defconfig
+        make -j"$(nproc --all)" ARCH=arm64 LLVM=1 O=out modules
+        make -j"$(nproc --all)" ARCH=arm64 LLVM=1 O=out INSTALL_MOD_PATH="$INSTALL_MOD_PATH" modules_install
 
     - name: Filter modules
       shell: bash
@@ -571,21 +571,19 @@ runs:
         KERNEL_PLATFORM="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         MSM="$KERNEL_PLATFORM/msm-kernel"
         OUT="$MSM/out"
-        UNAME=$(ls "$OUT/lib/modules/")
+        UNAME=$(ls "$OUT/lib/modules/" | head -n1)
 
         echo "Copying all modules to $OUT/modules"
         cd "$OUT"
         mkdir -p modules
-        find lib/modules/"$UNAME" -type f -name '*.ko' -exec cp {} modules/ \;
+        find "lib/modules/$UNAME" -type f -name '*.ko' -exec cp {} modules/ \;
         echo "Total modules copied: $(find modules -type f -name '*.ko' | wc -l)"
 
         echo "Removing unnecessary modules..."
         cd modules
-        # Download default module list
         curl -L -o default_modules.txt https://raw.githubusercontent.com/0x-br0k3n/kernel_patches/refs/heads/main/default_modules.txt
-        # Remove modules in the default list
-        
         while IFS= read -r module; do
+          [ -z "$module" ] && continue
           if [ -e "$module" ]; then
             rm -f "$module"
             echo "Removed module: $module"
@@ -595,7 +593,7 @@ runs:
         echo "Modules remaining after filtering: $(find modules -type f -name '*.ko' | wc -l)"
 
     - name: Collect Build Stats / Validate Image
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       id: collect_stats
       shell: bash
       run: |
@@ -604,29 +602,43 @@ runs:
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
         IMG="$OUT/arch/arm64/boot/Image"
+
         WARNINGS=$(grep -i -E 'warning:' "$COMMON/build.log" | wc -l || true)
         echo "$WARNINGS" > "$OUT/warnings.txt"
-        file "$IMG" > "$OUT/Image.file"
-        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
-        echo "Kernel Uname: $KERNEL_UNAME"
+        file "$IMG" > "$OUT/Image.file" || true
+
+        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1 || true)
+        echo "Kernel Uname: ${KERNEL_UNAME:-<unknown>}"
         echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
+
         if ! file "$IMG" | grep -qi 'ARM64'; then
           echo "Image does not appear to be ARM64:"
-          file "$IMG"
+          file "$IMG" || true
           exit 1
         fi
+
         MIN_SIZE=$((6*1024*1024))
         ACTUAL_SIZE=$(stat -c %s "$IMG")
+        echo "Image size: $ACTUAL_SIZE bytes (min $MIN_SIZE)"
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
           echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
         fi
-        IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
+
+        if [ -f "$OUT/Image.sha256" ]; then
+          IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256" || true)
+        fi
+        if [ -z "${IMAGE_SHA256:-}" ]; then
+          echo "WARN: $OUT/Image.sha256 missing or empty; recomputing"
+          IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
+          echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
+        fi
         echo "Image sha256: $IMAGE_SHA256"
+
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
 
     - name: Build Only Modules
-      if: ${{ inputs.build_only_modules == 'true' }}
+      if: ${{ inputs.build_only_modules == true }}
       shell: bash
       run: |
         set -euo pipefail
@@ -641,7 +653,7 @@ runs:
         echo "Packaged kernel modules to $MODULES_ZIP"
 
     - name: Create Kernel & Modules ZIP
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       id: create_zip
       shell: bash
       run: |
@@ -653,7 +665,6 @@ runs:
           exit 1
         fi
 
-        # Put Image into AnyKernel3
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
 
@@ -664,20 +675,17 @@ runs:
         echo "Creating flashable zip: $ZIP_NAME"
         ( cd "$GITHUB_WORKSPACE/AnyKernel3" && zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null )
 
-        # Package all .ko files from msm-kernel/out into a separate zip
         MODULES_SRC="$CONFIG_DIR/kernel_platform/msm-kernel/out/modules"
         MODULES_ZIP="$ARTIFACTS_DIR/kernel_modules_${{ inputs.model }}.zip"
         find "$MODULES_SRC" -type f -name '*.ko' -print0 | xargs -0 zip -j "$MODULES_ZIP"
         echo "Packaged kernel modules to $MODULES_ZIP"
 
-        # Keep only the flashable zip and the model metadata file (assumed already created earlier)
         find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" ! -name "$(basename "$MODULES_ZIP")" -delete
 
-        # Output for later steps (optional)
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
     - name: Final Build Summary
-      if: ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ inputs.build_only_modules == false }}
       shell: bash
       run: |
         set -euo pipefail
@@ -709,14 +717,14 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Kernel AK3 zip
-      if: success() && steps.create_zip.conclusion == 'success' && ${{ inputs.build_only_modules == 'false' }}
+      if: ${{ success() && steps.create_zip.conclusion == 'success' && inputs.build_only_modules == false }}
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
         path: ${{ env.CONFIG }}/artifacts/AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip
 
     - name: Upload Kernel Modules zip
-      if: (success() && steps.create_zip.conclusion == 'success') || ( ${{ inputs.build_only_modules == 'true' }} )
+      if: ${{ (success() && steps.create_zip.conclusion == 'success') || (inputs.build_only_modules == true) }}
       uses: actions/upload-artifact@v4
       with:
         name: kernel-modules-${{ env.CONFIG }}
