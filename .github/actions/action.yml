@@ -31,15 +31,15 @@ inputs:
     type: string
     default: ""
   KSU_META:
-    description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡)'
+    description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡)/'
     required: false
     type: string
-    default: 'susfs-main/⚡Ultra⚡'
+    default: 'susfs-main/⚡Ultra⚡/'
   KPM:
     description: 'Enable KPM?'
-    required: true
+    required: false
     type: boolean
-    default: true
+    default: false
   HOOK:
     description: 'Hook type'
     required: false
@@ -199,36 +199,67 @@ runs:
       run: |
         set -euo pipefail
         cd "${CONFIG}/kernel_platform"
-        META="${{ inputs.KSU_META }}"
-        BRANCH_NAME="${META%%/*}"
-        CUSTOM_TAG="${META#*/}"
-        echo "Adding SukiSU Ultra: branch=$BRANCH_NAME tag=$CUSTOM_TAG"
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${BRANCH_NAME}/kernel/setup.sh" | bash -s "$BRANCH_NAME"
-        cd KernelSU
-        KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${BRANCH_NAME}/kernel/Makefile" | grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-          echo "Using fallback KSU API version 3.1.7"
-          KSU_API_VERSION="3.1.7"
-        fi
-        echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
-        GIT_HASH=$(git rev-parse --short HEAD || echo "unknown")
-        if [[ -z "$CUSTOM_TAG" || "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then
-          VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
-        else
-          VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$GIT_HASH]"
-        fi
-        sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
-        sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
-        sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
-        {
-          echo "define get_ksu_version_full"
-          echo "$VERSION_FULL"
-          echo "endef"
-          echo "KSU_VERSION_API := $KSU_API_VERSION"
-          echo "KSU_VERSION_FULL := $VERSION_FULL"
-        } >> kernel/Makefile
-        KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 700) + 10700)
-        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
+        META="${{ github.event.inputs.KSU_META }}"
+          # Must contain two separators (at least three fields)
+          if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
+            echo "Error: KSU_META parameter missing required separator '/', format should be: branch name/custom identifier (optional)/commit hash (optional)"
+            exit 10
+          fi
+          # Parse fields: branch / custom identifier / manual hash
+          IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
+          echo "Branch name: $BRANCH_NAME"
+          [[ -n "$CUSTOM_TAG" ]] && echo "Custom version identifier: $CUSTOM_TAG" || echo "Custom version identifier: disabled"
+          [[ -n "$MANUAL_HASH" ]] && echo "Manual hash: $MANUAL_HASH" || echo "Manual hash: disabled"
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+          cd ./KernelSU
+          # If manual hash specified, switch to that commit
+          if [[ -n "$MANUAL_HASH" ]]; then
+            git fetch origin "$BRANCH_NAME" --depth=50
+            git checkout "$MANUAL_HASH"
+            SHORT_HASH=${MANUAL_HASH:0:8}
+          fi
+          KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
+            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+          if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+            KSU_API_VERSION="3.1.7"
+          fi
+          echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "GIT_HASH=$GIT_HASH"
+          # Assemble version
+          if [[ -n "$MANUAL_HASH" ]]; then
+            USE_HASH="$SHORT_HASH"
+          else
+            USE_HASH="$GIT_HASH"
+          fi
+          if [[ -z "$CUSTOM_TAG" ]]; then
+            VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
+          else
+            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
+          fi
+          # Clean and write Makefile version info
+          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
+          sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
+          sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
+          VERSION_DEFINITIONS=$(cat <<EOF
+            define get_ksu_version_full
+            $VERSION_FULL
+            endef
+            KSU_VERSION_API := $KSU_API_VERSION
+            KSU_VERSION_FULL := $VERSION_FULL
+          EOF
+          )
+          awk -v def="$VERSION_DEFINITIONS" '
+            /REPO_OWNER :=/ {print; print def; inserted=1; next}
+            1
+            END {if (!inserted) print def}
+          ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+          KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "::group::Final Makefile version info and partial debug results preview"
+          grep -A10 "REPO_OWNER" kernel/Makefile
+          grep "KSU_VERSION_FULL" kernel/Makefile
+          echo "::endgroup::"
 
     - name: Apply Patches SukiSU Ultra
       shell: bash
@@ -238,7 +269,7 @@ runs:
         git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
         git clone https://github.com/ShirkNeko/SukiSU_patch.git
         cd kernel_platform
-        echo "Pulling susfs patches"
+        echo "Fetching susfs patches"
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
         cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -246,7 +277,7 @@ runs:
         GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
         if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-          echo "Fixing bugs caused by older C library support in kernel versions 5.15.0 to 5.15.123"
+          echo "Fixing some bugs caused by kernel version 5.15.0 to 5.15.123 only supporting old C libraries"
           curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
           patch -p1 < fix_5.15.legacy.patch
           echo "fix_5.15_patch completed"
@@ -261,14 +292,14 @@ runs:
           fi
           echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
           if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
-            echo "6.6Trusty OS susfs"
+            echo "Fixing susfs errors caused by missing Trusty OS on some kernel 6.6 models"
             sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
             sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
           fi
         fi
-        echo "susfs"
+        echo "Applying susfs patch"
         patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
-        echo "susfs_patch"
+        echo "susfs_patch completed"
 
     - name: Record SUSFS Version
       shell: bash
@@ -285,9 +316,9 @@ runs:
         echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform/common"
         cp ../../SukiSU_patch/69_hide_stuff.patch ./
-        echo "Applying hide application patches..."
+        echo "Applying hide app patch"
         patch -p1 -F 3 < 69_hide_stuff.patch
-        echo "Hide application patch completed"
+        echo "hide app_patch completed"
 
     - name: Apply HOOK
       shell: bash
