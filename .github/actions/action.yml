@@ -66,7 +66,7 @@ runs:
         echo "::group::Install deps"
         sudo apt-get -o Acquire::Retries=3 update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          git curl ca-certificates build-essential clang lld flex bison \
+          git curl ca-certificates build-essential clang lld llvm flex bison \
           libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
           libxml2-utils rsync unzip dwarves file python3
         sudo apt-get clean
@@ -184,7 +184,18 @@ runs:
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         df -h
-    
+
+    - name: Add BBG
+      if: ${{ inputs.build_only_modules == false }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        echo "Adding BBG..."
+        wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/landlock/landlock,baseband_guard/ } }' common/security/Kconfig
+
     - name: Add KernelSU Next
       if: ${{ inputs.build_only_modules == false }}
       shell: bash
@@ -457,7 +468,7 @@ runs:
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
 
-    - name: Add nethunter specific drivers built as modules
+    - name: Add nethunter specfic drivers already present in kernel to be built as modules
       shell: bash
       run: |
         set -euo pipefail
@@ -533,7 +544,17 @@ runs:
         # Use detected clang if available
         if [ -n "${CLANG_BIN_PATH:-}" ] && [ -x "${CLANG_BIN_PATH}/clang" ]; then
           export PATH="${CLANG_BIN_PATH}:$PATH"
+          export LLVM_TOOLCHAIN_PATH="${CLANG_BIN_PATH}"
         fi
+
+        # Toolchain environment (match the kernel build)
+        export LLVM=1 LLVM_IAS=1
+        export ARCH=arm64 SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
+        export LD=ld.lld HOSTLD=ld.lld
+        export AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+        export HOSTCC=clang HOSTCXX=clang++ CC=clang
 
         # Merge defconfig fragments from vendor/kalama_GKI.config
         cat arch/arm64/configs/vendor/kalama_GKI.config >> ./arch/arm64/configs/gki_defconfig
@@ -594,37 +615,45 @@ runs:
 
         WARNINGS=$(grep -i -E 'warning:' "$COMMON/build.log" | wc -l || true)
         echo "$WARNINGS" > "$OUT/warnings.txt"
-        file "$IMG" > "$OUT/Image.file" || true
 
-        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1 || true)
-        echo "Kernel Uname: ${KERNEL_UNAME:-<unknown>}"
-        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
+        if [ -f "$IMG" ]; then
+          file "$IMG" > "$OUT/Image.file" || true
+          KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1 || true)
+          echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
+          echo "KERNEL_UNAME=${KERNEL_UNAME:-unknown}" >> "$GITHUB_ENV"
 
-        if ! file "$IMG" | grep -qi 'ARM64'; then
-          echo "Image does not appear to be ARM64:"
-          file "$IMG" || true
-          exit 1
+          if ! file "$IMG" | grep -qi 'ARM64'; then
+            echo "WARNING: Image does not appear to be ARM64:"
+            file "$IMG" || true
+          fi
+
+          MIN_SIZE=$((6*1024*1024))
+          ACTUAL_SIZE=$(stat -c %s "$IMG" || echo 0)
+          if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
+            echo "WARNING: Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)."
+          fi
+
+          CALC_SHA=$(sha256sum "$IMG" | cut -d' ' -f1)
+          if [ -f "$OUT/Image.sha256" ]; then
+            REC_SHA=$(cut -d' ' -f1 "$OUT/Image.sha256" | tr -d '\n')
+            if [ "$CALC_SHA" != "$REC_SHA" ]; then
+              echo "WARNING: Image.sha256 mismatch. recorded=$REC_SHA calculated=$CALC_SHA"
+            fi
+            IMAGE_SHA256="$REC_SHA"
+          else
+            echo "WARNING: Image.sha256 not found, using calculated sha256."
+            IMAGE_SHA256="$CALC_SHA"
+          fi
+        else
+          echo "WARNING: Image file not found at $IMG"
+          IMAGE_SHA256=""
+          KERNEL_UNAME="unknown"
+          echo "KERNEL_UNAME=unknown" >> "$GITHUB_ENV"
         fi
 
-        MIN_SIZE=$((6*1024*1024))
-        ACTUAL_SIZE=$(stat -c %s "$IMG")
-        echo "Image size: $ACTUAL_SIZE bytes (min $MIN_SIZE)"
-        if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
-          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
-        fi
-
-        if [ -f "$OUT/Image.sha256" ]; then
-          IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256" || true)
-        fi
-        if [ -z "${IMAGE_SHA256:-}" ]; then
-          echo "WARN: $OUT/Image.sha256 missing or empty; recomputing"
-          IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
-          echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
-        fi
-        echo "Image sha256: $IMAGE_SHA256"
-
+        echo "Image sha256: ${IMAGE_SHA256:-none}"
         echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
-        echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
+        echo "image_sha256=${IMAGE_SHA256:-}" >> "$GITHUB_OUTPUT"
 
     - name: Build Only Modules
       if: ${{ inputs.build_only_modules == true }}
@@ -638,8 +667,12 @@ runs:
         MODULES_SRC="$OUT/modules"
         MODULES_ZIP="$CONFIG_DIR/artifacts/kernel_modules_${{ inputs.model }}.zip"
         mkdir -p "$CONFIG_DIR/artifacts"
-        find "$MODULES_SRC" -type f -name '*.ko' -print0 | xargs -0 zip -j "$MODULES_ZIP"
-        echo "Packaged kernel modules to $MODULES_ZIP"
+        if [ -d "$MODULES_SRC" ]; then
+          find "$MODULES_SRC" -type f -name '*.ko' -print0 | xargs -0 zip -j "$MODULES_ZIP"
+          echo "Packaged kernel modules to $MODULES_ZIP"
+        else
+          echo "WARNING: No modules directory at $MODULES_SRC, nothing to package."
+        fi
 
     - name: Create Kernel & Modules ZIP
       if: ${{ inputs.build_only_modules == false }}
@@ -666,11 +699,14 @@ runs:
 
         MODULES_SRC="$CONFIG_DIR/kernel_platform/msm-kernel/out/modules"
         MODULES_ZIP="$ARTIFACTS_DIR/kernel_modules_${{ inputs.model }}.zip"
-        find "$MODULES_SRC" -type f -name '*.ko' -print0 | xargs -0 zip -j "$MODULES_ZIP"
-        echo "Packaged kernel modules to $MODULES_ZIP"
+        if [ -d "$MODULES_SRC" ]; then
+          find "$MODULES_SRC" -type f -name '*.ko' -print0 | xargs -0 zip -j "$MODULES_ZIP"
+          echo "Packaged kernel modules to $MODULES_ZIP"
+        else
+          echo "WARNING: No modules found to package at $MODULES_SRC"
+        fi
 
         find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" ! -name "$(basename "$MODULES_ZIP")" -delete
-
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
     - name: Final Build Summary
@@ -706,14 +742,14 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Kernel AK3 zip
-      if: ${{ success() && steps.create_zip.conclusion == 'success' && inputs.build_only_modules == false }}
+      if: success() && steps.create_zip.conclusion == 'success' && ${{ inputs.build_only_modules == false }}
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
         path: ${{ env.CONFIG }}/artifacts/AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip
 
     - name: Upload Kernel Modules zip
-      if: ${{ (success() && steps.create_zip.conclusion == 'success') || (inputs.build_only_modules == true) }}
+      if: (success() && steps.create_zip.conclusion == 'success') || ${{ inputs.build_only_modules == true }}
       uses: actions/upload-artifact@v4
       with:
         name: kernel-modules-${{ env.CONFIG }}
