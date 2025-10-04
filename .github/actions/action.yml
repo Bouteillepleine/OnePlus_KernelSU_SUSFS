@@ -720,15 +720,16 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
     
     - name: Upload Kernel AK3 zip
-      if: success() && steps.create_zip.conclusion == 'success' && ${{ inputs.build_only_modules == 'false' }}
+      if: success() && steps.create_zip.conclusion == 'success' && inputs.build_only_modules == 'false'
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
-        path: ${{ env.CONFIG }}/artifacts/AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip
+        path: ${{ env.CONFIG }}/artifacts/${{ steps.create_zip.outputs.zip_name }}
 
     - name: Upload Kernel Modules zip
-      if: (success() && steps.create_zip.conclusion == 'success') || ( ${{ inputs.build_only_modules == 'true' }} )
+      if: (success() && steps.create_zip.conclusion == 'success' && inputs.build_only_modules == 'false') || inputs.build_only_modules == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: kernel-modules-${{ env.CONFIG }}
         path: ${{ env.CONFIG }}/artifacts/kernel_modules_${{ inputs.model }}.zip
+
