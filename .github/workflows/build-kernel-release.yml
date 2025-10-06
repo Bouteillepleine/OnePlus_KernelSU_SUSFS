@@ -53,8 +53,8 @@ jobs:
     name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     runs-on: ubuntu-latest
     strategy:
-    fail-fast: false
-        matrix:
+      fail-fast: false
+      matrix:
         include:
         # batch-1
         - model: OP11
