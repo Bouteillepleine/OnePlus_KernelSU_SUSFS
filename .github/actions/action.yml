@@ -515,6 +515,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+    
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
@@ -535,8 +536,11 @@ runs:
         FILE_OUT="$(file "$IMG" 2>/dev/null || true)"
         printf '%s\n' "$FILE_OUT" > "$OUT/Image.file"
     
-        # Safe kernel uname extraction (won't trip set -e if no match)
-        KERNEL_UNAME="$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1 || true)"
+        # Safe, clean kernel uname extraction
+        KERNEL_UNAME="$(strings -n 10 "$IMG" | grep -m1 '^Linux version ' | sed 's/[[:cntrl:]].$//')"
+        if [ -z "${KERNEL_UNAME:-}" ]; then
+          KERNEL_UNAME="$(strings "$IMG" | grep -m1 '^Linux version ' | sed 's/[[:cntrl:]].$//')"
+        fi
         echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
         echo "KERNEL_UNAME=${KERNEL_UNAME:-unknown}" >> "$GITHUB_ENV"
     
@@ -572,37 +576,37 @@ runs:
         echo "warnings_count=$WARNINGS_COUNT" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
         echo "werror_count=$WERROR_COUNT" >> "$GITHUB_OUTPUT"
-
-    - name: Create Kernel ZIP
-      id: create_zip
-      shell: bash
-      run: |
-        set -euo pipefail
-        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
-        IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
-        if [ ! -f "$IMAGE_PATH" ]; then
-          echo "ERROR: Built Image not found"
-          exit 1
-        fi
-
-        cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-        cd "$GITHUB_WORKSPACE/AnyKernel3"
-
-        if [[ " ${{ env.HMBIRD_MODELS }} " == *" ${{ inputs.model }} "* ]]; then
-          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
-          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
-        fi
-
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        mkdir -p "$ARTIFACTS_DIR"
-
-        echo "Creating flashable zip: $ZIP_NAME"
-        TZ=UTC SOURCE_DATE_EPOCH="$(date +%s)" zip -X -9 -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
-
-        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
-
-        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+    
+        - name: Create Kernel ZIP
+          id: create_zip
+          shell: bash
+          run: |
+            set -euo pipefail
+            CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+            IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
+            if [ ! -f "$IMAGE_PATH" ]; then
+              echo "ERROR: Built Image not found"
+              exit 1
+            fi
+    
+            cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+            cd "$GITHUB_WORKSPACE/AnyKernel3"
+    
+            if [[ " ${{ env.HMBIRD_MODELS }} " == *" ${{ inputs.model }} "* ]]; then
+              cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
+              patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
+            fi
+    
+            ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip"
+            ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+            mkdir -p "$ARTIFACTS_DIR"
+    
+            echo "Creating flashable zip: $ZIP_NAME"
+            TZ=UTC SOURCE_DATE_EPOCH="$(date +%s)" zip -X -9 -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
+    
+            find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
+    
+            echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
     - name: Final Build Summary
       shell: bash
