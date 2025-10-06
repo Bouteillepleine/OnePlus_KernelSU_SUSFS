@@ -517,7 +517,7 @@ runs:
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
         IMG="$OUT/arch/arm64/boot/Image"
-
+    
         # Tolerate missing build.log but still compute counts if present
         if [ -f "$COMMON/build.log" ]; then
           WARNINGS_COUNT=$(grep -E '(^|[[:space:]])warning:' "$COMMON/build.log" | grep -v -E '(^|[[:space:]])note:' | wc -l || true)
@@ -528,24 +528,29 @@ runs:
         fi
         echo "$WARNINGS_COUNT" > "$OUT/warnings.txt"
         echo "$WERROR_COUNT" > "$OUT/werror.txt"
-
-        file "$IMG" > "$OUT/Image.file" 2>/dev/null || true
-        
-        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
-        echo "Kernel Uname: $KERNEL_UNAME"
-        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
-        if ! file "$IMG" | grep -qi 'ARM64'; then
-          echo "Image does not appear to be ARM64:"
-          file "$IMG"
+    
+        # Capture 'file' output for logging/regex and avoid failing the step
+        FILE_OUT="$(file "$IMG" 2>/dev/null || true)"
+        printf '%s\n' "$FILE_OUT" > "$OUT/Image.file"
+    
+        # Safe kernel uname extraction (won't trip set -e if no match)
+        KERNEL_UNAME="$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1 || true)"
+        echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
+        echo "KERNEL_UNAME=${KERNEL_UNAME:-unknown}" >> "$GITHUB_ENV"
+    
+        # Accept multiple labels for 64-bit ARM
+        echo "file output: ${FILE_OUT:-<none>}"
+        if ! echo "$FILE_OUT" | grep -Eqi '(ARM64|AARCH64|aarch64)'; then
+          echo "Image does not appear to be ARM64/AArch64"
           exit 1
         fi
-
-        MIN_SIZE=$((6*1024*1024))
+    
+        MIN_SIZE=$((610241024))
         ACTUAL_SIZE=$(stat -c %s "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
           echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
         fi
-
+    
         # Ensure sha256 exists; generate if missing
         if [ -f "$OUT/Image.sha256" ]; then
           IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
@@ -554,7 +559,7 @@ runs:
           echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
         fi
         echo "Image sha256: $IMAGE_SHA256"
-
+    
         echo "warnings_count=$WARNINGS_COUNT" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
         echo "werror_count=$WERROR_COUNT" >> "$GITHUB_OUTPUT"
