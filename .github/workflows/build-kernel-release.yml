@@ -64,19 +64,18 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-    matrix:
-      include:
-        - model: OP13
-          soc: sun
-          branch: oneplus/sm8750
-          manifest: oneplus_13.xml
-          android_version: android15
-          kernel_version: '6.6'
+      matrix:
+        include:
+          - model: OP13
+            soc: sun
+            branch: oneplus/sm8750
+            manifest: oneplus_13.xml
+            android_version: android15
+            kernel_version: '6.6'
     steps:
       - name: Context
         run: |
           echo "Model=${{ matrix.model }}, SOC=${{ matrix.soc }}, Branch=${{ matrix.branch }}, Manifest=${{ matrix.manifest }}, Android=${{ matrix.android_version }}, Kernel=${{ matrix.kernel_version }}, KSU-Next=${{ inputs.ksun_branch }}, DryRun=${{ inputs.dry_run }}"
-
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
         shell: bash
@@ -87,20 +86,19 @@ jobs:
             "android13-5.10") SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch_or_commit }}" ;;
             "android13-5.15") SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch_or_commit }}" ;;
             "android14-5.15") SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch_or_commit }}" ;;
-            "android14-6.1")  SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch_or_commit }}" ;;
-            "android15-6.6")  SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch_or_commit }}" ;;
+            "android14-6.1") SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch_or_commit }}" ;;
+            "android15-6.6") SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch_or_commit }}" ;;
             *) echo "Invalid kernel version or unsupported: $KERNEL_STRING"; exit 1 ;;
           esac
           if [[ -z "$SUSFS_BRANCH" ]]; then
             SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           fi
           echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
+          
       - name: Build Kernel
         uses: ./.github/actions
         with:
@@ -118,31 +116,30 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-    matrix:
-      include:
-        - model: OP12
-          soc: pineapple
-          branch: oneplus/sm8650
-          manifest: oneplus12_v.xml
-          android_version: android14
-          kernel_version: '6.1'
-        - model: OP13r
-          soc: pineapple
-          branch: oneplus/sm8650
-          manifest: oneplus_13r.xml
-          android_version: android14
-          kernel_version: '6.1'
-        - model: OP-ACE-5
-          soc: pineapple
-          branch: oneplus/sm8650
-          manifest: oneplus_ace5.xml
-          android_version: android14
-          kernel_version: '6.1'
+      matrix:
+        include:
+          - model: OP12
+            soc: pineapple
+            branch: oneplus/sm8650
+            manifest: oneplus12_v.xml
+            android_version: android14
+            kernel_version: '6.1'
+          - model: OP13r
+            soc: pineapple
+            branch: oneplus/sm8650
+            manifest: oneplus_13r.xml
+            android_version: android14
+            kernel_version: '6.1'
+          - model: OP-ACE-5
+            soc: pineapple
+            branch: oneplus/sm8650
+            manifest: oneplus_ace5.xml
+            android_version: android14
+            kernel_version: '6.1'
     steps:
       - name: Context
         run: |
           echo "Model=${{ matrix.model }}, SOC=${{ matrix.soc }}, Branch=${{ matrix.branch }}, Manifest=${{ matrix.manifest }}, Android=${{ matrix.android_version }}, Kernel=${{ matrix.kernel_version }}, KSU-Next=${{ inputs.ksun_branch }}, DryRun=${{ inputs.dry_run }}"
-
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
         shell: bash
@@ -153,20 +150,18 @@ jobs:
             "android13-5.10") SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch_or_commit }}" ;;
             "android13-5.15") SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch_or_commit }}" ;;
             "android14-5.15") SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch_or_commit }}" ;;
-            "android14-6.1")  SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch_or_commit }}" ;;
-            "android15-6.6")  SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch_or_commit }}" ;;
+            "android14-6.1") SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch_or_commit }}" ;;
+            "android15-6.6") SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch_or_commit }}" ;;
             *) echo "Invalid kernel version or unsupported: $KERNEL_STRING"; exit 1 ;;
           esac
           if [[ -z "$SUSFS_BRANCH" ]]; then
             SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           fi
           echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
       - name: Build Kernel
         uses: ./.github/actions
         with:
@@ -184,61 +179,60 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-    matrix:
-      include:
-        - model: OP11r
-          soc: waipio
-          branch: oneplus/sm8475
-          manifest: oneplus_11r_v.xml
-          android_version: android12
-          kernel_version: '5.10'
-        - model: OP-OPEN
-          soc: kalama
-          branch: oneplus/sm8550
-          manifest: oneplus_open_v.xml
-          android_version: android13
-          kernel_version: '5.15'
-        - model: OP-ACE-2
-          soc: waipio
-          branch: oneplus/sm8475
-          manifest: oneplus_ace2_v.xml
-          android_version: android12
-          kernel_version: '5.10'
-        - model: OP10t
-          soc: waipio
-          branch: oneplus/sm8475
-          manifest: oneplus_10t_v.xml
-          android_version: android12
-          kernel_version: '5.10'
-        - model: OP-Nord-4-CE
-          soc: crow
-          branch: oneplus/sm7550
-          manifest: oneplus_nord_ce4_v.xml
-          android_version: android13
-          kernel_version: '5.15'
-        - model: OP10pro
-          soc: waipio
-          branch: oneplus/sm8450
-          manifest: oneplus_10_pro_v.xml
-          android_version: android12
-          kernel_version: '5.10'
-        - model: OP-ACE-2-PRO
-          soc: kalama
-          branch: oneplus/sm8550
-          manifest: oneplus_ace2_pro_v.xml
-          android_version: android13
-          kernel_version: '5.15'
-        - model: OP12r
-          soc: kalama
-          branch: oneplus/sm8550
-          manifest: oneplus_12r_v.xml
-          android_version: android13
-          kernel_version: '5.15'
+      matrix:
+        include:
+          - model: OP11r
+            soc: waipio
+            branch: oneplus/sm8475
+            manifest: oneplus_11r_v.xml
+            android_version: android12
+            kernel_version: '5.10'
+          - model: OP-OPEN
+            soc: kalama
+            branch: oneplus/sm8550
+            manifest: oneplus_open_v.xml
+            android_version: android13
+            kernel_version: '5.15'
+          - model: OP-ACE-2
+            soc: waipio
+            branch: oneplus/sm8475
+            manifest: oneplus_ace2_v.xml
+            android_version: android12
+            kernel_version: '5.10'
+          - model: OP10t
+            soc: waipio
+            branch: oneplus/sm8475
+            manifest: oneplus_10t_v.xml
+            android_version: android12
+            kernel_version: '5.10'
+          - model: OP-Nord-4-CE
+            soc: crow
+            branch: oneplus/sm7550
+            manifest: oneplus_nord_ce4_v.xml
+            android_version: android13
+            kernel_version: '5.15'
+          - model: OP10pro
+            soc: waipio
+            branch: oneplus/sm8450
+            manifest: oneplus_10_pro_v.xml
+            android_version: android12
+            kernel_version: '5.10'
+          - model: OP-ACE-2-PRO
+            soc: kalama
+            branch: oneplus/sm8550
+            manifest: oneplus_ace2_pro_v.xml
+            android_version: android13
+            kernel_version: '5.15'
+          - model: OP12r
+            soc: kalama
+            branch: oneplus/sm8550
+            manifest: oneplus_12r_v.xml
+            android_version: android13
+            kernel_version: '5.15'
     steps:
       - name: Context
         run: |
           echo "Model=${{ matrix.model }}, SOC=${{ matrix.soc }}, Branch=${{ matrix.branch }}, Manifest=${{ matrix.manifest }}, Android=${{ matrix.android_version }}, Kernel=${{ matrix.kernel_version }}, KSU-Next=${{ inputs.ksun_branch }}, DryRun=${{ inputs.dry_run }}"
-
       - name: Select Appropriate SusFS Branch
         id: get-susfs-branch
         shell: bash
@@ -249,20 +243,18 @@ jobs:
             "android13-5.10") SUSFS_BRANCH="${{ inputs.android13-5_10_susfs_branch_or_commit }}" ;;
             "android13-5.15") SUSFS_BRANCH="${{ inputs.android13-5_15_susfs_branch_or_commit }}" ;;
             "android14-5.15") SUSFS_BRANCH="${{ inputs.android14-5_15_susfs_branch_or_commit }}" ;;
-            "android14-6.1")  SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch_or_commit }}" ;;
-            "android15-6.6")  SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch_or_commit }}" ;;
+            "android14-6.1") SUSFS_BRANCH="${{ inputs.android14-6_1_susfs_branch_or_commit }}" ;;
+            "android15-6.6") SUSFS_BRANCH="${{ inputs.android15-6_6_susfs_branch_or_commit }}" ;;
             *) echo "Invalid kernel version or unsupported: $KERNEL_STRING"; exit 1 ;;
           esac
           if [[ -z "$SUSFS_BRANCH" ]]; then
             SUSFS_BRANCH="gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           fi
           echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
       - name: Build Kernel
         uses: ./.github/actions
         with:
@@ -292,12 +284,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
+          41898282+github-actions[bot]@users.noreply.github.com"
       - name: Generate and Create New Tag
         shell: bash
         run: |
@@ -313,12 +303,10 @@ jobs:
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
-
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./downloaded-artifacts
-
       - name: Generate Device List and Final Release Notes
         id: generate-notes
         shell: bash
@@ -329,7 +317,6 @@ jobs:
           EOF
           echo "--- Final Release Notes ---"
           cat release_notes.md
-
       - name: Create GitHub Release
         shell: bash
         run: |
@@ -338,12 +325,11 @@ jobs:
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --prerelease
-
       - name: Upload Release Assets Dynamically
         shell: bash
         run: |
           shopt -s nullglob
-          for file in ./downloaded-artifacts/*/*.zip; do
+          for file in ./downloaded-artifacts/*/*..zip; do
             echo "Uploading $file..."
             gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
           done
