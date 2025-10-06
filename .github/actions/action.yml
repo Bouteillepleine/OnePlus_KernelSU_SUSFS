@@ -209,17 +209,7 @@ runs:
         if [ "${{ inputs.debug }}" = "true" ]; then
           df -h
         fi
-
-    - name: Add BBG
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        echo "Adding BBG..."
-        wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
-        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/landlock/landlock,baseband_guard/ } }' common/security/Kconfig
-
+        
     - name: Add KernelSU Next
       shell: bash
       run: |
@@ -540,15 +530,13 @@ runs:
         echo "$WERROR_COUNT" > "$OUT/werror.txt"
 
         file "$IMG" > "$OUT/Image.file" 2>/dev/null || true
-
-        # Make uname extraction tolerant
-        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1 || true)
-        echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
-        echo "KERNEL_UNAME=${KERNEL_UNAME:-}" >> "$GITHUB_ENV"
-
+        
+        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
+        echo "Kernel Uname: $KERNEL_UNAME"
+        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
         if ! file "$IMG" | grep -qi 'ARM64'; then
           echo "Image does not appear to be ARM64:"
-          file "$IMG" || true
+          file "$IMG"
           exit 1
         fi
 
