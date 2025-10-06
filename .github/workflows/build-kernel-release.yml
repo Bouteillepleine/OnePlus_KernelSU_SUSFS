@@ -53,9 +53,9 @@ jobs:
     name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+    fail-fast: false
       matrix:
-        include:
+      include:
         # batch-1
         - model: OP11
           soc: kalama
@@ -230,8 +230,9 @@ jobs:
             ["android14-6.1"]="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
             ["android15-6.6"]="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
           )
-          if [[ -z "${map[$key]:-}" ]]; then
-            echo "Unsupported combo: $key" >&2
+          # Only validate mapping presence; allow empty string value to be passed through.
+          if [[ -z "${map[$key]+_exists}" ]]; then
+            echo "Unsupported combo (no mapping): $key" >&2
             exit 1
           fi
           echo "susfs_branch=${map[$key]}" >> "$GITHUB_OUTPUT"
