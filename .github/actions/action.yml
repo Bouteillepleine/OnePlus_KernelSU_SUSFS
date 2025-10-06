@@ -547,10 +547,17 @@ runs:
           exit 1
         fi
     
-        MIN_SIZE=$((610241024))
-        ACTUAL_SIZE=$(stat -c %s "$IMG")
+        # Size sanity checks: typical ARM64 Image is ~20–80 MB; allow wide range
+        MIN_SIZE=$((6 * 1024 * 1024))       # 6 MB
+        MAX_SIZE=$((200 * 1024 * 1024))     # 200 MB
+    
+        # stat -c works on Linux runners; provide a BSD fallback just in case
+        ACTUAL_SIZE=$(stat -c %s "$IMG" 2>/dev/null || stat -f%z "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
-          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
+          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (too small)"; exit 1
+        fi
+        if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
+          echo "Image size $ACTUAL_SIZE > $MAX_SIZE (too large)"; exit 1
         fi
     
         # Ensure sha256 exists; generate if missing
