@@ -372,10 +372,7 @@ runs:
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
-        CONFIG_IP6_NF_MATCH_HL=y
-        CONFIG_WIREGUARD=y
-        CONFIG_TCP_FASTOPEN=y
-        CONFIG_XFRM_USER=y
+        CONFIG_IP6_NF_MATCH_HL=y        
         EOF
 
     - name: Add Build based configs
@@ -394,11 +391,7 @@ runs:
         CONFIG_DYNAMIC_DEBUG=n
         CONFIG_DYNAMIC_DEBUG_CORE=n
         CONFIG_DEBUG_INFO=n
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
-        CONFIG_CGROUP_SCHED=y
-        CONFIG_CFS_BANDWIDTH=y
-        CONFIG_UCLAMP_TASK=y
-        CONFIG_SCHED_AUTOGROUP=y
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y        
         EOF
 
     - name: Save Build Metadata
