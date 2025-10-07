@@ -229,7 +229,6 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Apply SUSFS Patches"
         cd "$CONFIG/kernel_platform"
         echo "Applying SUSFS patches..."
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch ./common/
@@ -292,7 +291,7 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
-        if [[ " ${{ env.HMBIRD_MODELS }} " == *" ${{ inputs.model }} "* ]]; then
+        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13-CN" ] || [ "${{ inputs.model }}" == "OP13-GLO" ]; then
           echo "Patching hmbird!"
           echo 'obj-y += hmbird_patch.o' >> ./drivers/Makefile
           patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_kernel_patch.patch"
@@ -301,9 +300,8 @@ runs:
           rm -rf ext.c ext.h build_policy.c slim.h slim_sysctl.c
           patch -p1 -F 3 < "../../../../../kernel_patches/oneplus/hmbird/hmbird_files_patch.patch"
         else
-          echo "Not a model requiring hmbird patch; skipping"
+          echo "Not OPAce5Pro / OP13-CN / OP13-GLO , skipping fengchi patch"
         fi
-        echo "::endgroup::"
 
     - name: Apply KSUN Hooks
       shell: bash
@@ -311,13 +309,14 @@ runs:
         set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
-
+        
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # Remove indentation to avoid leading spaces
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
         CONFIG_KSU_SUSFS=y
