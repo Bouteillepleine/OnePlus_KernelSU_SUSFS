@@ -471,8 +471,7 @@ runs:
         fi
         export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
         make O="$OUT" olddefconfig
-
-        # Disable KUNIT/Test options via scripts/config
+    
         disable_list=(
           CONFIG_REGMAP_KUNIT
           CONFIG_INPUT_KUNIT_TEST
@@ -490,7 +489,7 @@ runs:
           scripts/config --file "$OUT/.config" -d "$sym" || true
         done
         make O="$OUT" olddefconfig
-
+    
         echo "Starting build with $(nproc --all) threads..."
         set +e
         make -j"$(nproc --all)" O="$OUT" 2>&1 | tee build.log
@@ -500,7 +499,7 @@ runs:
           echo "::error::Kernel build failed. Showing last 200 lines of build.log"
           tail -n 200 build.log || true
           echo "::group::Attempt to show last ld.lld invocation"
-          grep -n "ld\.lld" -n build.log | tail -n 1 | cut -d: -f1 | xargs -I{} sed -n '{}',+20p build.log || true
+          grep -n "ld.lld" -n build.log | tail -n 1 | cut -d: -f1 | xargs -I{} sed -n '{}',+20p build.log || true
           echo "::endgroup::"
           exit $status
         fi
@@ -509,19 +508,17 @@ runs:
           echo "Kernel Image missing"; exit 1
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
-
+    
     - name: Collect Build Stats / Validate Image
       id: collect_stats
       shell: bash
       run: |
         set -euo pipefail
-    
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
         IMG="$OUT/arch/arm64/boot/Image"
     
-        # Tolerate missing build.log but still compute counts if present
         if [ -f "$COMMON/build.log" ]; then
           WARNINGS_COUNT=$(grep -E '(^|[[:space:]])warning:' "$COMMON/build.log" | grep -v -E '(^|[[:space:]])note:' | wc -l || true)
           WERROR_COUNT=$(grep -c -- '-Werror' "$COMMON/build.log" || true)
@@ -532,11 +529,9 @@ runs:
         echo "$WARNINGS_COUNT" > "$OUT/warnings.txt"
         echo "$WERROR_COUNT" > "$OUT/werror.txt"
     
-        # Capture 'file' output for logging/regex and avoid failing the step
         FILE_OUT="$(file "$IMG" 2>/dev/null || true)"
         printf '%s\n' "$FILE_OUT" > "$OUT/Image.file"
     
-        # Safe, clean kernel uname extraction
         KERNEL_UNAME="$(strings -n 10 "$IMG" | grep -m1 '^Linux version ' | sed 's/[[:cntrl:]].$//')"
         if [ -z "${KERNEL_UNAME:-}" ]; then
           KERNEL_UNAME="$(strings "$IMG" | grep -m1 '^Linux version ' | sed 's/[[:cntrl:]].$//')"
@@ -544,18 +539,14 @@ runs:
         echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
         echo "KERNEL_UNAME=${KERNEL_UNAME:-unknown}" >> "$GITHUB_ENV"
     
-        # Accept multiple labels for 64-bit ARM
         echo "file output: ${FILE_OUT:-<none>}"
         if ! echo "$FILE_OUT" | grep -Eqi '(ARM64|AARCH64|aarch64)'; then
           echo "Image does not appear to be ARM64/AArch64"
           exit 1
         fi
     
-        # Size sanity checks: typical ARM64 Image is ~20–80 MB; allow wide range
-        MIN_SIZE=$((6 * 1024 * 1024))       # 6 MB
-        MAX_SIZE=$((200 * 1024 * 1024))     # 200 MB
-    
-        # stat -c works on Linux runners; provide a BSD fallback just in case
+        MIN_SIZE=$((6 * 1024 * 1024))
+        MAX_SIZE=$((200 * 1024 * 1024))
         ACTUAL_SIZE=$(stat -c %s "$IMG" 2>/dev/null || stat -f%z "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
           echo "Image size $ACTUAL_SIZE < $MIN_SIZE (too small)"; exit 1
@@ -564,7 +555,6 @@ runs:
           echo "Image size $ACTUAL_SIZE > $MAX_SIZE (too large)"; exit 1
         fi
     
-        # Ensure sha256 exists; generate if missing
         if [ -f "$OUT/Image.sha256" ]; then
           IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
         else
@@ -577,37 +567,37 @@ runs:
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
         echo "werror_count=$WERROR_COUNT" >> "$GITHUB_OUTPUT"
     
-        - name: Create Kernel ZIP
-          id: create_zip
-          shell: bash
-          run: |
-            set -euo pipefail
-            CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
-            IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
-            if [ ! -f "$IMAGE_PATH" ]; then
-              echo "ERROR: Built Image not found"
-              exit 1
-            fi
+    - name: Create Kernel ZIP
+      id: create_zip
+      shell: bash
+      run: |
+        set -euo pipefail
+        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+        IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
+        if [ ! -f "$IMAGE_PATH" ]; then
+          echo "ERROR: Built Image not found"
+          exit 1
+        fi
     
-            cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-            cd "$GITHUB_WORKSPACE/AnyKernel3"
+        cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
+        cd "$GITHUB_WORKSPACE/AnyKernel3"
     
-            if [[ " ${{ env.HMBIRD_MODELS }} " == *" ${{ inputs.model }} "* ]]; then
-              cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
-              patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
-            fi
+        if [[ " $HMBIRD_MODELS " == " ${{ inputs.model }} " ]]; then
+          cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
+          patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
+        fi
     
-            ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip"
-            ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-            mkdir -p "$ARTIFACTS_DIR"
+        ZIP_NAME="AnyKernel3_${{ inputs.model }}${{ env.KERNEL_FULL_VER }}Next${KSUVER}${SUSVER}.zip"
+        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+        mkdir -p "$ARTIFACTS_DIR"
     
-            echo "Creating flashable zip: $ZIP_NAME"
-            TZ=UTC SOURCE_DATE_EPOCH="$(date +%s)" zip -X -9 -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
+        echo "Creating flashable zip: $ZIP_NAME"
+        TZ=UTC SOURCE_DATE_EPOCH="$(date +%s)" zip -X -9 -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
     
-            find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
+        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
     
-            echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-
+        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+    
     - name: Final Build Summary
       shell: bash
       run: |
@@ -625,6 +615,7 @@ runs:
           echo "Compiler: ${CLANG_VERSION:-unknown}"
           echo "Warnings Count: ${{ steps.collect_stats.outputs.warnings_count }}"
           echo "Werror Count: ${{ steps.collect_stats.outputs.werror_count }}"
+          echo "Zip: ${{ steps.create_zip.outputs.zip_name }}"
         } | tee summary.txt
         {
           echo "### Kernel Build Summary"
@@ -639,8 +630,9 @@ runs:
           echo "- Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "- Warnings Count: ${{ steps.collect_stats.outputs.warnings_count }}"
           echo "- Werror Count: ${{ steps.collect_stats.outputs.werror_count }}"
+          echo "- Zip: ${{ steps.create_zip.outputs.zip_name }}"
         } >> "$GITHUB_STEP_SUMMARY"
-
+    
     - name: Save manifest lock and summary
       shell: bash
       run: |
@@ -649,7 +641,7 @@ runs:
         mkdir -p artifacts
         "$REPO" manifest -r -o artifacts/manifest.lock.xml || true
         [ -f "$GITHUB_WORKSPACE/summary.txt" ] && cp -f "$GITHUB_WORKSPACE/summary.txt" artifacts/ || true
-
+    
     - name: Collect configs and logs
       shell: bash
       run: |
@@ -665,7 +657,7 @@ runs:
         cp -f "$OUT/warnings.txt" "$ART/warnings.txt" || true
         printf '%s\n' "${CLANG_VERSION:-unknown}" > "$ART/clang_version.txt" || true
         cp -f "$GITHUB_WORKSPACE/$CONFIG/artifacts/${{ inputs.model }}.txt" "$ART/" || true
-
+    
     - name: Upload Artifacts
       if: success()
       uses: actions/upload-artifact@v4
