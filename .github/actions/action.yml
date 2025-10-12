@@ -1,7 +1,6 @@
 name: Build and Release OnePlus Kernels
 
 permissions:
-  
   contents: write
   actions: write
 
@@ -29,11 +28,7 @@ inputs:
   optimize_level:
     required: false
     type: string
-    default: O2
-  debug:
-    required: false
-    type: boolean
-    default: false
+    default: O2  # Choices: O2 or O3
 
 outputs:
   kernel_version:
@@ -46,12 +41,6 @@ outputs:
     value: ${{ steps.collect_stats.outputs.image_sha256 }}
   warnings:
     value: ${{ steps.collect_stats.outputs.warnings }}
-  warnings_count:
-    value: ${{ steps.collect_stats.outputs.warnings_count }}
-  werror_count:
-    value: ${{ steps.collect_stats.outputs.werror_count }}
-  zip_name:
-    value: ${{ steps.create_zip.outputs.zip_name }}
 
 runs:
   using: composite
@@ -60,24 +49,52 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Validate inputs"
+    
         model='${{ inputs.model }}'
-        if [[ -z "$model" ]]; then
-          echo "Empty model not allowed"; exit 1
-        fi
+        soc='${{ inputs.soc }}'
         branch='${{ inputs.branch }}'
         manifest='${{ inputs.manifest }}'
-        ksun='${{ inputs.ksun_branch }}'
-        opt='${{ inputs.optimize_level }}'
-        if [[ ! "$opt" =~ ^(O2|O3)$ ]]; then
-          echo "optimize_level must be O2 or O3"; exit 1
+        optimize='${{ inputs.optimize_level }}'
+    
+        # Non-empty checks
+        [[ -n "$model" ]] || { echo "Input 'model' cannot be empty"; exit 1; }
+        [[ -n "$soc" ]] || { echo "Input 'soc' cannot be empty"; exit 1; }
+        [[ -n "$branch" ]] || { echo "Input 'branch' cannot be empty"; exit 1; }
+        [[ -n "$manifest" ]] || { echo "Input 'manifest' cannot be empty"; exit 1; }
+    
+        # Basic format checks
+        # soc: allow letters, digits, underscores, dashes (e.g., sm8650)
+        if ! [[ "$soc" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          echo "Input 'soc' contains invalid characters. Allowed: letters, digits, underscore, dash"; exit 1
+        fi    
+        # branch: allow common ref patterns; spaces not allowed
+        if ! [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo "Input 'branch' contains invalid characters. Allowed: letters, digits, ., _, -, /"; exit 1
+        fi    
+        # manifest: either HTTPS URL ending with .xml, or a filename ending with .xml (no spaces)
+        if [[ "$manifest" == http*://* ]]; then
+          if ! [[ "$manifest" =~ ^https:// ]]; then
+            echo "Manifest URL must be HTTPS"; exit 1
+          fi
+          if ! [[ "$manifest" =~ \.xml($|\?) ]]; then
+            echo "Manifest URL should point to an XML file (.xml)"; exit 1
+          fi
+        else
+          if ! [[ "$manifest" =~ \.xml$ ]]; then
+            echo "Manifest filename must end with .xml"; exit 1
+          fi
+          if [[ "$manifest" =~ [[:space:]] ]]; then
+            echo "Manifest filename cannot contain spaces"; exit 1
+          fi
         fi
-        if [[ "$manifest" == http:* ]]; then
-          echo "Refusing non-https manifest URL"; exit 1
-        fi
-        if [[ ! "$ksun" =~ ^[A-Za-z0-9._/@+-]+$ ]]; then
-          echo "ksun_branch contains unexpected characters"; exit 1
-        fi
+        # Optimize level validation
+        case "$optimize" in
+          O2|O3) ;;
+          *) echo "optimize_level must be O2 or O3; got '$optimize'"; exit 1 ;;
+        esac    
         echo "Input validation OK."
+        echo "::endgroup::"
 
     - name: Install Minimal Dependencies
       shell: bash
@@ -96,29 +113,29 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Derive a unique build directory name
         CONFIG="${{ inputs.model }}"
         echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
+        # Install repo tool if missing
         REPO="/usr/local/bin/repo"
         if [ ! -x "$REPO" ]; then
-          curl -sS https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
           chmod +x "$REPO"
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
-        echo "HMBIRD_MODELS=OPAce5Pro OP13-CN OP13-GLO" >> "$GITHUB_ENV"
 
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Initialize and sync kernel source"
         echo "Creating folder for configuration: $CONFIG"
         mkdir -p "$CONFIG"
         cd "$CONFIG"
+        echo "Initializing and syncing kernel source..."
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           mkdir -p .repo/manifests
-          tmp_xml="$(mktemp -p .repo/manifests manifest.XXXXXX.xml)"
-          curl --fail --show-error --location --proto '=https' "${{ inputs.manifest }}" -o "$tmp_xml"
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m "$(basename "$tmp_xml")" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          curl --fail --show-error --location --proto '=https' "${{ inputs.manifest }}" -o .repo/manifests/temp_manifest.xml
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         else
           "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "${{ inputs.branch }}" -m "${{ inputs.manifest }}" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
         fi
@@ -134,13 +151,11 @@ runs:
           sleep 30
         done
         $success || { echo "repo sync failed after 3 attempts"; exit 1; }
-        echo "::endgroup::"
 
     - name: Get Kernel Version Info
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Get Kernel Version Info"
         CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
@@ -165,7 +180,6 @@ runs:
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
-        SUBLEVEL="${SUBLEVEL:-0}"
         FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
         cd "$ARTIFACTS_DIR"
         echo "$ANDROID_VERSION-$FULL_VERSION" > "${{ inputs.model }}.txt"
@@ -173,13 +187,11 @@ runs:
         echo "KERNEL_VER=$VERSION.$PATCHLEVEL" >> "$GITHUB_ENV"
         echo "KERNEL_FULL_VER=$ANDROID_VERSION-$FULL_VERSION" >> "$GITHUB_ENV"
         echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL" >> "$GITHUB_ENV"
-        echo "::endgroup::"
 
     - name: Clone AnyKernel3 and Other Dependencies
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Clone AnyKernel3 and dependencies"
         echo "Cloning AnyKernel3 and other dependencies..."
         ANYKERNEL_BRANCH="gki-2.0"
         if [[ -z "${{ inputs.susfs_commit_hash_or_branch }}" ]]; then
@@ -199,7 +211,6 @@ runs:
           echo "Error: SUSFS branch or ref '$SUSFS_BRANCH' not found."
           exit 1
         fi
-        echo "::endgroup::"
 
     - name: Clean Up ABI Protected Exports
       shell: bash
@@ -208,10 +219,18 @@ runs:
         cd "$CONFIG/kernel_platform"
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
-        if [ "${{ inputs.debug }}" = "true" ]; then
-          df -h
-        fi
-        
+        df -h
+
+    - name: Add BBG
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        echo "Adding BBG..."
+        wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/landlock/landlock,baseband_guard/ } }' common/security/Kconfig
+
     - name: Add KernelSU Next
       shell: bash
       run: |
@@ -344,7 +363,7 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_BBR=y
         CONFIG_NET_SCH_FQ=y
@@ -360,10 +379,10 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
-        CONFIG_IP6_NF_MATCH_HL=y        
+        CONFIG_IP6_NF_MATCH_HL=y
         EOF
 
     - name: Add Build based configs
@@ -371,18 +390,18 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_LTO_CLANG_THIN=y
         CONFIG_LTO_CLANG=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
-        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
         CONFIG_OPTIMIZE_INLINING=y
+        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y        
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DYNAMIC_DEBUG=n
         CONFIG_DYNAMIC_DEBUG_CORE=n
         CONFIG_DEBUG_INFO=n
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y        
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y   
         EOF
 
     - name: Save Build Metadata
@@ -404,7 +423,7 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         cd "$KERNEL_PATH/common"
         mkdir -p out
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OnePlus-⚡Ultra⚡"
+        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-⚡Ultra⚡"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Detect Clang (toolchain for build)
@@ -430,12 +449,13 @@ runs:
         echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
         CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
         echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
-        echo "Detected Clang: $CLANG_VERSION"
-
+        echo "Detected Clang: $CLANG_VERSION"   
+        
     - name: Build Kernel
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Build kernel"
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
@@ -449,28 +469,18 @@ runs:
         export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
         export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++
         export CC=clang
-        export KBUILD_BUILD_USER=github
-        export KBUILD_BUILD_HOST=actions
         OUT=out
         mkdir -p "$OUT"
         make O="$OUT" gki_defconfig
+        
+        # LOCALVERSION branding
         if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
           scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
           scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
           sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
         fi
-        if [ "${{ inputs.optimize_level }}" = "O3" ]; then
-          scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
-          scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
-          export KCFLAGS="-Wno-error -pipe -O3 -fno-stack-protector"
-        else
-          scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE
-          scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
-          export KCFLAGS="-Wno-error -pipe -O2 -fno-stack-protector"
-        fi
-        export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
-        make O="$OUT" olddefconfig
     
+        # Disable KUnit and related test configs
         disable_list=(
           CONFIG_REGMAP_KUNIT
           CONFIG_INPUT_KUNIT_TEST
@@ -487,27 +497,37 @@ runs:
         for sym in "${disable_list[@]}"; do
           scripts/config --file "$OUT/.config" -d "$sym" || true
         done
+    
+        # Optimize level config and flags
+        if [ "${{ inputs.optimize_level }}" = "O3" ]; then
+          scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
+          scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          KCFLAGS_EXTRA="-O3"
+        else
+          scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE
+          scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          KCFLAGS_EXTRA="-O2"
+        fi
+    
+        # Consistent flags; include -pipe and disable stack protector
+        KCFLAGS="-Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
+        KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
+    
+        # Regenerate defaults after config edits
         make O="$OUT" olddefconfig
     
         echo "Starting build with $(nproc --all) threads..."
-        set +e
-        make -j"$(nproc --all)" O="$OUT" 2>&1 | tee build.log
-        status=${PIPESTATUS[0]}
-        set -e
-        if [ $status -ne 0 ]; then
-          echo "::error::Kernel build failed. Showing last 200 lines of build.log"
-          tail -n 200 build.log || true
-          echo "::group::Attempt to show last ld.lld invocation"
-          grep -n "ld.lld" -n build.log | tail -n 1 | cut -d: -f1 | xargs -I{} sed -n '{}',+20p build.log || true
-          echo "::endgroup::"
-          exit $status
-        fi
+        set -o pipefail
+        make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
+    
         IMG="$OUT/arch/arm64/boot/Image"
         if [ ! -f "$IMG" ]; then
-          echo "Kernel Image missing"; exit 1
+          echo "Kernel Image missing"
+          exit 1
         fi
         sha256sum "$IMG" | tee "$OUT/Image.sha256"
-    
+        echo "::endgroup::"          
+
     - name: Collect Build Stats / Validate Image
       id: collect_stats
       shell: bash
@@ -517,55 +537,27 @@ runs:
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
         IMG="$OUT/arch/arm64/boot/Image"
-    
-        if [ -f "$COMMON/build.log" ]; then
-          WARNINGS_COUNT=$(grep -E '(^|[[:space:]])warning:' "$COMMON/build.log" | grep -v -E '(^|[[:space:]])note:' | wc -l || true)
-          WERROR_COUNT=$(grep -c -- '-Werror' "$COMMON/build.log" || true)
-        else
-          WARNINGS_COUNT=0
-          WERROR_COUNT=0
-        fi
+        WARNINGS_COUNT=$(grep -i -E 'warning:' "$COMMON/build.log" | wc -l || true)
         echo "$WARNINGS_COUNT" > "$OUT/warnings.txt"
-        echo "$WERROR_COUNT" > "$OUT/werror.txt"
-    
-        FILE_OUT="$(file "$IMG" 2>/dev/null || true)"
-        printf '%s\n' "$FILE_OUT" > "$OUT/Image.file"
-    
-        KERNEL_UNAME="$(strings -n 10 "$IMG" | grep -m1 '^Linux version ' | sed 's/[[:cntrl:]].$//')"
-        if [ -z "${KERNEL_UNAME:-}" ]; then
-          KERNEL_UNAME="$(strings "$IMG" | grep -m1 '^Linux version ' | sed 's/[[:cntrl:]].$//')"
-        fi
-        echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
-        echo "KERNEL_UNAME=${KERNEL_UNAME:-unknown}" >> "$GITHUB_ENV"
-    
-        echo "file output: ${FILE_OUT:-<none>}"
-        if ! echo "$FILE_OUT" | grep -Eqi '(ARM64|AARCH64|aarch64)'; then
-          echo "Image does not appear to be ARM64/AArch64"
+        file "$IMG" > "$OUT/Image.file"
+        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
+        echo "Kernel Uname: $KERNEL_UNAME"
+        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
+        if ! file "$IMG" | grep -qi 'ARM64'; then
+          echo "Image does not appear to be ARM64:"
+          file "$IMG"
           exit 1
         fi
-    
-        MIN_SIZE=$((6 * 1024 * 1024))
-        MAX_SIZE=$((200 * 1024 * 1024))
-        ACTUAL_SIZE=$(stat -c %s "$IMG" 2>/dev/null || stat -f%z "$IMG")
+        MIN_SIZE=$((6*1024*1024))
+        ACTUAL_SIZE=$(stat -c %s "$IMG")
         if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
-          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (too small)"; exit 1
+          echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
         fi
-        if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
-          echo "Image size $ACTUAL_SIZE > $MAX_SIZE (too large)"; exit 1
-        fi
-    
-        if [ -f "$OUT/Image.sha256" ]; then
-          IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
-        else
-          IMAGE_SHA256=$(sha256sum "$IMG" | cut -d' ' -f1)
-          echo "$IMAGE_SHA256  $IMG" > "$OUT/Image.sha256"
-        fi
+        IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
         echo "Image sha256: $IMAGE_SHA256"
-    
         echo "warnings_count=$WARNINGS_COUNT" >> "$GITHUB_OUTPUT"
         echo "image_sha256=$IMAGE_SHA256" >> "$GITHUB_OUTPUT"
-        echo "werror_count=$WERROR_COUNT" >> "$GITHUB_OUTPUT"
-    
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -578,23 +570,27 @@ runs:
           exit 1
         fi
     
+        # Put Image into AnyKernel3
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
     
-        if [[ " $HMBIRD_MODELS " == " ${{ inputs.model }} " ]]; then
+        # Optional hmbird patch logic
+        if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13-CN" ] || [ "${{ inputs.model }}" == "OP13-GLO" ]; then
           cp "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/bins/"* ./tools/ 2>/dev/null || true
           patch -F 3 < "$GITHUB_WORKSPACE/kernel_patches/oneplus/hmbird/ak3_hmbird_patch.patch"
         fi
     
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}${{ env.KERNEL_FULL_VER }}Next${KSUVER}${SUSVER}.zip"
+        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ env.KERNEL_FULL_VER }}_Next_${KSUVER}_${SUSVER}.zip"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
     
         echo "Creating flashable zip: $ZIP_NAME"
-        TZ=UTC SOURCE_DATE_EPOCH="$(date +%s)" zip -X -9 -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null
+        ( cd "$GITHUB_WORKSPACE/AnyKernel3" && zip -r "$ARTIFACTS_DIR/$ZIP_NAME" ./* >/dev/null )
     
+        # Keep only the flashable zip and the model metadata file (assumed already created earlier)
         find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${{ inputs.model }}.txt" -delete
     
+        # Output for later steps (optional)
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
     
     - name: Final Build Summary
@@ -606,15 +602,13 @@ runs:
           echo "Android: ${{ env.ANDROID_VER }}"
           echo "Kernel base: ${{ env.KERNEL_VER }}"
           echo "Kernel full: ${{ env.KERNEL_FULL_VER }}"
-          echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
+          echo "Kernel Uname: ${{ env.KERNEL_UNAME }}"
           echo "KSU Version: ${KSUVER:-unknown}"
           echo "SUSFS Version: ${SUSVER:-unknown}"
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "Compiler: ${CLANG_VERSION:-unknown}"
           echo "Warnings Count: ${{ steps.collect_stats.outputs.warnings_count }}"
-          echo "Werror Count: ${{ steps.collect_stats.outputs.werror_count }}"
-          echo "Zip: ${{ steps.create_zip.outputs.zip_name }}"
         } | tee summary.txt
         {
           echo "### Kernel Build Summary"
@@ -622,43 +616,16 @@ runs:
           echo "- Model: ${{ inputs.model }}"
           echo "- Android: ${{ env.ANDROID_VER }}"
           echo "- Kernel Version: ${{ steps.save_metadata.outputs.kernel_version }}"
-          echo "- Kernel Uname: ${KERNEL_UNAME:-unknown}"
+          echo "- Kernel Uname: ${{ env.KERNEL_UNAME }}"
           echo "- KSU Version: ${KSUVER:-unknown}"
-          echo "- SUSFS Version: ${SUSVER:-unknown}"
+          echo "- SUSFS Version: ${SUSVER:-unknown }"
           echo "- Optimization: ${{ inputs.optimize_level }}"
           echo "- Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "- Warnings Count: ${{ steps.collect_stats.outputs.warnings_count }}"
-          echo "- Werror Count: ${{ steps.collect_stats.outputs.werror_count }}"
-          echo "- Zip: ${{ steps.create_zip.outputs.zip_name }}"
         } >> "$GITHUB_STEP_SUMMARY"
     
-    - name: Save manifest lock and summary
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$GITHUB_WORKSPACE/$CONFIG"
-        mkdir -p artifacts
-        "$REPO" manifest -r -o artifacts/manifest.lock.xml || true
-        [ -f "$GITHUB_WORKSPACE/summary.txt" ] && cp -f "$GITHUB_WORKSPACE/summary.txt" artifacts/ || true
-    
-    - name: Collect configs and logs
-      shell: bash
-      run: |
-        set -euo pipefail
-        COMMON="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
-        OUT="$COMMON/out"
-        ART="$GITHUB_WORKSPACE/$CONFIG/artifacts"
-        mkdir -p "$ART"
-        cp -f "$OUT/.config" "$ART/kernel_config.txt" || true
-        cp -f "$COMMON/build.log" "$ART/build.log" || true
-        cp -f "$OUT/Image.sha256" "$ART/Image.sha256" || true
-        cp -f "$OUT/Image.file" "$ART/Image.file" || true
-        cp -f "$OUT/warnings.txt" "$ART/warnings.txt" || true
-        printf '%s\n' "${CLANG_VERSION:-unknown}" > "$ART/clang_version.txt" || true
-        cp -f "$GITHUB_WORKSPACE/$CONFIG/artifacts/${{ inputs.model }}.txt" "$ART/" || true
-    
     - name: Upload Artifacts
-      if: success()
+      if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}
