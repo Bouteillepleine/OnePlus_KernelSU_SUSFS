@@ -63,13 +63,6 @@ jobs:
   build:
     name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ inputs.ksun_branch }})
     runs-on: ubuntu-latest
-    if: >
-      ${{ inputs.models == 'all' ||
-      (inputs.models == 'batch-1' && matrix.batch == 1) ||
-      (inputs.models == 'batch-2' && matrix.batch == 2) ||
-      (inputs.models == 'batch-3' && matrix.batch == 3) ||
-      (inputs.only_models != '' && contains(format(',{0},', inputs.only_models), format(',{0},', matrix.model)))
-      }}
     strategy:
       fail-fast: false
       matrix:
@@ -260,6 +253,40 @@ jobs:
             android_version: android13
             kernel_version: '5.15'
     steps:
+      - name: Selection filter
+        id: sel
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODELS="${{ inputs.models }}"
+          ONLY="${{ inputs.only_models }}"
+          BATCH="${{ matrix.batch }}"
+          MODEL="${{ matrix.model }}"
+          should_run=false
+          if [ "$MODELS" = "all" ]; then
+            should_run=true
+          elif [ "$MODELS" = "batch-1" ] && [ "$BATCH" = "1" ]; then
+            should_run=true
+          elif [ "$MODELS" = "batch-2" ] && [ "$BATCH" = "2" ]; then
+            should_run=true
+          elif [ "$MODELS" = "batch-3" ] && [ "$BATCH" = "3" ]; then
+            should_run=true
+          fi
+          if [ -n "$ONLY" ]; then
+            csv=",$ONLY,"
+            needle=",$MODEL,"
+            if echo "$csv" | grep -Fq "$needle"; then
+              should_run=true
+            else
+              should_run=false
+            fi
+          fi
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+      - name: Skip if not selected
+        if: ${{ steps.sel.outputs.should_run != 'true' }}
+        run: |
+          echo "Skipping ${{ matrix.model }} (batch ${{ matrix.batch }}) based on selection."
+          exit 0
       - name: Resolve SUSFS branch from inputs
         id: susfs
         shell: bash
@@ -304,6 +331,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_NAME: 'TEST BUILD OnePlus Kernels With KernelSU Next & SUSFS v1.5.12 TEST BUILD'
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Generate and Create New Tag
         run: |
           BASE_TAG="v1.5.12-r0"
