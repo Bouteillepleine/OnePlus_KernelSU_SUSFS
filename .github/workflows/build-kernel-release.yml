@@ -28,9 +28,7 @@ on:
         required: false
         type: string
         default: '{"android12-5.10":"","android13-5.10":"","android13-5.15":"","android14-5.15":"","android14-6.1":"","android15-6.6":""}'
-      models
-
-:
+      models:
         description: 'Which set to build'
         type: choice
         required: true
