@@ -417,12 +417,7 @@ runs:
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_DEBUG_KERNEL=n
-        CONFIG_DEBUG_INFO=n                   
-        CONFIG_SCHEDSTATS=n
-        CONFIG_TIMER_STATS=n
-        CONFIG_PRINTK_TIME=n        
-        CONFIG_DYNAMIC_DEBUG=n
-        CONFIG_DYNAMIC_DEBUG_CORE=n        
+        CONFIG_DEBUG_INFO=n
         EOF
 
     - name: Save Build Metadata
