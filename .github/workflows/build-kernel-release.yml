@@ -28,7 +28,9 @@ on:
         required: false
         type: string
         default: '{"android12-5.10":"","android13-5.10":"","android13-5.15":"","android14-5.15":"","android14-6.1":"","android15-6.6":""}'
-      models:
+      models
+
+:
         description: 'Which set to build'
         type: choice
         required: true
@@ -234,34 +236,80 @@ jobs:
             android_version: android13
             kernel_version: '5.15'
     steps:
+      - name: Validate only_models against matrix
+        if: ${{ inputs.only_models != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build a comma-delimited whitelist of all matrix model names
+          ALL_MODELS="OP11,OP13-CN,OP13-GLO,OPAce5Pro,OP13S,OP-PAD-3,OP13T,OP-PAD-2-PRO,OP12,OP13r,OP-ACE-5,OP-ACE-3V,OP-NORD-4,OP-Nord-5,OP-PAD-2,OP-Ace3-Pro,OP-Nord-CE4-LITE,OP-PAD-Pro,OP11r,OP-OPEN,OP-ACE-2,OP10t,OP-Nord-4-CE,OP10pro,OP-ACE-2-PRO,OP12r"
+          ALLOWED=",$ALL_MODELS,"
+
+          # Normalize and split only_models
+          ONLY_RAW="${{ inputs.only_models }}"
+          ONLY_CLEAN="$(echo "$ONLY_RAW" | tr -d '[:space:]')"
+
+          IFS=',' read -r -a REQ <<< "$ONLY_CLEAN"
+          INVALID=()
+
+          for m in "${REQ[@]}"; do
+            [ -z "$m" ] && continue
+            if ! printf '%s\n' "$ALLOWED" | grep -Fq ",$m,"; then
+              INVALID+=("$m")
+            fi
+          done
+
+          if [ "${#INVALID[@]}" -gt 0 ]; then
+            echo "Error: The following models in only_models are not in the matrix:"
+            printf ' - %s\n' "${INVALID[@]}"
+            echo "Allowed models are:"
+            echo "$ALL_MODELS" | tr ',' '\n'
+            exit 1
+          fi
+          echo "only_models validation passed."
       - name: Selection filter
         id: sel
         shell: bash
         run: |
           set -euo pipefail
           MODELS="${{ inputs.models }}"
-          ONLY="${{ inputs.only_models }}"
+          ONLY_RAW="${{ inputs.only_models }}"
           BATCH="${{ matrix.batch }}"
           MODEL="${{ matrix.model }}"
-          should_run=false
+
+          # Normalize only_models (remove spaces)
+          ONLY="$(echo "$ONLY_RAW" | tr -d '[:space:]')"
+
+          # 1) Batch gating
+          batch_ok=false
           if [ "$MODELS" = "all" ]; then
-            should_run=true
+            batch_ok=true
           elif [ "$MODELS" = "batch-1" ] && [ "$BATCH" = "1" ]; then
-            should_run=true
+            batch_ok=true
           elif [ "$MODELS" = "batch-2" ] && [ "$BATCH" = "2" ]; then
-            should_run=true
+            batch_ok=true
           elif [ "$MODELS" = "batch-3" ] && [ "$BATCH" = "3" ]; then
-            should_run=true
+            batch_ok=true
           fi
+
+          # 2) Model gating (additive)
+          model_ok=true
           if [ -n "$ONLY" ]; then
             csv=",$ONLY,"
             needle=",$MODEL,"
             if echo "$csv" | grep -Fq "$needle"; then
-              should_run=true
+              model_ok=true
             else
-              should_run=false
+              model_ok=false
             fi
           fi
+
+          should_run=false
+          if $batch_ok && $model_ok; then
+            should_run=true
+          fi
+
+          echo "Inputs: MODELS='$MODELS' ONLY='$ONLY_RAW' => batch_ok=$batch_ok model_ok=$model_ok should_run=$should_run"
           echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
       - name: Skip if not selected
         if: ${{ steps.sel.outputs.should_run != 'true' }}
@@ -282,8 +330,6 @@ jobs:
             sudo apt-get update -y
             sudo apt-get install -y jq
           fi
-          # Convert dot in kernel_version to dot-form key
-          # Expect keys like android12-5.10, android14-6.1, android15-6.6
           val=$(jq -r --arg k "$key" '(.[$k] // "")' <<<"$json")
           if [ "$val" = "null" ]; then val=""; fi
           echo "Resolved SUSFS for $key -> '$val'"
