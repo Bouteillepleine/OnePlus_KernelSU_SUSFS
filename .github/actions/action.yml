@@ -385,7 +385,7 @@ runs:
         CONFIG_IP6_NF_MATCH_HL=y
         EOF
 
-    - name: Add Build based configs
+    - name: Add Build based configs Perf
       shell: bash
       run: |
         set -euo pipefail
@@ -396,12 +396,31 @@ runs:
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
         CONFIG_OPTIMIZE_INLINING=y
-        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y        
+        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
+        CONFIG_TRIM_UNUSED_KSYMS=y
+        CONFIG_UNWINDER_ORC=y
+        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+        EOF
+        
+    - name: Add Build based configs Debug
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_DEBUG_KERNEL=n
-        CONFIG_DYNAMIC_DEBUG=n
-        CONFIG_DYNAMIC_DEBUG_CORE=n
         CONFIG_DEBUG_INFO=n
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y   
+        CONFIG_KALLSYMS_ALL=n
+        CONFIG_FUNCTION_TRACER=n
+        CONFIG_FTRACE_SYSCALLS=n
+        CONFIG_BLK_DEBUG_FS=n
+        CONFIG_SCHEDSTATS=n
+        CONFIG_TIMER_STATS=n
+        CONFIG_PRINTK_TIME=n
+        CONFIG_UNUSED_SYMBOLS=n        
+        CONFIG_DYNAMIC_DEBUG=n
+        CONFIG_DYNAMIC_DEBUG_CORE=n        
         EOF
 
     - name: Save Build Metadata
@@ -423,7 +442,7 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         cd "$KERNEL_PATH/common"
         mkdir -p out
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-⚡Ultra⚡"
+        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-Ultra-Bolt"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Detect Clang (toolchain for build)
@@ -449,10 +468,12 @@ runs:
         echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
         CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
         echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
-        echo "Detected Clang: $CLANG_VERSION"   
-        
+        echo "Detected Clang: $CLANG_VERSION"
+
     - name: Build Kernel
       shell: bash
+      env:
+        PYTHONWARNINGS: "ignore:invalid escape sequence"
       run: |
         set -euo pipefail
         echo "::group::Build kernel"
@@ -460,6 +481,10 @@ runs:
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
         : > "$COMMON/.scmversion"
+    
+        # Ensure Python warnings are suppressed for scripts invoked by make
+        export PYTHONWARNINGS="${PYTHONWARNINGS}"
+    
         if [ -n "${CLANG_BIN_PATH:-}" ] && [ -x "${CLANG_BIN_PATH}/clang" ]; then
           export PATH="${CLANG_BIN_PATH}:$PATH"
         fi
@@ -472,14 +497,13 @@ runs:
         OUT=out
         mkdir -p "$OUT"
         make O="$OUT" gki_defconfig
-        
+    
         # LOCALVERSION branding
         if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
           scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
           scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
           sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
         fi
-    
         # Disable KUnit and related test configs
         disable_list=(
           CONFIG_REGMAP_KUNIT
@@ -497,7 +521,6 @@ runs:
         for sym in "${disable_list[@]}"; do
           scripts/config --file "$OUT/.config" -d "$sym" || true
         done
-    
         # Optimize level config and flags
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
