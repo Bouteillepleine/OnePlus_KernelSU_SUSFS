@@ -23,30 +23,11 @@ on:
         type: choice
         options: [O2, O3]
         default: O2
-      android12-5_10_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android12-5.10'
+      susfs_map:
+        description: 'JSON map of "android-kernel" -> branch/commit (e.g. {"android12-5.10":"","android13-5.10":"","android13-5.15":"","android14-5.15":"","android14-6.1":"","android15-6.6":""})'
+        required: false
         type: string
-        default: ''
-      android13-5_10_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android13-5.10'
-        type: string
-        default: ''
-      android13-5_15_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android13-5.15'
-        type: string
-        default: ''
-      android14-5_15_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android14-5.15'
-        type: string
-        default: ''
-      android14-6_1_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android14-6.1'
-        type: string
-        default: ''
-      android15-6_6_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android15-6.6'
-        type: string
-        default: ''
+        default: '{"android12-5.10":"","android13-5.10":"","android13-5.15":"","android14-5.15":"","android14-6.1":"","android15-6.6":""}'
       models:
         description: 'Which set to build'
         type: choice
@@ -287,25 +268,26 @@ jobs:
         run: |
           echo "Skipping ${{ matrix.model }} (batch ${{ matrix.batch }}) based on selection."
           exit 0
-      - name: Resolve SUSFS branch from inputs
+      - name: Resolve SUSFS branch from susfs_map
         id: susfs
         shell: bash
         run: |
           set -euo pipefail
           key="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          declare -A map=(
-            ["android12-5.10"]="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
-            ["android13-5.10"]="${{ inputs.android13-5_10_susfs_branch_or_commit }}"
-            ["android13-5.15"]="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
-            ["android14-5.15"]="${{ inputs.android14-5_15_susfs_branch_or_commit }}"
-            ["android14-6.1"]="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
-            ["android15-6.6"]="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
-          )
-          if [[ -z "${map[$key]+_exists}" ]]; then
-            echo "Unsupported combo (no mapping): $key" >&2
-            exit 1
+          json='${{ inputs.susfs_map }}'
+          # sanitize: default to {} if empty
+          if [ -z "$json" ]; then json="{}"; fi
+          # Use jq to extract value; if jq not present, install quickly
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
           fi
-          echo "susfs_branch=${map[$key]}" >> "$GITHUB_OUTPUT"
+          # Convert dot in kernel_version to dot-form key
+          # Expect keys like android12-5.10, android14-6.1, android15-6.6
+          val=$(jq -r --arg k "$key" '(.[$k] // "")' <<<"$json")
+          if [ "$val" = "null" ]; then val=""; fi
+          echo "Resolved SUSFS for $key -> '$val'"
+          echo "susfs_branch=$val" >> "$GITHUB_OUTPUT"
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -349,34 +331,32 @@ jobs:
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
           git tag $NEW_TAG
           git push origin $NEW_TAG
-
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./downloaded-artifacts
-
       - name: Generate Device List and Final Release Notes
         id: generate-notes
         run: |
           echo "=== Start building the release notes ==="
           cat << EOF > release_notes.md
           This release contains KernelSU Next and SUSFS v1.5.12
-          
-          Module: 
-          -> https://github.com/sidex15/ksu_module_susfs  
-          
+
+          Module:
+          -> https://github.com/sidex15/ksu_module_susfs
+
           Official Managers:
-          -> https://github.com/KernelSU-Next/KernelSU-Next  
-          
+          -> https://github.com/KernelSU-Next/KernelSU-Next
+
           Non-Official Managers:
           -> https://github.com/WildKernels/Wild_KSU
-          
+
           ### Built Devices
-          
+
           | Model | Kernel Version |
           |-------|----------------|
           EOF
-          
+
           # Generate table rows
           for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
             if [ -f "$file" ]; then
@@ -385,10 +365,10 @@ jobs:
               printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
             fi
           done
-          
+
           # Add features and finalize
           cat << 'EOF' >> release_notes.md
-          
+
           ### Features
           - [+] KernelSU-Next / WildKSU Manager Support
           - [+] SUSFS v1.5.12
@@ -399,14 +379,13 @@ jobs:
           - [+] CONFIG_TMPFS_XATTR Support [Mountify Support]
           - [+] BBR v1 Support
           - [+] HMBIRD scx support for OnePlus 13 & OnePlus Ace 5 Pro
-          - [+] Baseband Guard Support (BBG).
-          - [+] xx_maps hide.
+          - [+] Baseband Guard Support (BBG)
+          - [+] xx_maps hide
           EOF
-          
+
           # Output for debugging
           echo "--- Final Release Notes ---"
           cat release_notes.md
-
       - name: Create GitHub Release
         run: |
           gh release create "${{ env.NEW_TAG }}" \
@@ -414,7 +393,6 @@ jobs:
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --prerelease
-
       - name: Upload Release Assets Dynamically
         run: |
           for file in ./downloaded-artifacts/*/*.zip; do
