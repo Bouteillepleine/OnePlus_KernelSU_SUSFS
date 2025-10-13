@@ -280,7 +280,7 @@ runs:
             cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
             patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
-          "v1.5.9"|"v1.5.10"|"v1.5.11")
+          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
             for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
@@ -328,7 +328,17 @@ runs:
         set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
-        
+
+    - name: Apply xx_maps patch (untill sus_maps is released)
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform/common"
+        patch -p1 --forward < "../../../kernel_patches/maps/xx_maps_sus_kernel.patch"
+        cd "../KernelSU-Next"
+        patch -p1 --forward < "../../../kernel_patches/maps/xx_maps_ksu.patch"
+
+
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
