@@ -37,7 +37,7 @@ on:
         default: manual
       LSM:
         description: 'Enable kernel-level Baseband Guard (LSM)?'
-        required: false
+        required: true
         type: boolean
         default: false
       # SUSFS per Android/Kernel mapping
