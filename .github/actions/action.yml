@@ -32,7 +32,7 @@ inputs:
     type: string
     default: ""
   KSU_META:
-    description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡)/'
+    description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡/)'
     required: false
     type: string
     default: 'susfs-main/⚡Ultra⚡/'
@@ -89,24 +89,30 @@ runs:
         [[ -n "$android_version" ]] || { echo "Input 'android_version' cannot be empty"; exit 1; }
         [[ -n "$kernel_version" ]] || { echo "Input 'kernel_version' cannot be empty"; exit 1; }
         if ! [[ "$soc" =~ ^[A-Za-z0-9_-]+$ ]]; then
-          echo "Input 'soc' contains invalid characters. Allowed: letters, digits, underscore, dash"; exit 1
+          echo "Input 'soc' contains invalid characters. Allowed: letters, digits, underscore, dash"
+          exit 1
         fi
         if ! [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-          echo "Input 'branch' contains invalid characters. Allowed: letters, digits, ., _, -, /"; exit 1
+          echo "Input 'branch' contains invalid characters. Allowed: letters, digits, ., _, -, /"
+          exit 1
         fi
         if [[ "$manifest" == http*://* ]]; then
           if ! [[ "$manifest" =~ ^https:// ]]; then
-            echo "Manifest URL must be HTTPS"; exit 1
+            echo "Manifest URL must be HTTPS"
+            exit 1
           fi
-          if ! [[ "$manifest" =~ .xml($|?) ]]; then
-            echo "Manifest URL should point to an XML file (.xml)"; exit 1
+          if ! [[ "$manifest" =~ \.xml($|?) ]]; then
+            echo "Manifest URL should point to an XML file (.xml)"
+            exit 1
           fi
         else
-          if ! [[ "$manifest" =~ .xml$ ]]; then
-            echo "Manifest filename must end with .xml"; exit 1
+          if ! [[ "$manifest" =~ \.xml$ ]]; then
+            echo "Manifest filename must end with .xml"
+            exit 1
           fi
           if [[ "$manifest" =~ [[:space:]] ]]; then
-            echo "Manifest filename cannot contain spaces"; exit 1
+            echo "Manifest filename cannot contain spaces"
+            exit 1
           fi
         fi
         case "$optimize" in
@@ -276,7 +282,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        CUSTOM_LOCALVERSION="-${KANDROID_VERSION}-OP-⚡Ultra⚡"
+        CUSTOM_LOCALVERSION="-${KANDROID_VERSION}-OnePlus-Ultra-Bolt"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Add SukiSU Ultra
@@ -447,74 +453,90 @@ runs:
       run: |
         set -euo pipefail
         DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        {
-          echo "CONFIG_KSU=y"
-          case "${{ inputs.HOOK }}" in
-            kprobe)
+
+        # Base KSU flag
+        echo "CONFIG_KSU=y" >> "$DEF"
+
+        # Hook selection flags
+        case "${{ inputs.HOOK }}" in
+          kprobe)
+            {
               echo "CONFIG_KSU_SUSFS_SUS_SU=y"
               echo "CONFIG_KPROBES=y"
               echo "CONFIG_KSU_KPROBES_HOOK=y"
-              ;;
-            manual)
+            } >> "$DEF"
+            ;;
+          manual)
+            {
               echo "CONFIG_KSU_SUSFS_SUS_SU=n"
               echo "CONFIG_KSU_MANUAL_HOOK=y"
-              ;;
-            tracepoint)
+            } >> "$DEF"
+            ;;
+          tracepoint)
+            {
               echo "CONFIG_KSU_SUSFS_SUS_SU=n"
               echo "CONFIG_KSU_TRACEPOINT_HOOK=y"
-              ;;
-          esac
-          cat <<'EOF'
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-          CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-          EOF
-          if [[ "${{ inputs.LSM }}" == "true" ]]; then
-            echo "CONFIG_BBG=y"
-          fi
-        } >> "$DEF"
+            } >> "$DEF"
+            ;;
+        esac
+
+        # SUSFS and FS options
+        cat >> "$DEF" <<'EOF'
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        CONFIG_TMPFS_XATTR=y
+        CONFIG_TMPFS_POSIX_ACL=y
+        EOF
+
+        # Optional LSM
+        if [[ "${{ inputs.LSM }}" == "true" ]]; then
+          echo "CONFIG_BBG=y" >> "$DEF"
+        fi
 
     - name: Add Oneplus BBR Support
       shell: bash
       run: |
         set -euo pipefail
         DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        grep -q 'CONFIG_TCP_CONG_ADVANCED=y' "$DEF" || cat >> "$DEF" <<'EOF'
-        CONFIG_TCP_CONG_ADVANCED=y
-        CONFIG_TCP_CONG_BBR=y
-        CONFIG_NET_SCH_FQ=y
-        CONFIG_NET_SCH_FQ_CODEL=y
-        CONFIG_IP_ECN=y
-        CONFIG_TCP_ECN=y
-        CONFIG_IPV6_ECN=y
-        CONFIG_IP_NF_TARGET_ECN=y
-        EOF
-        sed -i -e '/CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$DEF"
+        if ! grep -q '^CONFIG_TCP_CONG_ADVANCED=y' "$DEF"; then
+          cat >> "$DEF" <<'EOF'
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_NET_SCH_FQ_CODEL=y
+          CONFIG_IP_ECN=y
+          CONFIG_TCP_ECN=y
+          CONFIG_IPV6_ECN=y
+          CONFIG_IP_NF_TARGET_ECN=y
+          EOF
+        fi
+        sed -i -e '/^CONFIG_NET_SCH_FQ_CODEL=/d' -e '$aCONFIG_NET_SCH_FQ_CODEL=y' "$DEF"
 
     - name: Add TTL Target Support
       shell: bash
       run: |
         set -euo pipefail
         DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        grep -q 'CONFIG_IP_NF_TARGET_TTL=y' "$DEF" || cat >> "$DEF" <<'EOF'
-        CONFIG_IP_NF_TARGET_TTL=y
-        CONFIG_IP6_NF_TARGET_HL=y
-        CONFIG_IP6_NF_MATCH_HL=y
-        EOF
+        if ! grep -q '^CONFIG_IP_NF_TARGET_TTL=y' "$DEF"; then
+          cat >> "$DEF" <<'EOF'
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_IP6_NF_MATCH_HL=y
+          EOF
+        fi
 
     - name: Add Build Based Configs
       shell: bash
