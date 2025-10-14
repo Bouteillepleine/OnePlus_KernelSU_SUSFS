@@ -273,30 +273,41 @@ runs:
         CUSTOM_LOCALVERSION="-${KANDROID_VERSION}-OnePlus-Ultra-Bolt"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
-    - name: Add SukiSU Ultra
+        - name: Add SukiSU Ultra
       shell: bash
       run: |
         set -euo pipefail
         cd "${CONFIG}/kernel_platform"
         META="${{ inputs.KSU_META }}"
+        
+        # Must include at least two separators (three fields total)
         if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
-          echo "Error: KSU_META parameter missing required separator '/', format should be: branch name/custom identifier (optional)/commit hash (optional)"
+          echo "Error: KSU_META parameter missing required separator '/', format should be: branch/custom identifier (optional)/commit hash (optional)"
           exit 10
         fi
+        
+        # Parse fields: branch / custom tag / manual hash
         IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
         echo "Branch name: $BRANCH_NAME"
         [[ -n "$CUSTOM_TAG" ]] && echo "Custom version identifier: $CUSTOM_TAG" || echo "Custom version identifier: disabled"
         [[ -n "$MANUAL_HASH" ]] && echo "Manual hash: $MANUAL_HASH" || echo "Manual hash: disabled"
         echo "KSU_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
+        
+        # Setup KernelSU from SukiSU-Ultra
         curl -LSs --retry 5 --retry-delay 2 --retry-connrefused \
           "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | \
           bash -s "$BRANCH_NAME"
+        
         cd ./KernelSU
+        
+        # If manual hash is specified, check it out
         if [[ -n "$MANUAL_HASH" ]]; then
           git fetch origin "$BRANCH_NAME" --depth=50
           git checkout "$MANUAL_HASH"
           SHORT_HASH=${MANUAL_HASH:0:8}
         fi
+        
+        # Resolve API version with fallback to minimum supported 3.1.7
         KSU_API_VERSION=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
           "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
           grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]' || true)
@@ -304,6 +315,8 @@ runs:
           KSU_API_VERSION="3.1.7"
         fi
         echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
+        
+        # Build version string
         GIT_HASH=$(git rev-parse --short HEAD)
         if [[ -n "$MANUAL_HASH" ]]; then
           USE_HASH="$SHORT_HASH"
@@ -315,19 +328,24 @@ runs:
         else
           VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
         fi
+        
+        # Inject version definitions into KernelSU Makefile
         if [[ -f kernel/Makefile ]]; then
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile || true
           sed -i '/KSU_VERSION_API :=/d' kernel/Makefile || true
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile || true
-          version_block=$(cat <<EOF
+          
+          VERSION_DEFINITIONS=$(cat <<EOF
             define get_ksu_version_full
             $VERSION_FULL
             endef
+
             KSU_VERSION_API := $KSU_API_VERSION
             KSU_VERSION_FULL := $VERSION_FULL
           EOF
           )
-          awk -v def="$version_block" '
+          
+          awk -v def="$VERSION_DEFINITIONS" '
             /REPO_OWNER :=/ {print; print def; inserted=1; next}
             1
             END {if (!inserted) print def}
@@ -336,6 +354,7 @@ runs:
             cp kernel/Makefile kernel/Makefile.tmp
           }
           mv kernel/Makefile.tmp kernel/Makefile
+          
           echo "::group::Final Makefile version info and partial debug results preview"
           grep -A10 "REPO_OWNER" kernel/Makefile || true
           grep "KSU_VERSION_FULL" kernel/Makefile || true
@@ -343,6 +362,8 @@ runs:
         else
           echo "Warning: kernel/Makefile not found in KernelSU; skipping version injection."
         fi
+        
+        # Derive a continuous KSU version code
         KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
         echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
     
