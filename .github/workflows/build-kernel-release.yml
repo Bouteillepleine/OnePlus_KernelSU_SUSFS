@@ -7,366 +7,11 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      device_A:
-        description: "Device A (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_B:
-        description: "Device B (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_C:
-        description: "Device C (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_D:
-        description: "Device D (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_E:
-        description: "Device E (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_F:
-        description: "Device F (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_G:
-        description: "Device G (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_H:
-        description: "Device H (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_I:
-        description: "Device I (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
-      device_J:
-        description: "Device J (optional)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - oneplus_nord_ce4_lite_5g_v
-          - oneplus_nord_ce4_v
-          - oneplus_nord_4_v
-          - oneplus_ace_3v_v
-          - oneplus_10_pro_v
-          - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
-          - oneplus_ace_pro_v
-          - oneplus_11_v
-          - oneplus_12r_v
-          - oneplus_ace2_pro_v
-          - oneplus_ace3_v
-          - oneplus_open_v
-          - oneplus12_v
-          - oneplus_13r
-          - oneplus_ace3_pro_v
-          - oneplus_ace5
-          - oneplus_pad_pro_v
-          - oneplus_pad2_v
-          - oneplus_nord_5
-          - oneplus_ace5_pro
-          - oneplus_13
-          - oneplus_13_global
-          - oneplus_13t
-          - oneplus_13s
-          - oneplus_pad_2_pro
-          - oneplus_pad_3
-          - oneplus_ace5_ultra
+      configs:
+        description: "Comma-separated device configs (e.g., oneplus_13r,oneplus12_v,oneplus_13)"
+        required: true
+        type: string
+        default: "oneplus_13r"
       make_release:
         description: 'Do you want to create a release?'
         required: true
@@ -376,7 +21,7 @@ on:
         description: 'Enter SukiSU Ultra Branch or commit hash (blank for stable tag)'
         required: true
         type: string
-        default: main
+        default: "main"
       optimize_level:
         description: 'Compiler optimization level'
         required: true
@@ -415,37 +60,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Collect up to 10 device selections, ignore empties, deduplicate
-          declare -a picks=()
+          in="${{ github.event.inputs.configs }}"
+          in="${in// /}"
+          IFS=',' read -r -a arr <<< "$in"
+          # de-duplicate and cap to 10 devices if desired
+          uniq=()
           declare -A seen=()
-          for key in device_A device_B device_C device_D device_E device_F device_G device_H device_I device_J; do
-            case "$key" in
-              device_A) v="${{ github.event.inputs.device_A }}";;
-              device_B) v="${{ github.event.inputs.device_B }}";;
-              device_C) v="${{ github.event.inputs.device_C }}";;
-              device_D) v="${{ github.event.inputs.device_D }}";;
-              device_E) v="${{ github.event.inputs.device_E }}";;
-              device_F) v="${{ github.event.inputs.device_F }}";;
-              device_G) v="${{ github.event.inputs.device_G }}";;
-              device_H) v="${{ github.event.inputs.device_H }}";;
-              device_I) v="${{ github.event.inputs.device_I }}";;
-              device_J) v="${{ github.event.inputs.device_J }}";;
-            esac
-            [ -z "$v" ] && continue
-            if [[ -z "${seen[$v]+x}" ]]; then
-              picks+=("$v"); seen[$v]=1
+          for x in "${arr[@]}"; do
+            [ -z "$x" ] && continue
+            if [[ -z "${seen[$x]+x}" ]]; then
+              uniq+=("$x"); seen[$x]=1
             fi
           done
-          
-          if [ "${#picks[@]}" -eq 0 ]; then
-            echo "No device selected. Choose at least one device (A..J)." >&2
+          if [ "${#uniq[@]}" -eq 0 ]; then
+            echo "No valid configs provided." >&2
             exit 1
           fi
-          
-          # Build JSON array
-          json_array="$(printf '%s\n' "${picks[@]}" | jq -R . | jq -s .)"
+          json_array="$(printf '%s\n' "${uniq[@]}" | jq -R . | jq -s .)"
           echo "matrix=$json_array" >> "$GITHUB_OUTPUT"
-          echo "Device matrix: $json_array"
+          echo "Matrix: $json_array"
 
   build:
     name: build (${{ matrix.config }}, ${{ inputs.ksun_branch }})
@@ -540,6 +173,9 @@ jobs:
             oneplus_12r_v)
               model="OP12r"; soc="kalama"; branch="oneplus/sm8550"; manifest="oneplus_12r_v.xml"; android_version="android13"; kernel_version="5.15"
               ;;
+            oneplus_ace3_v)
+              model="OP13T"; soc="sun"; branch="oneplus/sm8750"; manifest="oneplus_13t.xml"; android_version="android15"; kernel_version="6.6"
+              ;;
             oneplus_ace_pro_v)
               model="OP-ACE-PRO"; soc="kalama"; branch="oneplus/sm8550"; manifest="oneplus_ace_pro_v.xml"; android_version="android13"; kernel_version="5.15"
               ;;
@@ -565,12 +201,10 @@ jobs:
           set -euo pipefail
           key="${{ env.android_version }}-${{ env.kernel_version }}"
           json='${{ inputs.susfs_mapping_json }}'
-          
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y jq
           fi
-          
           declare -A map=(
             ["android12-5.10"]=""
             ["android13-5.10"]=""
@@ -579,9 +213,7 @@ jobs:
             ["android14-6.1"]=""
             ["android15-6.6"]=""
           )
-          
           if [[ -n "$json" && "$json" != "" ]]; then
-            echo "Parsing SUSFS mapping JSON: $json"
             if jq empty <<<"$json" >/dev/null 2>&1; then
               for k in "${!map[@]}"; do
                 v=$(jq -r --arg k "$k" '.[$k] // empty' <<<"$json" 2>/dev/null || echo "")
@@ -594,18 +226,15 @@ jobs:
               echo "WARNING: Invalid JSON provided, using defaults"
             fi
           fi
-          
           if [[ -z "${map[$key]+_exists}" ]]; then
             echo "ERROR: Unsupported Android/Kernel combo: $key" >&2
             echo "Supported combos: ${!map[*]}" >&2
             exit 1
           fi
-          
           susfs_branch="${map[$key]}"
           if [[ -z "$susfs_branch" ]]; then
             susfs_branch="gki-${key}"
           fi
-          
           echo "Selected SusFS branch for $key: $susfs_branch"
           echo "susfs_branch=$susfs_branch" >> "$GITHUB_OUTPUT"
 
@@ -691,7 +320,7 @@ jobs:
           EOF
           
           if [ -d "./downloaded-artifacts" ]; then
-            for file in $(find downloaded-artifacts -name "*.txt" -type f | sort 2>/dev/null || true); do
+            find downloaded-artifacts -name "*.txt" -type f -print0 | sort -z | while IFS= read -r -d '' file; do
               if [ -f "$file" ]; then
                 model=$(basename "$file" .txt)
                 version=$(cat "$file" 2>/dev/null || echo "Unknown")
@@ -724,11 +353,6 @@ jobs:
           3. Flash the kernel ZIP
           4. Install SukiSU Ultra Manager
           5. Configure SUSFS modules
-          
-          ## 💡 Support
-          - Join our [Telegram group](https://t.me/yourgroup) for support
-          - Report issues on [GitHub](https://github.com/yourusername/yourrepo/issues)
-          - Follow updates on our [XDA thread](https://forum.xda-developers.com/t/your-thread)
           EOF
           
           echo "--- Final Release Notes ---"
