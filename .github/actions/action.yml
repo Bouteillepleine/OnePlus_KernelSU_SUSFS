@@ -289,7 +289,8 @@ runs:
         [[ -n "$MANUAL_HASH" ]] && echo "Manual hash: $MANUAL_HASH" || echo "Manual hash: disabled"
         echo "KSU_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
         curl -LSs --retry 5 --retry-delay 2 --retry-connrefused \
-          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | \
+          bash -s "$BRANCH_NAME"
         cd ./KernelSU
         if [[ -n "$MANUAL_HASH" ]]; then
           git fetch origin "$BRANCH_NAME" --depth=50
@@ -318,21 +319,21 @@ runs:
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile || true
           sed -i '/KSU_VERSION_API :=/d' kernel/Makefile || true
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile || true
-          VERSION_DEFINITIONS=$(cat <<EOF
-          define get_ksu_version_full
-          $VERSION_FULL
-          endef
-          KSU_VERSION_API := $KSU_API_VERSION
-          KSU_VERSION_FULL := $VERSION_FULL
+          version_block=$(cat <<EOF
+            define get_ksu_version_full
+            $VERSION_FULL
+            endef
+            KSU_VERSION_API := $KSU_API_VERSION
+            KSU_VERSION_FULL := $VERSION_FULL
           EOF
           )
-          awk -v def="$VERSION_DEFINITIONS" '
+          awk -v def="$version_block" '
             /REPO_OWNER :=/ {print; print def; inserted=1; next}
             1
             END {if (!inserted) print def}
-          ' kernel/Makefile > kernel/Makefile.tmp || { 
-            echo "AWK injection failed, keeping original"; 
-            cp kernel/Makefile kernel/Makefile.tmp; 
+          ' kernel/Makefile > kernel/Makefile.tmp || {
+            echo "AWK injection failed, keeping original"
+            cp kernel/Makefile kernel/Makefile.tmp
           }
           mv kernel/Makefile.tmp kernel/Makefile
           echo "::group::Final Makefile version info and partial debug results preview"
@@ -344,7 +345,7 @@ runs:
         fi
         KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
         echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
-
+    
     - name: Apply Patches SukiSU Ultra
       shell: bash
       run: |
