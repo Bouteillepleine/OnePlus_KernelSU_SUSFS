@@ -127,19 +127,7 @@ runs:
       run: |
         echo "KANDROID_VERSION=${{ inputs.android_version }}" >> "$GITHUB_ENV"
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> "$GITHUB_ENV"
-
-    - name: Disk / Cleanup (optional)
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Pre-clean"
-        df -h
-        for p in /usr/share/dotnet /usr/local/lib/android; do
-          if [ -d "$p" ]; then sudo rm -rf "$p"; fi
-        done
-        df -h
-        echo "::endgroup::"
-
+    
     - name: Install Minimal Dependencies
       shell: bash
       run: |
@@ -535,7 +523,7 @@ runs:
           CONFIG_IP_NF_TARGET_TTL=y
           CONFIG_IP6_NF_TARGET_HL=y
           CONFIG_IP6_NF_MATCH_HL=y
-          EOF
+        EOF
         fi
 
     - name: Add Build Based Configs
@@ -554,7 +542,7 @@ runs:
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DEBUG_INFO=n
         EOF
-
+  
     - name: Add sched_ext (6.6 only)
       shell: bash
       run: |
