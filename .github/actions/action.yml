@@ -53,7 +53,7 @@ inputs:
   optimize_level:
     required: false
     type: string
-    default: O2  # Choices: O2 or O3
+    default: O2
 
 outputs:
   kernel_version:
@@ -127,7 +127,7 @@ runs:
       run: |
         echo "KANDROID_VERSION=${{ inputs.android_version }}" >> "$GITHUB_ENV"
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}" >> "$GITHUB_ENV"
-    
+
     - name: Install Minimal Dependencies
       shell: bash
       run: |
@@ -340,16 +340,16 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG"
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${KANDROID_VERSION}-${KERNEL_VERSION}
         echo "SUSFS_KERNEL_BRANCH=gki-${KANDROID_VERSION}-${KERNEL_VERSION}" >> "$GITHUB_ENV"
         git clone https://github.com/ShirkNeko/SukiSU_patch.git
         cd kernel_platform
         echo "Fetching susfs patches"
-        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch ./common/
         cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
         cd ./common
-        GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        GKI_V="${KANDROID_VERSION}-${KERNEL_VERSION}"
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
         if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
           echo "Fixing some bugs caused by kernel version 5.15.0 to 5.15.123 only supporting old C libraries"
@@ -357,8 +357,8 @@ runs:
           patch -p1 < fix_5.15.legacy.patch
           echo "fix_5.15_patch completed"
         fi
-        KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
-        TKERNEL_VERSION="${{ env.TKERNEL_VERSION }}"
+        KERNEL_VERSION="${KERNEL_VERSION}"
+        TKERNEL_VERSION="${TKERNEL_VERSION}"
         file="${FILE}"
         TRUSTY_EXISTS="false"
         if [[ "$KERNEL_VERSION" == "6.6" ]]; then
@@ -368,12 +368,12 @@ runs:
           echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
           if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
             echo "Fixing susfs errors caused by missing Trusty OS on some kernel 6.6 models"
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
-            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch
           fi
         fi
         echo "Applying susfs patch"
-        patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+        patch -p1 < 50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch || true
         echo "susfs_patch completed"
 
     - name: Record SUSFS Version
@@ -435,109 +435,81 @@ runs:
         curl -fL -o hmbird_patch.patch https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/hmbird_patch.patch
         grep -q 'hmbird_patch.o' drivers/Makefile || echo 'obj-y += hmbird_patch.o' >> drivers/Makefile
         patch -p1 -F 3 < hmbird_patch.patch || echo "hmbird patch failed (non-fatal)"
-    
+
     - name: Add KernelSU / SUSFS Config
       shell: bash
       run: |
         set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-    
-        # Base KSU flag
-        echo "CONFIG_KSU=y" >> "$DEF"
-    
-        # Hook selection flags
-        case "${{ inputs.HOOK }}" in
-          kprobe)
-            {
-              echo "CONFIG_KSU_SUSFS_SUS_SU=y"
-              echo "CONFIG_KPROBES=y"
-              echo "CONFIG_KSU_KPROBES_HOOK=y"
-            } >> "$DEF"
-            ;;
-          manual)
-            {
-              echo "CONFIG_KSU_SUSFS_SUS_SU=n"
-              echo "CONFIG_KSU_MANUAL_HOOK=y"
-            } >> "$DEF"
-            ;;
-          tracepoint)
-            {
-              echo "CONFIG_KSU_SUSFS_SUS_SU=n"
-              echo "CONFIG_KSU_TRACEPOINT_HOOK=y"
-            } >> "$DEF"
-            ;;
-        esac
-    
-        # SUSFS and FS options
-        cat >> "$DEF" <<'EOF'
-        CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_PATH=y
-        CONFIG_KSU_SUSFS_SUS_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_KSTAT=y
-        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-        CONFIG_KSU_SUSFS_ENABLE_LOG=y
-        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-        CONFIG_TMPFS_XATTR=y
-        CONFIG_TMPFS_POSIX_ACL=y
-        EOF
-    
-        # Optional LSM
-        if [[ "${{ inputs.LSM }}" == "true" ]]; then
-          echo "CONFIG_BBG=y" >> "$DEF"
+        cd "$GITHUB_WORKSPACE/${CONFIG}/kernel_platform"
+        CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
+        KERNEL_VERSION="${KERNEL_VERSION}"
+        # SukiSU Ultra
+        echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+        # KPM
+        echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+        # HOOK
+        if [ "${{ inputs.HOOK }}" = "kprobe" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
+        elif [ "${{ inputs.HOOK }}" = "manual" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
+        elif [ "${{ inputs.HOOK }}" = "tracepoint" ]; then
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE"
         fi
-    
-    - name: Add Oneplus BBR Support
-      shell: bash
-      run: |
-        set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        if ! grep -q '^CONFIG_TCP_CONG_ADVANCED=y' "$DEF"; then
-          cat >> "$DEF" <<'EOF'
-          CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_NET_SCH_FQ_CODEL=y
-          CONFIG_IP_ECN=y
-          CONFIG_TCP_ECN=y
-          CONFIG_IPV6_ECN=y
-          CONFIG_IP_NF_TARGET_ECN=y
-          EOF
+        # SUSFS
+        echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+        # TMPFS
+        echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
+        # BBR
+        echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
+        echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
+        echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
+        echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
+        echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
+        # ECN
+        echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
+        echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
+        # TTL
+        echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$CONFIG_FILE"
+        # Optimisation
+        echo "CONFIG_LTO_CLANG_THIN=y" >> "$CONFIG_FILE"
+        echo "CONFIG_LTO_CLANG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$CONFIG_FILE"
+        echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "$CONFIG_FILE"
+        echo "CONFIG_OPTIMIZE_INLINING=y" >> "$CONFIG_FILE"
+        echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> "$CONFIG_FILE"
+        echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> "$CONFIG_FILE"
+        # Debug
+        echo "CONFIG_DEBUG_KERNEL=n" >> "$CONFIG_FILE"
+        echo "CONFIG_DEBUG_INFO=n" >> "$CONFIG_FILE"
+        # LSM
+        if [ "${{ inputs.LSM }}" = "true" ]; then
+          echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
         fi
-    
-    - name: Add TTL Target Support
-      shell: bash
-      run: |
-        set -euo pipefail
-        DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-        if ! grep -q '^CONFIG_IP_NF_TARGET_TTL=y' "$DEF"; then
-          cat >> "$DEF" <<'EOF'
-          CONFIG_IP_NF_TARGET_TTL=y
-          CONFIG_IP6_NF_TARGET_HL=y
-          CONFIG_IP6_NF_MATCH_HL=y
-          EOF
-        fi
-        
-        - name: Add TTL Target Support
-          shell: bash
-          run: |
-            set -euo pipefail
-            DEF="${CONFIG}/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-            if ! grep -q '^CONFIG_IP_NF_TARGET_TTL=y' "$DEF"; then
-              cat >> "$DEF" <<'EOF'
-              CONFIG_IP_NF_TARGET_TTL=y
-              CONFIG_IP6_NF_TARGET_HL=y
-              CONFIG_IP6_NF_MATCH_HL=y
-              EOF
-            fi
-  
+
     - name: Add sched_ext (6.6 only)
       shell: bash
       run: |
@@ -731,7 +703,7 @@ runs:
           echo "KSU Version: ${KSUVER:-unknown}"
           echo "KSU branch: ${KSU_BRANCH:-unknown}"
           echo "SUSFS Version: ${SUSVER:-unknown}"
-          echo "SUSFS branch used: ${SUSFS_KERNEL_BRANCH:-gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}}"
+          echo "SUSFS branch used: ${SUSFS_KERNEL_BRANCH:-gki-${KANDROID_VERSION}-${KERNEL_VERSION}}"
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "Compiler: ${CLANG_VERSION:-unknown}"
@@ -747,7 +719,7 @@ runs:
           echo "- KSU Version: ${KSUVER:-unknown}"
           echo "- KSU branch: [${KSU_BRANCH:-unknown}](https://github.com/SukiSU-Ultra/SukiSU-Ultra/tree/${KSU_BRANCH:-main})"
           echo "- SUSFS Version: ${SUSVER:-unknown}"
-          echo "- SUSFS branch used: [${SUSFS_KERNEL_BRANCH:-gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}}](https://gitlab.com/simonpunk/susfs4ksu/-/tree/${SUSFS_KERNEL_BRANCH:-gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}})"
+          echo "- SUSFS branch used: [${SUSFS_KERNEL_BRANCH:-gki-${KANDROID_VERSION}-${KERNEL_VERSION}}](https://gitlab.com/simonpunk/susfs4ksu/-/tree/${SUSFS_KERNEL_BRANCH:-gki-${KANDROID_VERSION}-${KERNEL_VERSION}})"
           echo "- Optimization: ${{ inputs.optimize_level }}"
           echo "- Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "- Warnings: ${{ steps.collect_stats.outputs.warnings }}"
