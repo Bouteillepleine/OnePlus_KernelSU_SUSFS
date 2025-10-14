@@ -23,7 +23,6 @@ on:
         type: choice
         options: [O2, O3]
         default: O2
-      # Optional passthroughs for your composite
       KSU_META:
         description: 'SukiSU Ultra branch/custom version identifier (e.g., susfs-main/⚡Ultra⚡/)'
         required: false
@@ -40,31 +39,11 @@ on:
         required: true
         type: boolean
         default: false
-      # SUSFS per Android/Kernel mapping
-      android12-5_10_susfs_branch_or_commit:
-        description: 'SusFS branch or commit for android12-5.10'
+      susfs_mapping_json:
+        description: 'JSON map for SusFS branch per combo. Keys: android12-5.10, android13-5.10, android13-5.15, android14-5.15, android14-6.1, android15-6.6'
+        required: false
         type: string
-        default: ''
-      android13-5_10_susfs_branch_or_commit:
-        description: 'SusFS branch or commit for android13-5.10'
-        type: string
-        default: ''
-      android13-5_15_susfs_branch_or_commit:
-        description: 'SusFS branch or commit for android13-5.15'
-        type: string
-        default: ''
-      android14-5_15_susfs_branch_or_commit:
-        description: 'SusFS branch or commit for android14-5.15'
-        type: string
-        default: ''
-      android14-6_1_susfs_branch_or_commit:
-        description: 'SusFS branch or commit for android14-6.1'
-        type: string
-        default: ''
-      android15-6_6_susfs_branch_or_commit:
-        description: 'SusFS branch or commit for android15-6.6'
-        type: string
-        default: ''
+        default: '{"android12-5.10":"","android13-5.10":"","android13-5.15":"","android14-5.15":"","android14-6.1":"","android15-6.6":""}'
 
 jobs:
   build:
@@ -72,8 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
+    matrix:
+      include:
         # batch-1
         - model: OP11
           soc: kalama
@@ -234,31 +213,47 @@ jobs:
           android_version: android13
           kernel_version: '5.15'
     steps:
-      - name: Resolve SUSFS branch from inputs
+      - name: Resolve SUSFS branch from JSON input
         id: susfs
         shell: bash
         run: |
           set -euo pipefail
           key="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
-          declare -A map=(
-            ["android12-5.10"]="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
-            ["android13-5.10"]="${{ inputs.android13-5_10_susfs_branch_or_commit }}"
-            ["android13-5.15"]="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
-            ["android14-5.15"]="${{ inputs.android14-5_15_susfs_branch_or_commit }}"
-            ["android14-6.1"]="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
-            ["android15-6.6"]="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
-          )
-          if [[ -z "${map[$key]+_exists}" ]]; then
-            echo "Unsupported combo (no mapping): $key" >&2
+          json='${{ inputs.susfs_mapping_json }}'
+          
+          # Escape JSON string for Python
+          json_escaped=$(printf '%s\n' "$json" | python3 -c "
+          import sys, json
+          for line in sys.stdin:
+              line = line.rstrip()
+              line = line.replace('\"', '\\\"').replace('$', '\\$').replace('`', '\\`')
+              print(f'\"{line}\"')
+          " | tr '\n' ' ' | sed 's/ $//')
+          
+          val=$(python3 -c "
+          import json, os, sys
+          try:
+              j = json.loads('${{ inputs.susfs_mapping_json }}')
+              k = '$key'
+              result = j.get(k, 'MISSING')
+              print(result if result != 'MISSING' else 'MISSING')
+          except Exception as e:
+              print(f'ERROR: {e}')
+              sys.exit(1)
+          ")
+          
+          if [ "$val" = "MISSING" ]; then
+            echo "Unsupported combo (no mapping key): $key" >&2
             exit 1
           fi
-          # Use input if provided, otherwise fallback to default gki branch
-          susfs_branch="${map[$key]}"
-          if [[ -z "$susfs_branch" ]]; then
-            susfs_branch="gki-${key}"
+          
+          # Fallback to gki-${key} if empty string provided
+          if [ -z "$val" ]; then
+            val="gki-${key}"
           fi
-          echo "Selected SusFS branch for $key: $susfs_branch"
-          echo "susfs_branch=$susfs_branch" >> "$GITHUB_OUTPUT"
+          
+          echo "Selected SusFS branch for $key: $val"
+          echo "susfs_branch=$val" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -299,6 +294,7 @@ jobs:
       - name: Generate and Create New Tag
         run: |
           set -euo pipefail
+          git fetch --tags
           BASE_TAG="v1.5.12"
           LATEST_TAG=$(git tag --list "${BASE_TAG}-r*" | sort -V | tail -n1 || true)
           if [ -z "$LATEST_TAG" ]; then
