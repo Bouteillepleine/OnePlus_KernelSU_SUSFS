@@ -1,9 +1,5 @@
 name: Build
 
-permissions:
-  contents: write
-  actions: write
-
 inputs:
   model:
     required: true
@@ -101,12 +97,12 @@ runs:
             echo "Manifest URL must be HTTPS"
             exit 1
           fi
-          if ! [[ "$manifest" =~ \.xml($|?) ]]; then
+          if ! [[ "$manifest" =~ .xml($|?) ]]; then
             echo "Manifest URL should point to an XML file (.xml)"
             exit 1
           fi
         else
-          if ! [[ "$manifest" =~ \.xml$ ]]; then
+          if ! [[ "$manifest" =~ .xml$ ]]; then
             echo "Manifest filename must end with .xml"
             exit 1
           fi
@@ -414,7 +410,7 @@ runs:
         fi
 
     - name: Apply LSM Baseband Guard
-      if: ${{ inputs.LSM == true }}
+      if: ${{ inputs.LSM == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -700,8 +696,8 @@ runs:
           echo "Kernel base: ${{ env.KERNEL_VER }}"
           echo "Kernel full: ${{ env.KERNEL_FULL_VER }}"
           echo "Kernel Uname: ${{ env.KERNEL_UNAME }}"
-          echo "KSU Version: ${KSUVER:-unknown}"
-          echo "KSU branch: ${KSU_BRANCH:-unknown}"
+          echo "SukiUltra Version: ${KSUVER:-unknown}"
+          echo "SukiUltra branch: ${KSU_BRANCH:-unknown}"
           echo "SUSFS Version: ${SUSVER:-unknown}"
           echo "SUSFS branch used: ${SUSFS_KERNEL_BRANCH:-gki-${KANDROID_VERSION}-${KERNEL_VERSION}}"
           echo "Optimization: ${{ inputs.optimize_level }}"
@@ -716,8 +712,8 @@ runs:
           echo "- Android: ${{ env.ANDROID_VER }}"
           echo "- Kernel Version: ${{ steps.save_metadata.outputs.kernel_version }}"
           echo "- Kernel Uname: ${{ env.KERNEL_UNAME }}"
-          echo "- KSU Version: ${KSUVER:-unknown}"
-          echo "- KSU branch: [${KSU_BRANCH:-unknown}](https://github.com/SukiSU-Ultra/SukiSU-Ultra/tree/${KSU_BRANCH:-main})"
+          echo "- SukiUltra Version: ${KSUVER:-unknown}"
+          echo "- SukiUltra Branch: [${KSU_BRANCH:-unknown}](https://github.com/SukiSU-Ultra/SukiSU-Ultra/tree/${KSU_BRANCH:-main})"
           echo "- SUSFS Version: ${SUSVER:-unknown}"
           echo "- SUSFS branch used: [${SUSFS_KERNEL_BRANCH:-gki-${KANDROID_VERSION}-${KERNEL_VERSION}}](https://gitlab.com/simonpunk/susfs4ksu/-/tree/${SUSFS_KERNEL_BRANCH:-gki-${KANDROID_VERSION}-${KERNEL_VERSION}})"
           echo "- Optimization: ${{ inputs.optimize_level }}"
