@@ -273,7 +273,7 @@ runs:
         CUSTOM_LOCALVERSION="-${KANDROID_VERSION}-OnePlus-Ultra-Bolt"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
-        - name: Add SukiSU Ultra
+    - name: Add SukiSU Ultra
       shell: bash
       run: |
         set -euo pipefail
