@@ -29,7 +29,7 @@ on:
         type: string
         default: 'susfs-main/⚡Ultra⚡/'
       HOOK:
-        description: 'KernelSU hook type'
+        description: 'SukiSU hook type'
         required: false
         type: choice
         options: [kprobe, manual, tracepoint]
@@ -221,39 +221,53 @@ jobs:
           key="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           json='${{ inputs.susfs_mapping_json }}'
           
-          # Escape JSON string for Python
-          json_escaped=$(printf '%s\n' "$json" | python3 -c "
-          import sys, json
-          for line in sys.stdin:
-              line = line.rstrip()
-              line = line.replace('\"', '\\\"').replace('$', '\\$').replace('`', '\\`')
-              print(f'\"{line}\"')
-          " | tr '\n' ' ' | sed 's/ $//')
+          # Install jq if not available
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
           
-          val=$(python3 -c "
-          import json, os, sys
-          try:
-              j = json.loads('${{ inputs.susfs_mapping_json }}')
-              k = '$key'
-              result = j.get(k, 'MISSING')
-              print(result if result != 'MISSING' else 'MISSING')
-          except Exception as e:
-              print(f'ERROR: {e}')
-              sys.exit(1)
-          ")
+          # Known keys (ensure unsupported combos fail early)
+          declare -A map=(
+            ["android12-5.10"]=""
+            ["android13-5.10"]=""
+            ["android13-5.15"]=""
+            ["android14-5.15"]=""
+            ["android14-6.1"]=""
+            ["android15-6.6"]=""
+          )
           
-          if [ "$val" = "MISSING" ]; then
-            echo "Unsupported combo (no mapping key): $key" >&2
+          # Populate map from JSON if provided and valid
+          if [[ -n "$json" && "$json" != "" ]]; then
+            echo "Parsing SUSFS mapping JSON: $json"
+            if jq empty <<<"$json" >/dev/null 2>&1; then
+              for k in "${!map[@]}"; do
+                v=$(jq -r --arg k "$k" '.["'$k'"] // empty' <<<"$json" 2>/dev/null || echo "")
+                if [[ -n "$v" && "$v" != "null" ]]; then
+                  map["$k"]="$v"
+                  echo "Mapped $k -> $v"
+                fi
+              done
+            else
+              echo "WARNING: Invalid JSON provided, using defaults"
+            fi
+          fi
+          
+          # Validate key exists in known map
+          if [[ -z "${map[$key]+_exists}" ]]; then
+            echo "ERROR: Unsupported Android/Kernel combo: $key" >&2
+            echo "Supported combos: ${!map[*]}" >&2
             exit 1
           fi
           
-          # Fallback to gki-${key} if empty string provided
-          if [ -z "$val" ]; then
-            val="gki-${key}"
+          susfs_branch="${map[$key]}"
+          # Fallback to gki-${key} if empty
+          if [[ -z "$susfs_branch" ]]; then
+            susfs_branch="gki-${key}"
           fi
           
-          echo "Selected SusFS branch for $key: $val"
-          echo "susfs_branch=$val" >> "$GITHUB_OUTPUT"
+          echo "Selected SusFS branch for $key: $susfs_branch"
+          echo "susfs_branch=$susfs_branch" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -294,7 +308,7 @@ jobs:
       - name: Generate and Create New Tag
         run: |
           set -euo pipefail
-          git fetch --tags
+          git fetch --tags --quiet
           BASE_TAG="v1.5.12"
           LATEST_TAG=$(git tag --list "${BASE_TAG}-r*" | sort -V | tail -n1 || true)
           if [ -z "$LATEST_TAG" ]; then
@@ -302,7 +316,7 @@ jobs:
           else
             n=$(echo "$LATEST_TAG" | awk -F'-r' '{print $2}')
             [ -z "$n" ] && n=0
-            n=$((n+1))
+            n=$((n + 1))
             NEW_TAG="${BASE_TAG}-r${n}"
           fi
           echo "NEW_TAG=${NEW_TAG}" >> "$GITHUB_ENV"
@@ -321,7 +335,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== Start building the release notes ==="
-          cat << EOF > release_notes.md
+          cat << 'EOF' > release_notes.md
           This release contains KernelSU Next and SUSFS v1.5.12
 
           Module: 
@@ -339,13 +353,15 @@ jobs:
           |-------|----------------|
           EOF
           
-          for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
-            if [ -f "$file" ]; then
-              model=$(basename "$file" .txt)
-              version=$(cat "$file")
-              printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
-            fi
-          done
+          if [ -d "./downloaded-artifacts" ]; then
+            for file in $(find downloaded-artifacts -name "*.txt" -type f | sort 2>/dev/null || true); do
+              if [ -f "$file" ]; then
+                model=$(basename "$file" .txt)
+                version=$(cat "$file" 2>/dev/null || echo "Unknown")
+                printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
+              fi
+            done
+          fi
           
           cat << 'EOF' >> release_notes.md
           
@@ -380,10 +396,14 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          upload_count=0
           for file in ./downloaded-artifacts/*/*.zip; do
             if [ -f "$file" ]; then
               echo "Uploading $file..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
+              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber || \
+                echo "WARNING: Failed to upload $file"
+              ((upload_count++))
             fi
           done
+          echo "Uploaded $upload_count assets"
           shopt -u nullglob
