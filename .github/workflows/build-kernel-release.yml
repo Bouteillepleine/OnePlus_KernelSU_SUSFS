@@ -7,21 +7,51 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      configs:
-        description: "Comma-separated device configs (e.g., oneplus_13r,oneplus12_v,oneplus_13)"
+      config:
+        description: "Model"
         required: true
-        type: string
-        default: "oneplus_13r"
+        type: choice
+        default: oneplus_13r
+        options:
+          - oneplus_nord_ce4_lite_5g_v
+          - oneplus_nord_ce4_v
+          - oneplus_nord_4_v
+          - oneplus_ace_3v_v
+          - oneplus_10_pro_v
+          - oneplus_10t_v
+          - oneplus_11r_v
+          - oneplus_ace2_v
+          - oneplus_ace_pro_v
+          - oneplus_11_v
+          - oneplus_12r_v
+          - oneplus_ace2_pro_v
+          - oneplus_ace3_v
+          - oneplus_open_v
+          - oneplus12_v
+          - oneplus_13r
+          - oneplus_ace3_pro_v
+          - oneplus_ace5
+          - oneplus_pad_pro_v
+          - oneplus_pad2_v
+          - oneplus_nord_5
+          - oneplus_ace5_pro
+          - oneplus_13
+          - oneplus_13_global
+          - oneplus_13t
+          - oneplus_13s
+          - oneplus_pad_2_pro
+          - oneplus_pad_3
+          - oneplus_ace5_ultra
       make_release:
         description: 'Do you want to create a release?'
         required: true
         type: boolean
         default: false
       ksun_branch:
-        description: 'Enter SukiSU Ultra Branch or commit hash (blank for stable tag)'
+        description: 'Enter KernelSU Next Branch or commit hash (blank for stable tag)'
         required: true
         type: string
-        default: "main"
+        default: next
       optimize_level:
         description: 'Compiler optimization level'
         required: true
@@ -51,52 +81,18 @@ on:
         default: '{"android12-5.10":"","android13-5.10":"","android13-5.15":"","android14-5.15":"","android14-6.1":"","android15-6.6":""}'
 
 jobs:
-  fanout:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.mk-matrix.outputs.matrix }}
-    steps:
-      - id: mk-matrix
-        shell: bash
-        run: |
-          set -euo pipefail
-          in="${{ github.event.inputs.configs }}"
-          in="${in// /}"
-          IFS=',' read -r -a arr <<< "$in"
-          # de-duplicate and cap to 10 devices if desired
-          uniq=()
-          declare -A seen=()
-          for x in "${arr[@]}"; do
-            [ -z "$x" ] && continue
-            if [[ -z "${seen[$x]+x}" ]]; then
-              uniq+=("$x"); seen[$x]=1
-            fi
-          done
-          if [ "${#uniq[@]}" -eq 0 ]; then
-            echo "No valid configs provided." >&2
-            exit 1
-          fi
-          json_array="$(printf '%s\n' "${uniq[@]}" | jq -R . | jq -s .)"
-          echo "matrix=$json_array" >> "$GITHUB_OUTPUT"
-          echo "Matrix: $json_array"
-
   build:
-    name: build (${{ matrix.config }}, ${{ inputs.ksun_branch }})
-    needs: fanout
+    name: build (${{ inputs.config }}, ${{ inputs.ksun_branch }})
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        config: ${{ fromJson(needs.fanout.outputs.matrix) }}
     steps:
       - name: Resolve selection to parameters
         id: select
         shell: bash
         run: |
           set -euo pipefail
-          sel="${{ matrix.config }}"
+          sel="${{ inputs.config }}"
           model=""; soc=""; branch=""; manifest=""; android_version=""; kernel_version=""
-          
+
           case "$sel" in
             oneplus_11_v)
               model="OP11"; soc="kalama"; branch="oneplus/sm8550"; manifest="oneplus_11_v.xml"; android_version="android13"; kernel_version="5.15"
@@ -177,16 +173,16 @@ jobs:
               model="OP13T"; soc="sun"; branch="oneplus/sm8750"; manifest="oneplus_13t.xml"; android_version="android15"; kernel_version="6.6"
               ;;
             oneplus_ace_pro_v)
-              model="OP-ACE-PRO"; soc="kalama"; branch="oneplus/sm8550"; manifest="oneplus_ace_pro_v.xml"; android_version="android13"; kernel_version="5.15"
+              model="OP-ACE-2-PRO"; soc="kalama"; branch="oneplus/sm8550"; manifest="oneplus_ace2_pro_v.xml"; android_version="android13"; kernel_version="5.15"
               ;;
             oneplus_ace5_ultra)
-              model="OP-ACE-5-ULTRA"; soc="sun"; branch="oneplus/sm8750"; manifest="oneplus_ace5_ultra.xml"; android_version="android15"; kernel_version="6.6"
+              model="OP13S"; soc="sun"; branch="oneplus/sm8750"; manifest="oneplus_13s.xml"; android_version="android15"; kernel_version="6.6"
               ;;
             *)
               echo "Unknown config: $sel"; exit 1
               ;;
           esac
-          
+
           echo "model=$model"           >> "$GITHUB_ENV"
           echo "soc=$soc"               >> "$GITHUB_ENV"
           echo "branch=$branch"         >> "$GITHUB_ENV"
@@ -201,10 +197,12 @@ jobs:
           set -euo pipefail
           key="${{ env.android_version }}-${{ env.kernel_version }}"
           json='${{ inputs.susfs_mapping_json }}'
+          
           if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update -qq
+            sudo apt-get update
             sudo apt-get install -y jq
           fi
+          
           declare -A map=(
             ["android12-5.10"]=""
             ["android13-5.10"]=""
@@ -213,7 +211,9 @@ jobs:
             ["android14-6.1"]=""
             ["android15-6.6"]=""
           )
+          
           if [[ -n "$json" && "$json" != "" ]]; then
+            echo "Parsing SUSFS mapping JSON: $json"
             if jq empty <<<"$json" >/dev/null 2>&1; then
               for k in "${!map[@]}"; do
                 v=$(jq -r --arg k "$k" '.[$k] // empty' <<<"$json" 2>/dev/null || echo "")
@@ -226,15 +226,18 @@ jobs:
               echo "WARNING: Invalid JSON provided, using defaults"
             fi
           fi
+          
           if [[ -z "${map[$key]+_exists}" ]]; then
             echo "ERROR: Unsupported Android/Kernel combo: $key" >&2
             echo "Supported combos: ${!map[*]}" >&2
             exit 1
           fi
+          
           susfs_branch="${map[$key]}"
           if [[ -z "$susfs_branch" ]]; then
             susfs_branch="gki-${key}"
           fi
+          
           echo "Selected SusFS branch for $key: $susfs_branch"
           echo "susfs_branch=$susfs_branch" >> "$GITHUB_OUTPUT"
 
@@ -244,7 +247,7 @@ jobs:
           fetch-depth: 1
 
       - name: Build Kernel
-        uses: ./.github/actions/build
+        uses: ./.github/actions
         with:
           model: ${{ env.model }}
           soc: ${{ env.soc }}
@@ -266,7 +269,8 @@ jobs:
     env:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
-      RELEASE_NAME: 'SukiSU Ultra Kernels v1.5.12 - OnePlus Devices'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_NAME: 'TEST BUILD OnePlus Kernels With KernelSU Next & SUSFS v1.5.12 TEST BUILD'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -304,63 +308,52 @@ jobs:
           set -euo pipefail
           echo "=== Start building the release notes ==="
           cat << 'EOF' > release_notes.md
-          # SukiSU Ultra Kernels v1.5.12 for OnePlus Devices
+          This release contains KernelSU Next and SUSFS v1.5.12
+
+          Module: 
+          -> https://github.com/sidex15/ksu_module_susfs  
           
-          🚀 **Custom kernels with SukiSU Ultra root solution and SUSFS v1.5.12 overlay filesystem**
+          Official Managers:
+          -> https://github.com/KernelSU-Next/KernelSU-Next  
           
-          ## 📦 Required Modules & Managers
-          **SUSFS Module**: https://github.com/sidex15/ksu_module_susfs
+          Non-Official Managers:
+          -> https://github.com/WildKernels/Wild_KSU
           
-          **Official SukiSU Ultra Manager**: https://github.com/SukiSU-Ultra/SukiSU-Ultra
-          
-          ## 🛠️ Built Devices
+          ### Built Devices
           
           | Model | Kernel Version |
           |-------|----------------|
           EOF
           
           if [ -d "./downloaded-artifacts" ]; then
-            find downloaded-artifacts -name "*.txt" -type f -print0 | sort -z | while IFS= read -r -d '' file; do
+            for file in $(find downloaded-artifacts -name "*.txt" -type f | sort 2>/dev/null || true); do
               if [ -f "$file" ]; then
                 model=$(basename "$file" .txt)
                 version=$(cat "$file" 2>/dev/null || echo "Unknown")
-                printf "| %-20s | %-16s |\n" "$model" "$version" >> release_notes.md
+                printf "| %-12s | %-16s |\n" "$model" "$version" >> release_notes.md
               fi
             done
           fi
           
           cat << 'EOF' >> release_notes.md
           
-          ## 🚀 Key Features
-          - ✅ **SukiSU Ultra** - Advanced root solution with superior module support
-          - ✅ **SUSFS v1.5.12** - Stealth overlay filesystem for app hiding & modding
-          - ✅ **WireGuard VPN** - Native kernel-level VPN support
-          - ✅ **Magic Mount** - Seamless module mounting without root modifications
-          - ✅ **Ptrace Leak Fix** - Security patch for kernels < 5.16
-          - ✅ **Manual Hooks** - Efficient hooking mechanism (scope_min_manual_hooks_v1.5)
-          - ✅ **CONFIG_TMPFS_XATTR** - Full Mountify & advanced mounting support
-          - ✅ **BBR v1** - TCP congestion control for optimal networking
-          - ✅ **HMBIRD SCX Scheduler** - Performance optimized for 6.6 kernels
-          - ✅ **Baseband Guard (BBG)** - Kernel-level baseband protection
-          - ✅ **xx_maps Hide** - Advanced root concealment for security apps
-          
-          ## ⚠️ Installation Warning
-          **Flashing custom kernels may void your warranty and risk bricking your device. Always backup your data!**
-          
-          ## 📚 Installation Guide
-          1. Download your device ZIP from releases
-          2. Boot to custom recovery (TWRP/OrangeFox)
-          3. Flash the kernel ZIP
-          4. Install SukiSU Ultra Manager
-          5. Configure SUSFS modules
+          ### Features
+          - [+] SukiUltra Manager Support
+          - [+] SUSFS v1.5.12
+          - [+] Wireguard Support
+          - [+] Magic Mount Support
+          - [+] Ptrace message leak fix for kernels < 5.16
+          - [+] Manual Hooks 
+          - [+] CONFIG_TMPFS_XATTR Support [Mountify Support]
+          - [+] BBR Support
+          - [+] Scx support for OnePlus with 6.6 kernel
+          - [+] Baseband Guard Support (BBG)          
           EOF
           
           echo "--- Final Release Notes ---"
           cat release_notes.md
 
       - name: Create GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh release create "${{ env.NEW_TAG }}" \
@@ -370,8 +363,6 @@ jobs:
             --prerelease
 
       - name: Upload Release Assets Dynamically
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
