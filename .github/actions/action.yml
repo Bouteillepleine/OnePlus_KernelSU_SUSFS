@@ -288,19 +288,21 @@ runs:
         [[ -n "$CUSTOM_TAG" ]] && echo "Custom version identifier: $CUSTOM_TAG" || echo "Custom version identifier: disabled"
         [[ -n "$MANUAL_HASH" ]] && echo "Manual hash: $MANUAL_HASH" || echo "Manual hash: disabled"
         echo "KSU_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+        curl -LSs --retry 5 --retry-delay 2 --retry-connrefused \
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
         cd ./KernelSU
         if [[ -n "$MANUAL_HASH" ]]; then
           git fetch origin "$BRANCH_NAME" --depth=50
           git checkout "$MANUAL_HASH"
           SHORT_HASH=${MANUAL_HASH:0:8}
         fi
-        KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
-          grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+        KSU_API_VERSION=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
+          grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]' || true)
+        if [[ -z "${KSU_API_VERSION:-}" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
           KSU_API_VERSION="3.1.7"
         fi
-        echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
+        echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
         GIT_HASH=$(git rev-parse --short HEAD)
         if [[ -n "$MANUAL_HASH" ]]; then
           USE_HASH="$SHORT_HASH"
@@ -312,28 +314,36 @@ runs:
         else
           VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
         fi
-        sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
-        sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
-        sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
-        VERSION_DEFINITIONS=$(cat <<EOF
-        define get_ksu_version_full
-        $VERSION_FULL
-        endef
-        KSU_VERSION_API := $KSU_API_VERSION
-        KSU_VERSION_FULL := $VERSION_FULL
-        EOF
-        )
-        awk -v def="$VERSION_DEFINITIONS" '
-          /REPO_OWNER :=/ {print; print def; inserted=1; next}
-          1
-          END {if (!inserted) print def}
-        ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+        if [[ -f kernel/Makefile ]]; then
+          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile || true
+          sed -i '/KSU_VERSION_API :=/d' kernel/Makefile || true
+          sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile || true
+          VERSION_DEFINITIONS=$(cat <<EOF
+          define get_ksu_version_full
+          $VERSION_FULL
+          endef
+          KSU_VERSION_API := $KSU_API_VERSION
+          KSU_VERSION_FULL := $VERSION_FULL
+          EOF
+          )
+          awk -v def="$VERSION_DEFINITIONS" '
+            /REPO_OWNER :=/ {print; print def; inserted=1; next}
+            1
+            END {if (!inserted) print def}
+          ' kernel/Makefile > kernel/Makefile.tmp || { 
+            echo "AWK injection failed, keeping original"; 
+            cp kernel/Makefile kernel/Makefile.tmp; 
+          }
+          mv kernel/Makefile.tmp kernel/Makefile
+          echo "::group::Final Makefile version info and partial debug results preview"
+          grep -A10 "REPO_OWNER" kernel/Makefile || true
+          grep "KSU_VERSION_FULL" kernel/Makefile || true
+          echo "::endgroup::"
+        else
+          echo "Warning: kernel/Makefile not found in KernelSU; skipping version injection."
+        fi
         KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
-        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-        echo "::group::Final Makefile version info and partial debug results preview"
-        grep -A10 "REPO_OWNER" kernel/Makefile || true
-        grep "KSU_VERSION_FULL" kernel/Makefile || true
-        echo "::endgroup::"
+        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
 
     - name: Apply Patches SukiSU Ultra
       shell: bash
