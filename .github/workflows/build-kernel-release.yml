@@ -72,8 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-    matrix:
-      include:
+      matrix:
+        include:
         # batch-1
         - model: OP11
           soc: kalama
