@@ -393,6 +393,10 @@ runs:
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
+        CONFIG_IP_ADVANCED_ROUTER=y
+        CONFIG_IP_MULTIPLE_TABLES=y
+        CONFIG_NETFILTER_XT_TARGET_TCPMSS=y
+        CONFIG_NETFILTER_XT_MATCH_TTL=y
         EOF
 
     - name: Add Build based configs Perf
@@ -418,6 +422,7 @@ runs:
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DEBUG_INFO=n
+        CONFIG_KALLSYMS_ALL=y
         EOF
 
     - name: Save Build Metadata
