@@ -327,17 +327,7 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform/common"
-        patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
-
-    - name: Apply xx_maps patch (untill sus_maps is released)
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform/common"
-        patch -p1 --forward < "../../../kernel_patches/maps/xx_maps_sus_kernel.patch"
-        cd "../KernelSU-Next"
-        patch -p1 --forward < "../../../kernel_patches/maps/xx_maps_ksu.patch"
-
+        patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch    
 
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
@@ -421,8 +411,7 @@ runs:
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_DEBUG_KERNEL=n
-        CONFIG_DEBUG_INFO=n
-        CONFIG_KALLSYMS_ALL=y
+        CONFIG_DEBUG_INFO=n        
         EOF
 
     - name: Save Build Metadata
