@@ -434,14 +434,11 @@ runs:
         add_cfg "CONFIG_IP_ECN=y"
         add_cfg "CONFIG_TCP_ECN=y"
         add_cfg "CONFIG_IPV6_ECN=y"
-        add_cfg "CONFIG_IP_NF_TARGET_ECN=y"        
-        # If RACK/TLP exist in tree, enable them (guarded by grep)
-        if grep -q '^config TCP_RACK' common/net/ipv4/Kconfig 2>/dev/null; then
-            add_cfg "CONFIG_TCP_RACK=y"
-        fi
-        if grep -q '^config TCP_TLP' common/net/ipv4/Kconfig 2>/dev/null; then
-            add_cfg "CONFIG_TCP_TLP=y"
-        fi
+        add_cfg "CONFIG_IP_NF_TARGET_ECN=y"
+        add_cfg "CONFIG_TCP_FASTOPEN=y"
+        add_cfg "CONFIG_TCP_FASTOPEN_DEFAULT=3"       
+        add_cfg "CONFIG_TCP_RACK=y"
+        add_cfg "CONFIG_TCP_TLP=y"
         
     - name: Add fastopen
       shell: bash
@@ -508,7 +505,7 @@ runs:
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
         CONFIG_OPTIMIZE_INLINING=y
         CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
-        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y        
         EOF
 
     - name: Add Build based configs Debug
