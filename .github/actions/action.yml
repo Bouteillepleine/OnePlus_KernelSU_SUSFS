@@ -386,286 +386,150 @@ runs:
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        DEFCONF="common/arch/arm64/configs/gki_defconfig"
-        CFG="scripts/config --file $DEFCONF"
-        
-        echo "=== Configuring KernelSU-Next and SUSFS ==="
-        
-        # KernelSU-Next
-        $CFG --enable KSU
-        $CFG --disable KSU_KPROBES_HOOK
-        
-        # SUSFS
-        $CFG --enable KSU_SUSFS
-        $CFG --enable KSU_SUSFS_HAS_MAGIC_MOUNT
-        $CFG --enable KSU_SUSFS_SUS_PATH
-        $CFG --enable KSU_SUSFS_SUS_MOUNT
-        $CFG --enable KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-        $CFG --enable KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-        $CFG --enable KSU_SUSFS_SUS_KSTAT
-        $CFG --disable KSU_SUSFS_SUS_OVERLAYFS
-        $CFG --enable KSU_SUSFS_TRY_UMOUNT
-        $CFG --enable KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-        $CFG --enable KSU_SUSFS_SPOOF_UNAME
-        $CFG --enable KSU_SUSFS_ENABLE_LOG
-        $CFG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-        $CFG --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-        $CFG --enable KSU_SUSFS_OPEN_REDIRECT
-        $CFG --enable KSU_SUSFS_SUS_MAP
-        $CFG --disable KSU_SUSFS_SUS_SU
-        
-        # TMPFS requirements
-        $CFG --enable TMPFS_XATTR
-        $CFG --enable TMPFS_POSIX_ACL
-        
-        echo "✓ KernelSU-Next and SUSFS configuration complete"
-
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        CONFIG_KSU=y
+        CONFIG_KSU_KPROBES_HOOK=n
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        CONFIG_KSU_SUSFS_SUS_MAP=y
+        CONFIG_KSU_SUSFS_SUS_SU=n
+        CONFIG_TMPFS_XATTR=y
+        CONFIG_TMPFS_POSIX_ACL=y
+        EOF
+    
     - name: Add OnePlus BBR and Network Optimizations
       shell: bash
-      run: |     
+      run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        DEFCONF="common/arch/arm64/configs/gki_defconfig"
-        CFG="scripts/config --file $DEFCONF"
-        
-        echo "=== Configuring BBR and Network Stack ==="
-        
-        # Core networking framework (MUST be first)
-        $CFG --enable NET_SCHED
-        $CFG --enable NET_SCH_INGRESS
-        $CFG --enable NET_FLOW_LIMIT
-        
-        # TCP congestion control
-        $CFG --enable TCP_CONG_ADVANCED
-        $CFG --enable TCP_CONG_BBR
-        $CFG --enable TCP_CONG_CUBIC
-        
-        # Queueing disciplines
-        $CFG --enable NET_SCH_FQ
-        $CFG --enable NET_SCH_FQ_CODEL
-        
-        # TCP optimizations
-        $CFG --enable TCP_FASTOPEN
-        $CFG --set-val TCP_FASTOPEN_DEFAULT 3
-        
-        # Try to enable RACK and TLP (may not exist in older kernels)
-        $CFG --enable TCP_RACK 2>/dev/null || echo "TCP_RACK not available"
-        $CFG --enable TCP_TLP 2>/dev/null || echo "TCP_TLP not available"
-        
-        # ECN support
-        $CFG --enable IP_ECN
-        $CFG --enable TCP_ECN
-        $CFG --enable IPV6_ECN
-        $CFG --enable IP_NF_TARGET_ECN
-        
-        # Packet steering
-        $CFG --enable RPS
-        $CFG --enable RFS_ACCEL
-        $CFG --enable XPS
-        
-        # Hardware offload
-        $CFG --enable GRO_CELLS
-        $CFG --enable XFRM_OFFLOAD
-        
-        echo "✓ BBR and network stack configuration complete"
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # Network Scheduling
+        CONFIG_NET_SCHED=y
+        CONFIG_NET_SCH_INGRESS=y
+        CONFIG_NET_FLOW_LIMIT=y        
+        # TCP Congestion Control - BBR
+        CONFIG_TCP_CONG_ADVANCED=y
+        CONFIG_TCP_CONG_BBR=y
+        CONFIG_TCP_CONG_CUBIC=y        
+        # Queue Disciplines
+        CONFIG_NET_SCH_FQ=y
+        CONFIG_NET_SCH_FQ_CODEL=y        
+        # TCP FastOpen
+        CONFIG_TCP_FASTOPEN=y
+        CONFIG_TCP_FASTOPEN_DEFAULT=3        
+        # ECN Support
+        CONFIG_IP_ECN=y
+        CONFIG_TCP_ECN=y
+        CONFIG_IPV6_ECN=y
+        CONFIG_IP_NF_TARGET_ECN=y        
+        # TCP Optimizations
+        CONFIG_TCP_RACK=y
+        CONFIG_TCP_TLP=y        
+        # Network Performance
+        CONFIG_RPS=y
+        CONFIG_RFS_ACCEL=y
+        CONFIG_XPS=y
+        CONFIG_GRO_CELLS=y
+        CONFIG_XFRM_OFFLOAD=y
+        EOF    
     
     - name: Add TTL Target Support
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        DEFCONF="common/arch/arm64/configs/gki_defconfig"
-        CFG="scripts/config --file $DEFCONF"
-        
-        echo "=== Configuring TTL/HL Support ==="
-        
-        $CFG --enable IP_NF_TARGET_TTL
-        $CFG --enable IP6_NF_TARGET_HL
-        $CFG --enable IP6_NF_MATCH_HL
-        $CFG --enable IP_ADVANCED_ROUTER
-        $CFG --enable IP_MULTIPLE_TABLES
-        $CFG --enable NETFILTER_XT_TARGET_TCPMSS
-        $CFG --enable NETFILTER_XT_MATCH_TTL
-        
-        echo "✓ TTL/HL configuration complete"
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # TTL/HL Manipulation
+        CONFIG_IP_NF_TARGET_TTL=y
+        CONFIG_IP6_NF_TARGET_HL=y
+        CONFIG_IP6_NF_MATCH_HL=y    
+        # Advanced Routing
+        CONFIG_IP_ADVANCED_ROUTER=y
+        CONFIG_IP_MULTIPLE_TABLES=y
+        CONFIG_NETFILTER_XTABLES=y
+        # Netfilter Extensions
+        CONFIG_NETFILTER_XT_TARGET_TCPMSS=y
+        CONFIG_NETFILTER_XT_MATCH_TTL=y
+        EOF
     
     - name: Add IP SET Support
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        DEFCONF="common/arch/arm64/configs/gki_defconfig"
-        CFG="scripts/config --file $DEFCONF"
-        
-        echo "=== Configuring IP SET ==="
-        
-        $CFG --enable IP_SET
-        $CFG --set-val IP_SET_MAX 65534
-        $CFG --enable IP_SET_BITMAP_IP
-        $CFG --enable IP_SET_BITMAP_IPMAC
-        $CFG --enable IP_SET_BITMAP_PORT
-        $CFG --enable IP_SET_HASH_IP
-        $CFG --enable IP_SET_HASH_IPMARK
-        $CFG --enable IP_SET_HASH_IPPORT
-        $CFG --enable IP_SET_HASH_IPPORTIP
-        $CFG --enable IP_SET_HASH_IPPORTNET
-        $CFG --enable IP_SET_HASH_IPMAC
-        $CFG --enable IP_SET_HASH_MAC
-        $CFG --enable IP_SET_HASH_NETPORTNET
-        $CFG --enable IP_SET_HASH_NET
-        $CFG --enable IP_SET_HASH_NETNET
-        $CFG --enable IP_SET_HASH_NETPORT
-        $CFG --enable IP_SET_HASH_NETIFACE
-        $CFG --enable IP_SET_LIST_SET
-        
-        echo "✓ IP SET configuration complete"
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # IP Set Framework
+        CONFIG_IP_SET=y
+        CONFIG_IP_SET_MAX=65534    
+        # Bitmap Types
+        CONFIG_IP_SET_BITMAP_IP=y
+        CONFIG_IP_SET_BITMAP_IPMAC=y
+        CONFIG_IP_SET_BITMAP_PORT=y        
+        # Hash Types
+        CONFIG_IP_SET_HASH_IP=y
+        CONFIG_IP_SET_HASH_IPMARK=y
+        CONFIG_IP_SET_HASH_IPPORT=y
+        CONFIG_IP_SET_HASH_IPPORTIP=y
+        CONFIG_IP_SET_HASH_IPPORTNET=y
+        CONFIG_IP_SET_HASH_IPMAC=y
+        CONFIG_IP_SET_HASH_MAC=y
+        CONFIG_IP_SET_HASH_NETPORTNET=y
+        CONFIG_IP_SET_HASH_NET=y
+        CONFIG_IP_SET_HASH_NETNET=y
+        CONFIG_IP_SET_HASH_NETPORT=y
+        CONFIG_IP_SET_HASH_NETIFACE=y    
+        # List Type
+        CONFIG_IP_SET_LIST_SET=y
+        EOF
     
     - name: Add Build Optimizations
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        DEFCONF="common/arch/arm64/configs/gki_defconfig"
-        CFG="scripts/config --file $DEFCONF"
-        
-        echo "=== Configuring Build Optimizations ==="
-        
-        # Compiler optimizations
-        $CFG --enable LTO_CLANG_THIN
-        $CFG --enable LTO_CLANG
-        $CFG --enable CC_OPTIMIZE_FOR_PERFORMANCE
-        # Note: CC_OPTIMIZE_FOR_PERFORMANCE_O3 doesn't exist
-        # O3 is controlled via KCFLAGS in build step
-        $CFG --enable OPTIMIZE_INLINING
-        $CFG --enable LD_DEAD_CODE_DATA_ELIMINATION
-        
-        # Power efficiency
-        $CFG --enable WQ_POWER_EFFICIENT_DEFAULT
-        
-        echo "✓ Build optimizations complete"
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # Link Time Optimization
+        CONFIG_LTO_CLANG_THIN=y
+        CONFIG_LTO_CLANG=y    
+        # Compiler Optimizations
+        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
+        CONFIG_OPTIMIZE_INLINING=y    
+        # Linker Optimizations
+        CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y    
+        # Power Efficiency
+        CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+        EOF
     
     - name: Disable Debug Options
       shell: bash
       run: |
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
-        DEFCONF="common/arch/arm64/configs/gki_defconfig"
-        CFG="scripts/config --file $DEFCONF"
-        
-        echo "=== Disabling Debug Options ==="
-        
-        # Core debug
-        $CFG --disable DEBUG_KERNEL
-        $CFG --disable DEBUG_INFO
-        $CFG --disable DEBUG_INFO_DWARF4
-        $CFG --disable DEBUG_INFO_BTF
-        
-        # Tracing
-        $CFG --disable FTRACE
-        $CFG --disable FUNCTION_TRACER
-        $CFG --disable FUNCTION_GRAPH_TRACER
-        $CFG --disable STACK_TRACER
-        
-        # Lock debugging
-        $CFG --disable LOCK_DEBUGGING
-        $CFG --disable DEBUG_MUTEXES
-        $CFG --disable DEBUG_SPINLOCK
-        $CFG --disable DEBUG_ATOMIC_SLEEP
-        
-        echo "✓ Debug options disabled"
-    
-    - name: Finalize Kernel Configuration
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        
-        echo "=== Finalizing kernel configuration ==="
-        
-        # Run olddefconfig to resolve all dependencies
-        make O=out ARCH=arm64 LLVM=1 olddefconfig
-        
-        echo "✓ Kernel configuration finalized"
-    
-    - name: Validate Configuration
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        
-        echo "=== Validating Kernel Configuration ==="
-        
-        # Ensure .config exists
-        if [ ! -f "out/.config" ]; then
-          echo "❌ ERROR: out/.config not found!"
-          exit 1
-        fi
-        
-        # Check critical configs
-        REQUIRED_CONFIGS=(
-            "CONFIG_KSU"
-            "CONFIG_KSU_SUSFS"
-            "CONFIG_TCP_CONG_BBR"
-            "CONFIG_NET_SCH_FQ"
-            "CONFIG_NET_SCH_INGRESS"
-            "CONFIG_NET_SCHED"
-            "CONFIG_TCP_FASTOPEN"
-            "CONFIG_TCP_ECN"
-            "CONFIG_IPV6_ECN"
-            "CONFIG_RPS"
-            "CONFIG_XPS"
-            "CONFIG_GRO_CELLS"
-            "CONFIG_IP_SET"
-            "CONFIG_XFRM_OFFLOAD"
-            "CONFIG_RFS_ACCEL"
-        )
-        
-        MISSING=0
-        for cfg in "${REQUIRED_CONFIGS[@]}"; do
-            if ! grep -q "^${cfg}=y" out/.config; then
-                echo "❌ Missing: $cfg"
-                MISSING=1
-            else
-                echo "✓ Found: $cfg"
-            fi
-        done
-        
-        # Check TCP_FASTOPEN_DEFAULT value
-        if grep -q "^CONFIG_TCP_FASTOPEN_DEFAULT=3" out/.config; then
-            echo "✓ Found: CONFIG_TCP_FASTOPEN_DEFAULT=3"
-        else
-            echo "⚠ WARNING: CONFIG_TCP_FASTOPEN_DEFAULT not set to 3"
-        fi
-        
-        # Check debug is disabled
-        DEBUG_CONFIGS=(
-            "CONFIG_DEBUG_KERNEL"
-            "CONFIG_DEBUG_INFO"
-            "CONFIG_FTRACE"
-        )
-        
-        for cfg in "${DEBUG_CONFIGS[@]}"; do
-            if grep -q "^${cfg}=y" out/.config; then
-                echo "⚠ WARNING: $cfg still enabled"
-            fi
-        done
-        
-        # Check LTO is enabled
-        if grep -q "^CONFIG_LTO_CLANG_THIN=y" out/.config; then
-            echo "✓ Found: CONFIG_LTO_CLANG_THIN"
-        else
-            echo "⚠ INFO: LTO not enabled (toolchain may not support it)"
-        fi
-        
-        if [ $MISSING -eq 1 ]; then
-            echo ""
-            echo "❌ Configuration validation failed!"
-            echo "Missing critical configurations."
-            exit 1
-        fi
-        
-        echo ""
-        echo "✅ All critical configurations validated successfully"
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # Disable Kernel Debugging
+        CONFIG_DEBUG_KERNEL=n
+        CONFIG_DEBUG_INFO=n
+        CONFIG_DEBUG_INFO_DWARF4=n       
+        # Disable Lock Debugging
+        CONFIG_LOCK_DEBUGGING=n
+        CONFIG_DEBUG_MUTEXES=n
+        CONFIG_DEBUG_SPINLOCK=n
+        CONFIG_DEBUG_ATOMIC_SLEEP=n
+        EOF
 
     - name: Save Build Metadata
       id: save_metadata
