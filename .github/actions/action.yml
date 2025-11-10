@@ -20,6 +20,11 @@ inputs:
     required: false
     type: string
     default: O2
+  enable_zram:
+    description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
+    required: false
+    type: string
+    default: 'false'
   clean:
     description: 'Force clean build without ccache acceleration'
     required: false
@@ -54,6 +59,9 @@ outputs:
   zip_name:
     description: 'Name of the generated flashable ZIP'
     value: ${{ steps.create_zip.outputs.zip_name }}
+  zram_enabled:
+    description: 'Whether ZRAM modules were included'
+    value: ${{ steps.zram_module.outputs.zram_available }}
 
 runs:
   using: 'composite'
@@ -550,6 +558,14 @@ runs:
         echo "   Commit: $SUSFS_COMMIT_SHA"
         
         cd ..
+        
+        # Clone ZRAM patches if enabled
+        if [ "${{ inputs.enable_zram }}" = "true" ]; then
+          echo "Cloning ZRAM patches repository..."
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1
+          echo "✅ ZRAM patches cloned"
+        fi
+        
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
 
@@ -607,6 +623,17 @@ runs:
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        
+        # Copy ZRAM source files if enabled
+        if [ "${{ inputs.enable_zram }}" = "true" ]; then
+          echo "Copying ZRAM source files..."
+          cp -r ../../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
+          cp -r ../../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib/
+          cp -r ../../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto/
+          cp -r ../../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
+          echo "✅ ZRAM source files copied"
+        fi
+        
         cd ./KernelSU-Next
         susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
@@ -743,6 +770,46 @@ runs:
         echo "✅ KSUN hooks applied"
         echo "::endgroup::"
 
+    - name: Apply ZRAM Patches
+      if: ${{ inputs.enable_zram == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply ZRAM patches"
+        cd "$CONFIG/kernel_platform/common"
+        
+        KERNEL_VER="${{ env.KERNEL_VER }}"
+        PATCH_DIR="$GITHUB_WORKSPACE/SukiSU_patch/other/zram/zram_patch/$KERNEL_VER"
+        
+        if [ ! -d "$PATCH_DIR" ]; then
+          echo "::warning::ZRAM patches not found for kernel $KERNEL_VER"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        if [ -f "$PATCH_DIR/lz4kd.patch" ]; then
+          cp "$PATCH_DIR/lz4kd.patch" ./
+          echo "Applying lz4kd patch..."
+          if patch -p1 -F 3 < lz4kd.patch; then
+            echo "✅ lz4kd patch applied"
+          else
+            echo "::warning::lz4kd patch applied with warnings"
+          fi
+        fi
+        
+        if [ -f "$PATCH_DIR/lz4k_oplus.patch" ]; then
+          cp "$PATCH_DIR/lz4k_oplus.patch" ./
+          echo "Applying lz4k_oplus patch..."
+          if patch -p1 -F 3 < lz4k_oplus.patch; then
+            echo "✅ lz4k_oplus patch applied"
+          else
+            echo "::warning::lz4k_oplus patch applied with warnings"
+          fi
+        fi
+        
+        echo "✅ ZRAM patches applied"
+        echo "::endgroup::"
+
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -824,6 +891,24 @@ runs:
         CONFIG_IP_SET_LIST_SET=y
         EOF
 
+    - name: Add ZRAM Configuration
+      if: ${{ inputs.enable_zram == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Add ZRAM configuration"
+        cd "$CONFIG/kernel_platform"
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        CONFIG_CRYPTO_LZ4HC=y
+        CONFIG_CRYPTO_LZ4K=y
+        CONFIG_CRYPTO_LZ4KD=y
+        CONFIG_CRYPTO_842=y
+        CONFIG_CRYPTO_LZ4K_OPLUS=y
+        CONFIG_ZRAM_WRITEBACK=y
+        EOF
+        echo "✅ ZRAM configuration added"
+        echo "::endgroup::"
+
     - name: Add Build based configs
       shell: bash
       run: |
@@ -857,6 +942,9 @@ runs:
         cd "$KERNEL_PATH/common"
         mkdir -p out
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-Wild"
+        if [ "${{ inputs.enable_zram }}" = "true" ]; then
+          CUSTOM_LOCALVERSION="${CUSTOM_LOCALVERSION}-ZRAM"
+        fi
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Build Kernel
@@ -979,6 +1067,7 @@ runs:
         echo "Kernel: ${KERNEL_FULL_VER}"
         echo "Threads: $(nproc --all)"
         echo "Optimization: ${{ inputs.optimize_level }}"
+        echo "ZRAM: ${{ inputs.enable_zram }}"
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
         echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
         echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
@@ -1073,9 +1162,9 @@ runs:
         }' | head -n1)
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0
-        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
-          DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
+          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
+          DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/
+c)*100}')
         else
           HIT_RATE="0.0"
           DIRECT_RATE="0.0"
@@ -1144,6 +1233,74 @@ runs:
         echo "   - SHA256: $IMG_SHA256"
         echo "   - Build time: ${BUILD_TIME}s"
 
+    - name: Download and Package ZRAM Module
+      id: zram_module
+      if: ${{ inputs.enable_zram == 'true' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Download ZRAM module"
+        
+        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+        mkdir -p "${ARTIFACTS_DIR}"
+        
+        KERNEL_VER="${{ env.KERNEL_VER }}"
+        ANDROID_VER="${{ env.ANDROID_VER }}"
+        
+        ZRAM_BASE_URL="https://github.com/Bouteillepleine/Action-Build/releases/download/zram-modules"
+        
+        case "$KERNEL_VER" in
+          5.10)
+            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-5.10.tar.gz"
+            ;;
+          5.15)
+            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-5.15.tar.gz"
+            ;;
+          6.1)
+            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-6.1.tar.gz"
+            ;;
+          6.6)
+            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-6.6.tar.gz"
+            ;;
+          *)
+            echo "::warning::ZRAM module not available for kernel $KERNEL_VER"
+            echo "zram_available=false" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
+            exit 0
+            ;;
+        esac
+        
+        echo "Downloading ZRAM module from: $download_url"
+        
+        success=0
+        if [ -n "$download_url" ]; then
+          if wget -N "$download_url" -O "${ARTIFACTS_DIR}/zram-module.tar.gz" 2>&1 | tee /tmp/wget.log; then
+            if [ -f "${ARTIFACTS_DIR}/zram-module.tar.gz" ]; then
+              cd "${ARTIFACTS_DIR}"
+              if tar -xzf zram-module.tar.gz; then
+                rm -f zram-module.tar.gz
+                success=1
+                echo "✅ ZRAM module downloaded and extracted"
+              else
+                echo "::warning::Failed to extract ZRAM module"
+              fi
+            fi
+          else
+            echo "::warning::wget failed for $download_url"
+            cat /tmp/wget.log || true
+          fi
+        fi
+        
+        if [ "$success" = "1" ]; then
+          echo "zram_available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "zram_available=false" >> "$GITHUB_OUTPUT"
+        fi
+        
+        echo "::endgroup::"
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -1162,7 +1319,25 @@ runs:
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
         
-        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Next_${KSUVER}_${SUSVER}.zip"
+        # Include ZRAM modules if available
+        if [ "${{ inputs.enable_zram }}" = "true" ] && [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
+          echo "Including ZRAM modules in flashable ZIP..."
+          ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+          if [ -d "${ARTIFACTS_DIR}/modules" ]; then
+            mkdir -p ./modules
+            cp -r "${ARTIFACTS_DIR}/modules/"* ./modules/ || true
+            echo "✅ ZRAM modules included in ZIP"
+          else
+            echo "⚠️ ZRAM modules directory not found at ${ARTIFACTS_DIR}/modules"
+          fi
+        fi
+        
+        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Next_${KSUVER}_${SUSVER}"
+        if [ "${{ inputs.enable_zram }}" = "true" ]; then
+          ZIP_NAME="${ZIP_NAME}_ZRAM"
+        fi
+        ZIP_NAME="${ZIP_NAME}.zip"
+        
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
         
@@ -1178,7 +1353,7 @@ runs:
         
         mv "$ZIP_NAME" "$ARTIFACTS_DIR/"
         
-        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" -delete
+        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" ! -name "*.ko" -delete
         
         ZIP_SIZE=$(stat -c%s "$ARTIFACTS_DIR/$ZIP_NAME")
         ZIP_SHA256=$(sha256sum "$ARTIFACTS_DIR/$ZIP_NAME" | awk '{print $1}')
@@ -1191,6 +1366,13 @@ runs:
         echo "   Name: $ZIP_NAME"
         echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
         echo "   SHA256: $ZIP_SHA256"
+        if [ "${{ inputs.enable_zram }}" = "true" ]; then
+          if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
+            echo "   ZRAM Modules: ✅ Included"
+          else
+            echo "   ZRAM Modules: ⚠️ Not available"
+          fi
+        fi
         echo "::endgroup::"
 
     - name: Final Build Summary
@@ -1218,6 +1400,10 @@ runs:
           echo "SUSFS commit SHA: $SUSFS_SHA"
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Clean Build: ${{ inputs.clean }}"
+          echo "ZRAM Enabled: ${{ inputs.enable_zram }}"
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            echo "ZRAM Modules: ${{ steps.zram_module.outputs.zram_available }}"
+          fi
           echo ""
           echo "=== OnePlus Features ==="
           echo "BBR: ${{ env.OP_BBR }}"
@@ -1276,6 +1462,15 @@ runs:
           echo "| **Hmbird** | ${{ env.OP_HMBIRD }} |"
           echo "| **TTL** | ${{ env.OP_TTL }} |"
           echo "| **IP_SET** | ${{ env.OP_IP_SET }} |"
+          echo "| **ZRAM** | ${{ inputs.enable_zram }} |"
+          
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
+              echo "| **ZRAM Modules** | ✅ Included |"
+            else
+              echo "| **ZRAM Modules** | ⚠️ Not available |"
+            fi
+          fi
           
           echo ""
           echo "### 📊 Build Metrics"
@@ -1294,6 +1489,20 @@ runs:
           echo "| **Image SHA256** | \`${{ steps.collect_stats.outputs.image_sha256 }}\` |"
           echo "| **Warnings** | ${{ steps.collect_stats.outputs.warnings_count }} |"
           echo "| **Compiler** | \`${CLANG_VERSION:-unknown}\` |"
+          
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            echo ""
+            echo "### 💾 ZRAM Configuration"
+            echo ""
+            echo "ZRAM support has been enabled with the following compressors:"
+            echo "- LZ4HC"
+            echo "- LZ4K"
+            echo "- LZ4KD"
+            echo "- 842"
+            echo "- LZ4K_OPLUS"
+            echo ""
+            echo "ZRAM writeback support is also enabled."
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Artifacts
