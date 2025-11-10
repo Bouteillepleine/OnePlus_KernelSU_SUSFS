@@ -42,6 +42,10 @@ on:
       clean_build:
         description: 'Clean build (no ccache)'
         type: boolean
+        default: false     
+      enable_zram:
+        description: 'Enable ZRAM with advanced compressors'
+        type: boolean
         default: false
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
