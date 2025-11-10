@@ -475,21 +475,26 @@ runs:
         echo "Cloning AnyKernel3 and other dependencies..."
         
         ANYKERNEL_BRANCH="gki-2.0"
+        
+        # Determine SUSFS branch/commit to use
         SUSFS_INPUT="${{ inputs.susfs_commit_hash_or_branch }}"
         
-        # FIXED: Use 'master' as default for all kernel versions
+        # Default SUSFS branches for each kernel version
         declare -A DEFAULT_SUSFS=(
-          ["android12-5.10"]="master"          
-          ["android13-5.15"]="master"          
-          ["android14-6.1"]="master"
-          ["android15-6.6"]="master"
+          ["android12-5.10"]="gki-android12-5.10"          
+          ["android13-5.15"]="gki-android13-5.15"          
+          ["android14-6.1"]="gki-android14-6.1"
+          ["android15-6.6"]="gki-android15-6.6"
         )
         
+        # Determine which SUSFS branch to use
         KERNEL_KEY="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
         if [ -z "$SUSFS_INPUT" ] || [ "$SUSFS_INPUT" = "next" ]; then
-          SUSFS_BRANCH="${DEFAULT_SUSFS[$KERNEL_KEY]:-master}"
+          # Empty or "next": use kernel-specific default
+          SUSFS_BRANCH="${DEFAULT_SUSFS[$KERNEL_KEY]:-gki-android14-6.1}"
           echo "ℹ️  Using default SUSFS branch for $KERNEL_KEY: $SUSFS_BRANCH"
         else
+          # User provided custom branch/commit
           SUSFS_BRANCH="$SUSFS_INPUT"
           echo "🔧 Using custom SUSFS ref: $SUSFS_BRANCH"
         fi
@@ -497,38 +502,26 @@ runs:
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
         
-        # Parallel cloning
-        (
-          git clone --depth=1 --single-branch --no-tags \
-            https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
-          
-          git clone --depth=1 --single-branch --no-tags \
-            https://github.com/TheWildJames/kernel_patches.git &
-          
-          git clone --depth=1 --single-branch \
-            https://gitlab.com/simonpunk/susfs4ksu.git &
-          
-          if [ "${{ inputs.enable_zram }}" = "true" ]; then
-            git clone --depth=1 --single-branch --no-tags \
-              https://github.com/ShirkNeko/SukiSU_patch.git &
-          fi
-          
-          wait
-        )
+        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
         
         cd susfs4ksu
         
-        # FIXED: Better branch detection
-        if git show-ref --verify --quiet "refs/remotes/origin/$SUSFS_BRANCH"; then
+        # Try to checkout the specified branch/commit
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1; then
+          # It's a remote branch
           echo "✅ Checking out remote branch: $SUSFS_BRANCH"
-          git checkout -b "$SUSFS_BRANCH" "origin/$SUSFS_BRANCH"
-        elif git rev-parse --verify "$SUSFS_BRANCH^{commit}" >/dev/null 2>&1; then
-          echo "✅ Checking out commit: $SUSFS_BRANCH"
+          git checkout "$SUSFS_BRANCH"
+        elif git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
+          # It's a local ref or commit hash
+          echo "✅ Checking out ref/commit: $SUSFS_BRANCH"
           git checkout "$SUSFS_BRANCH"
         else
-          echo "::error::SUSFS branch '$SUSFS_BRANCH' not found"
-          echo "Available branches:"
-          git branch -r
+          echo "::error::SUSFS branch or commit '$SUSFS_BRANCH' not found in repository"
+          echo ""
+          echo "Available remote branches:"
+          git branch -r | head -n 20
           exit 1
         fi
         
@@ -539,12 +532,14 @@ runs:
         echo "SUSFS_BRANCH_NAME=$SUSFS_BRANCH_NAME" >> $GITHUB_ENV
         
         echo ""
-        echo "✅ SUSFS: $SUSFS_BRANCH_NAME @ $SUSFS_COMMIT_SHA"
+        echo "✅ SUSFS checked out successfully"
+        echo "   Branch/Ref: $SUSFS_BRANCH_NAME"
+        echo "   Commit: $SUSFS_COMMIT_SHA"
         
         cd ..
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
-
+        
     - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
