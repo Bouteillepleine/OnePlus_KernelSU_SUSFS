@@ -250,12 +250,13 @@ runs:
         success=false
         for i in 1 2 3; do
           if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-             -j"$(nproc --all)" --fail-fast; then
+             --force-sync --force-remove-dirty \
+             -j32 --fail-fast; then  # ← Increased from $(nproc --all) to 32
             success=true
             break
-          fi
+          fi      
           echo "⚠️ repo sync attempt $i failed; retrying..."
-          sleep 30
+          sleep 10
         done
         $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
         echo "✅ Kernel source synced"
@@ -399,19 +400,16 @@ runs:
         echo "  Max size: 1G"
         echo "  Android: ${ANDROID_VER:-unknown}"
         echo "  Kernel: ${KERNEL_VER:-unknown}"
-        echo "  OOS Version: ${OP_OS_VERSION:-unknown}"
-        echo "  Clang: ${CLANG_VERSION_SHORT:-unknown}"
-        echo "  Device: ${OP_MODEL:-unknown}"
         echo "::endgroup::"
     
     - name: Cache ccache
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        key: ccache-ksun-v4-${{ env.OP_MODEL }}-${{ env.KERNEL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ccache-ksun-v4-${{ env.OP_MODEL }}-${{ env.KERNEL_VER }}-
+          ccache-ksun-v4-${{ env.OP_MODEL }}-
    
     - name: Configure ccache
       shell: bash
@@ -424,52 +422,33 @@ runs:
         
         ccache -M "$CCACHE_MAXSIZE"
         
-        export CCACHE_COMPILERCHECK="content"
+        # Speed-optimized settings
+        export CCACHE_COMPILERCHECK="none"
         export CCACHE_BASEDIR="${GITHUB_WORKSPACE}"
         export CCACHE_NOHASHDIR="true"
+        export CCACHE_NOSTATS=1
         
         ccache -o compression=true
-        ccache -o compression_level=3
+        ccache -o compression_level=1
         ccache -o direct_mode=true
         ccache -o hash_dir=false
         ccache -o file_clone=true
         ccache -o inode_cache=true
-        ccache -o umask=002
-        
-        if ccache --help 2>&1 | grep -q 'depend_mode'; then
-          ccache -o depend_mode=true
-        fi
-        
-        ccache -o sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale
-        
-        export CCACHE_IGNOREOPTIONS="--sysroot*"
+        ccache -o depend_mode=true
+        ccache -o sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale,clang_index_store,modules
         
         {
-          echo "CCACHE_COMPILERCHECK=content"
+          echo "CCACHE_COMPILERCHECK=none"
           echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}"
           echo "CCACHE_NOHASHDIR=true"
-          echo "CCACHE_IGNOREOPTIONS=$CCACHE_IGNOREOPTIONS"
+          echo "CCACHE_NOSTATS=1"
         } >> "$GITHUB_ENV"
-        
-        echo "✅ ccache configured for production"
-        echo ""
-        echo "Configuration applied:"
-        echo "  Max size: 12G (persisted)"
-        echo "  Base dir: ${GITHUB_WORKSPACE}"
-        echo "  Compression: zstd level 3"
-        echo "  Direct mode: enabled"
-        echo "  File cloning: enabled"
-        echo "  Inode cache: enabled"
-        echo ""
         
         if [ -d "$CCACHE_DIR" ] && find "$CCACHE_DIR" -type f -print -quit 2>/dev/null | grep -q .; then
           echo "✅ Restored cache found"
-          echo ""
-          echo "Pre-build cache statistics:"
-          ccache -s | head -n 20
+          ccache -s | head -n 15
         else
-          echo "⚠️ No existing cache - building from scratch"
-          echo "Cache will be populated for future builds"
+          echo "⚠️ No existing cache - first build will be slower"
         fi
         
         echo "::endgroup::"
@@ -511,11 +490,9 @@ runs:
         # Determine which SUSFS branch to use
         KERNEL_KEY="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
         if [ -z "$SUSFS_INPUT" ] || [ "$SUSFS_INPUT" = "next" ]; then
-          # Empty or "next": use kernel-specific default
           SUSFS_BRANCH="${DEFAULT_SUSFS[$KERNEL_KEY]:-gki-android14-6.1}"
           echo "ℹ️  Using default SUSFS branch for $KERNEL_KEY: $SUSFS_BRANCH"
         else
-          # User provided custom branch/commit
           SUSFS_BRANCH="$SUSFS_INPUT"
           echo "🔧 Using custom SUSFS ref: $SUSFS_BRANCH"
         fi
@@ -523,24 +500,36 @@ runs:
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
         
-        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        # Parallel cloning (OPTIMIZED)
+        (
+          git clone --depth=1 --single-branch --no-tags \
+            https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
+          
+          git clone --depth=1 --single-branch --no-tags \
+            https://github.com/TheWildJames/kernel_patches.git &
+          
+          git clone --depth=1 --single-branch \
+            https://gitlab.com/simonpunk/susfs4ksu.git &
+          
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            git clone --depth=1 --single-branch --no-tags \
+              https://github.com/ShirkNeko/SukiSU_patch.git &
+          fi
+          
+          wait
+        )
         
+        # Checkout SUSFS branch
         cd susfs4ksu
         
-        # Try to checkout the specified branch/commit
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1; then
-          # It's a remote branch
           echo "✅ Checking out remote branch: $SUSFS_BRANCH"
           git checkout "$SUSFS_BRANCH"
         elif git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
-          # It's a local ref or commit hash
           echo "✅ Checking out ref/commit: $SUSFS_BRANCH"
           git checkout "$SUSFS_BRANCH"
         else
-          echo "::error::SUSFS branch or commit '$SUSFS_BRANCH' not found in repository"
-          echo ""
+          echo "::error::SUSFS branch or commit '$SUSFS_BRANCH' not found"
           echo "Available remote branches:"
           git branch -r | head -n 20
           exit 1
@@ -558,13 +547,6 @@ runs:
         echo "   Commit: $SUSFS_COMMIT_SHA"
         
         cd ..
-        
-        # Clone ZRAM patches if enabled
-        if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          echo "Cloning ZRAM patches repository..."
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1
-          echo "✅ ZRAM patches cloned"
-        fi
         
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
@@ -920,7 +902,13 @@ runs:
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
         CONFIG_OPTIMIZE_INLINING=y
-        EOF
+        # Speed optimizations
+        CONFIG_DEBUG_INFO=n
+        CONFIG_DEBUG_INFO_DWARF4=n
+        CONFIG_DEBUG_INFO_BTF=n
+        CONFIG_GDB_SCRIPTS=n
+        CONFIG_FRAME_POINTER=n
+        EOF       
 
     - name: Save Build Metadata
       id: save_metadata
@@ -1060,12 +1048,17 @@ runs:
         KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
         
+        # Calculate optimal parallel job count (2x CPU cores for maximum throughput)
+        NPROC=$(nproc --all)
+        BUILD_JOBS=$((NPROC * 2))
+        
         echo "============================================"
         echo "🔧 Build Configuration"
         echo "============================================"
         echo "Device: ${OP_MODEL}"
         echo "Kernel: ${KERNEL_FULL_VER}"
-        echo "Threads: $(nproc --all)"
+        echo "CPU Cores: $NPROC"
+        echo "Parallel Jobs: $BUILD_JOBS (2x cores)"
         echo "Optimization: ${{ inputs.optimize_level }}"
         echo "ZRAM: ${{ inputs.enable_zram }}"
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
@@ -1078,8 +1071,9 @@ runs:
           echo "  Dir: $CCACHE_DIR"
           echo "  Base: $CCACHE_BASEDIR"
           echo "  Max size: $CCACHE_MAXSIZE"
-          echo "  Compression: zstd level 3"
-          echo "  Features: readonly_direct, file_clone, inode_cache, depend"
+          echo "  Compression: level 1 (fast)"
+          echo "  Features: direct_mode, file_clone, inode_cache, depend_mode"
+          echo "  Sloppiness: maximum (for speed)"
         else
           echo "ccache: DISABLED (clean build)"
         fi
@@ -1096,7 +1090,14 @@ runs:
         BUILD_START=$(date +%s)
         set -o pipefail
         
-        make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
+        echo ""
+        echo "🚀 Starting parallel build with $BUILD_JOBS jobs..."
+        echo ""
+        
+        # Use optimized parallel job count
+        make -j"$BUILD_JOBS" O="$OUT" \
+          KCFLAGS="$KCFLAGS" \
+          KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
         
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
@@ -1104,6 +1105,7 @@ runs:
         echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
         echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
         echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
+        echo "BUILD_JOBS=$BUILD_JOBS" >> "$GITHUB_ENV"
         
         IMG="$OUT/arch/arm64/boot/Image"
         if [ ! -f "$IMG" ]; then
@@ -1120,6 +1122,7 @@ runs:
         echo "✅ Build Completed Successfully"
         echo "============================================"
         echo "Duration: $((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
+        echo "Parallel Jobs: $BUILD_JOBS"
         echo "Image: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
         
         if [ "${{ inputs.clean }}" != "true" ]; then
@@ -1127,6 +1130,9 @@ runs:
           echo "📊 ccache Post-Build Statistics"
           echo "============================================"
           ccache -s
+          echo ""
+          echo "Cache efficiency:"
+          ccache -s | grep -E "(hit rate|direct|preprocessed)" || true
         fi
         echo "============================================"
         echo "::endgroup::"
