@@ -380,6 +380,12 @@ jobs:
           | **Build Time** | ${{ steps.build.outputs.build_time }}s |
           EOF
             
+            if [ "${{ inputs.enable_zram }}" = "true" ]; then
+              cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **ZRAM Modules** | ${{ steps.build.outputs.zram_enabled == 'true' && '✅ Included' || '⚠️ Not available' }} |
+          EOF
+            fi
+            
             if [ "${{ inputs.clean_build }}" != "true" ]; then
               cat >> $GITHUB_STEP_SUMMARY << EOF
           | **ccache Hit Rate** | ${{ steps.build.outputs.ccache_hit_rate }} |
