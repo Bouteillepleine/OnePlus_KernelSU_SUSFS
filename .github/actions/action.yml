@@ -21,10 +21,10 @@ inputs:
     type: string
     default: O2
   enable_zram:
-    description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
+    description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, 842, LZ4K_OPLUS)'
     required: false
-    type: string
-    default: 'false'
+    type: boolean
+    default: false
   clean:
     description: 'Force clean build without ccache acceleration'
     required: false
