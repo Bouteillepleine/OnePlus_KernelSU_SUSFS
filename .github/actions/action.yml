@@ -1163,8 +1163,7 @@ runs:
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
           HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
-          DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/
-        c)*100}')
+          DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
         else
           HIT_RATE="0.0"
           DIRECT_RATE="0.0"
