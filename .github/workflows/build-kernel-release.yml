@@ -178,6 +178,7 @@ jobs:
           - KSU Branch: `${{ inputs.ksun_branch }}`
           - Optimization: `${{ inputs.optimize_level }}`
           - Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}
+          - ZRAM Support: ${{ inputs.enable_zram && '✅ Enabled' || '❌ Disabled' }}
           - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
           
           **SUSFS Configuration:**
@@ -317,6 +318,7 @@ jobs:
           susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
+          enable_zram: ${{ inputs.enable_zram }}
 
       - name: 📊 Build statistics
         if: always()
@@ -363,7 +365,8 @@ jobs:
           ### ${{ matrix.model }} (${{ matrix.os_version }}) - ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
           
           **Kernel:** ${{ matrix.android_version }}-${{ matrix.kernel_version }}  
-          **SUSFS Branch:** \`${{ steps.susfs.outputs.susfs_branch || format('(auto: gki-{0}-{1})', matrix.android_version, matrix.kernel_version) }}\`
+          **SUSFS Branch:** \`${{ steps.susfs.outputs.susfs_branch || format('(auto: gki-{0}-{1})', matrix.android_version, matrix.kernel_version) }}\`  
+          **ZRAM:** ${{ inputs.enable_zram && '✅ Enabled' || '❌ Disabled' }}
           
           EOF
           
@@ -481,6 +484,7 @@ jobs:
           KSUN_BRANCH="${{ inputs.ksun_branch }}"
           OPTIMIZE_LEVEL="${{ inputs.optimize_level }}"
           CLEAN_BUILD="${{ inputs.clean_build }}"
+          ENABLE_ZRAM="${{ inputs.enable_zram }}"
           
           # Determine SUSFS branches used
           SUSFS_A12="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
@@ -550,7 +554,25 @@ jobs:
           | **SUSFS Version** | \`$SUSFS_BASE_VERSION\` |
           | **Optimization Level** | \`$OPTIMIZE_LEVEL\` |
           | **Clean Build** | $( [ "$CLEAN_BUILD" = "true" ] && echo "✅ Yes (no ccache)" || echo "❌ No (ccache enabled)" ) |
+          | **ZRAM Support** | $( [ "$ENABLE_ZRAM" = "true" ] && echo "✅ Enabled" || echo "❌ Disabled" ) |
           | **Compiler** | Clang (version varies by device) |
+          EOF
+    
+          # Add ZRAM details if enabled
+          if [ "$ENABLE_ZRAM" = "true" ]; then
+            cat << EOF >> release_notes.md
+          
+          ### 💾 ZRAM Configuration
+          
+          Advanced ZRAM support with multiple compressors:
+          - **LZ4HC** - High compression variant of LZ4
+          - **LZ4K** - Kernel-optimized LZ4
+          - **LZ4KD** - LZ4K with dictionary support
+          - **842** - IBM 842 compression algorithm
+          - **LZ4K_OPLUS** - OnePlus-optimized LZ4K
+          - **ZRAM Writeback** - Swap to storage support
+          EOF
+          fi
           
           ### 📌 SUSFS Branch Mapping
           
