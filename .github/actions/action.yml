@@ -58,7 +58,7 @@ outputs:
     value: ${{ steps.create_zip.outputs.zip_name }}
   zram_available:
     description: 'Whether ZRAM modules were successfully downloaded'
-    value: ${{ steps.zram_module.outputs.zram_available }}
+    value: ${{ steps.zram_find.outputs.upload }}
 
 runs:
   using: 'composite'
@@ -90,6 +90,7 @@ runs:
         ttl="$OP_TTL"
         ip_set="$OP_IP_SET"
         optimize='${{ inputs.optimize_level }}'
+        github_token='${{ inputs.github_token }}'
       
         errors=()
       
@@ -181,6 +182,18 @@ runs:
           O2|O3) ;;
           *) errors+=("optimize_level must be O2 or O3. Got: '$optimize'"); ;;
         esac
+        
+        # Validate GitHub token
+        if [[ -z "$github_token" ]]; then
+          errors+=("Input 'github_token' cannot be empty")
+        else
+          # Optional: Test token validity
+          if ! curl -fsSL -H "Authorization: Bearer $github_token" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/rate_limit" >/dev/null 2>&1; then
+            echo "::warning::GitHub token may be invalid or expired"
+          fi
+        fi
       
         if [ ${#errors[@]} -ne 0 ]; then
           echo "Found ${#errors[@]} validation error(s):" >&2
@@ -192,7 +205,7 @@ runs:
         else
           echo "✅ Input validation passed"
         fi
-        echo "::endgroup::"    
+        echo "::endgroup::"
 
     - name: Install Minimal Dependencies
       shell: bash
@@ -221,43 +234,75 @@ runs:
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
 
+    - name: Setup Cache Keys
+      shell: bash
+      run: |
+        set -euo pipefail
+        MANIFEST_HASH=$(echo "$OP_BRANCH-$OP_MANIFEST" | sha256sum | cut -c1-8)
+        echo "MANIFEST_HASH=$MANIFEST_HASH" >> "$GITHUB_ENV"
+    
+    - name: Cache Kernel Source
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CONFIG }}
+        key: kernel-source-v2-${{ env.OP_MODEL }}-${{ env.MANIFEST_HASH }}
+        restore-keys: |
+          kernel-source-v2-${{ env.OP_MODEL }}-${{ env.MANIFEST_HASH }}-
+          kernel-source-v2-${{ env.OP_MODEL }}-
+
     - name: Initialize and Sync Kernel Source
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Initialize kernel source"
-        echo "Creating folder for configuration: $CONFIG"
+        echo "::group::Initialize and sync kernel source"
         mkdir -p "$CONFIG"
         cd "$CONFIG"
-        echo "Initializing and syncing kernel source..."
         
-        if [[ "$OP_MANIFEST" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl --fail --show-error --location --proto '=https' "$OP_MANIFEST" -o .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        elif [[ "$OP_BRANCH" == wild/* ]]; then
-          mkdir -p .repo/manifests
-          cp "../manifests/$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')/$OP_MANIFEST" .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m "$OP_MANIFEST" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        if [ -d ".repo" ] && [ -d "kernel_platform" ]; then
+          echo "✅ Kernel source restored from cache"
+          echo "Performing incremental sync..."
+          
+          "$REPO" sync -c --no-clone-bundle --no-tags \
+            --force-sync --force-remove-dirty \
+            --optimized-fetch -j"$(nproc --all)" || {
+            echo "⚠️ Incremental sync failed, cleaning and retrying..."
+            rm -rf .repo kernel_platform
+          }
         fi
         
-        "$REPO" --version
-        success=false
-        for i in 1 2 3; do
-          if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-             -j"$(nproc --all)" --fail-fast; then
-            success=true
-            break
+        if [ ! -d ".repo" ]; then
+          echo "📥 Performing full kernel source sync..."
+          
+          if [[ "$OP_MANIFEST" == https://* ]]; then
+            mkdir -p .repo/manifests
+            curl --fail --location --proto '=https' "$OP_MANIFEST" \
+              -o .repo/manifests/temp_manifest.xml
+            "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+              -b "oneplus/sm8650" -m temp_manifest.xml \
+              --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          else
+            "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+              -b "$OP_BRANCH" -m "$OP_MANIFEST" \
+              --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
           fi
-          echo "⚠️ repo sync attempt $i failed; retrying..."
-          sleep 30
-        done
-        $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
-        echo "✅ Kernel source synced"
+          
+          success=false
+          for i in 1 2 3; do
+            if "$REPO" sync -c --no-clone-bundle --no-tags \
+               --optimized-fetch -j"$(nproc --all)" --fail-fast; then
+              success=true
+              break
+            fi
+            echo "⚠️ repo sync attempt $i failed; retrying..."
+            sleep 30
+          done
+          $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
+        fi
+        
+        echo "✅ Kernel source ready"
+        du -sh . 2>/dev/null || true
         echo "::endgroup::"
-
+    
     - name: Get Kernel Version Info
       shell: bash
       run: |
@@ -267,7 +312,7 @@ runs:
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
         cd "$CONFIG_DIR/kernel_platform/common"
-        
+          
         CONFIG_FILES=("build.config.common" "build.config.constants")
         BRANCH_LINE=""
         for f in "${CONFIG_FILES[@]}"; do
@@ -276,11 +321,11 @@ runs:
             if [ -n "$l" ]; then BRANCH_LINE="$l"; break; fi
           fi
         done
-        
+           
         if [ -z "$BRANCH_LINE" ]; then
           echo "::error::No BRANCH= found in config files"; exit 1
         fi
-        
+         
         BRANCH_VALUE="${BRANCH_LINE#*=}"
         ANDROID_VERSION="${BRANCH_VALUE%-*}"
         
@@ -288,16 +333,16 @@ runs:
           echo "::error::Could not parse android version from BRANCH=$BRANCH_VALUE"
           exit 1
         fi
-        
+           
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
         FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
-        
+           
         cd "$ARTIFACTS_DIR"
         echo "$ANDROID_VERSION-$FULL_VERSION" > "${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "$OP_OS_VERSION" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
-        
+          
         {
           echo "ANDROID_VER=$ANDROID_VERSION"
           echo "KERNEL_VER=$VERSION.$PATCHLEVEL"
@@ -305,12 +350,12 @@ runs:
           echo "KERNEL_FULL_VER=$ANDROID_VERSION-$FULL_VERSION"
           echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
         } >> "$GITHUB_ENV"
-        
+           
         echo "✅ Detected: $ANDROID_VERSION-$FULL_VERSION"
         echo "   SUSFS Branch: gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
         echo "::endgroup::"
 
-    - name: 🏷️ Set Build Identity (Hardcoded)
+    - name: 🏷️ Set Build Identity
       shell: bash
       run: |
         set -euo pipefail
@@ -409,23 +454,22 @@ runs:
         restore-keys: |
           ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
           ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
-
-    - name: Cache Kernel Source
-      uses: actions/cache@v4
-      with:
-        path: |
-          ${{ env.CONFIG }}/kernel_platform
-          !${{ env.CONFIG }}/kernel_platform/common/out
-        key: kernel-src-${{ env.OP_BRANCH }}-${{ env.OP_MANIFEST }}-${{ hashFiles('**/Makefile') }}
-        restore-keys: |
-          kernel-src-${{ env.OP_BRANCH }}-${{ env.OP_MANIFEST }}-
-          kernel-src-${{ env.OP_BRANCH }}-
    
     - name: Configure ccache
       shell: bash
       run: |
         set -euo pipefail
         echo "::group::Configure ccache for maximum performance"
+        
+        # Helper function for consistent cache checking
+        check_ccache_exists() {
+          local cache_dir="$1"
+          if [ -d "$cache_dir" ] && [ -n "$(find "$cache_dir" -type f -print -quit 2>/dev/null)" ]; then
+            return 0  # Cache exists
+          else
+            return 1  # No cache
+          fi
+        }
         
         export CCACHE_DIR="$HOME/.ccache"
         export CCACHE_MAXSIZE="1G"
@@ -470,7 +514,7 @@ runs:
         echo "  Inode cache: enabled"
         echo ""
         
-        if [ -d "$CCACHE_DIR" ] && find "$CCACHE_DIR" -type f -print -quit 2>/dev/null | grep -q .; then
+        if check_ccache_exists "$CCACHE_DIR"; then
           echo "✅ Restored cache found"
           echo ""
           echo "Pre-build cache statistics:"
@@ -494,6 +538,21 @@ runs:
         
         echo "✅ ccache disabled for clean build (no cache/stat wipe)"
         echo "   Shared cache and statistics preserved for concurrent jobs"
+        echo "::endgroup::"
+
+    - name: Check Disk Space
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Disk space check"
+        df -h
+        available=$(df --output=avail -B 1 "$GITHUB_WORKSPACE" | tail -n 1)
+        required=$((20 * 1024 * 1024 * 1024))  # 20GB minimum
+        if [ "$available" -lt "$required" ]; then
+          echo "::warning::Low disk space: $(numfmt --to=iec-i --suffix=B $available) available"
+        else
+          echo "✅ Sufficient disk space: $(numfmt --to=iec-i --suffix=B $available) available"
+        fi
         echo "::endgroup::"
 
     - name: Clone AnyKernel3 and Other Dependencies
@@ -545,7 +604,8 @@ runs:
                 return 0
               fi
             else
-              if git clone "$repo_url" "$target_dir" 2>&1 | \
+              # Clone shallow de la branche par défaut
+              if git clone --depth=1 --single-branch "$repo_url" "$target_dir" 2>&1 | \
                  grep -v "Cloning into" | grep -v "remote: " | grep -v "Receiving objects" || true; then
                 echo "  ✅ $(basename "$repo_url") cloned successfully"
                 return 0
@@ -621,6 +681,7 @@ runs:
           if [ $failed -eq 1 ]; then
             echo ""
             echo "::error::One or more git clones failed"
+            echo "::endgroup::"
             exit 1
           fi
         )
@@ -722,302 +783,141 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Apply SUSFS patches"
-        
         cd "$CONFIG/kernel_platform"
-        
-        echo "📋 Preparing SUSFS integration..."
-        echo "   SUSFS Version: ${SUSFS_BRANCH_NAME}"
-        echo "   SUSFS Commit: ${SUSFS_COMMIT_SHA:0:8}"
-        echo "   Kernel: ${ANDROID_VER}-${KERNEL_VER}"
-        
-        # ============================================
-        # DÉFINIR LES CHEMINS ABSOLUS
-        # ============================================
-        
-        WORKSPACE_ROOT="$GITHUB_WORKSPACE"
-        SUSFS_PATCHES_DIR="$WORKSPACE_ROOT/susfs4ksu/kernel_patches"
-        KERNEL_PATCHES_DIR="$WORKSPACE_ROOT/kernel_patches"
-        KERNEL_PLATFORM="$WORKSPACE_ROOT/$CONFIG/kernel_platform"
-        COMMON_DIR="$KERNEL_PLATFORM/common"
-        KSUN_DIR="$KERNEL_PLATFORM/KernelSU-Next"
-        
-        SUSFS_KERNEL_PATCH="50_add_susfs_in_${SUSFS_KERNEL_BRANCH}.patch"
-        
-        # ============================================
-        # ÉTAPE 1: Appliquer le patch kernel principal
-        # ============================================
-        
-        echo ""
-        echo "🔧 Step 1: Apply kernel-side SUSFS patch..."
-        
-        if [ ! -f "$SUSFS_PATCHES_DIR/$SUSFS_KERNEL_PATCH" ]; then
-          echo "::error::SUSFS kernel patch not found: $SUSFS_KERNEL_PATCH"
-          echo "Available patches in $SUSFS_PATCHES_DIR:"
-          ls -1 "$SUSFS_PATCHES_DIR"/*.patch 2>/dev/null || echo "No patches found"
-          exit 1
-        fi
-        
-        cd "$COMMON_DIR"
-        
-        # Appliquer le patch avec chemin absolu
-        if patch -p1 --dry-run < "$SUSFS_PATCHES_DIR/$SUSFS_KERNEL_PATCH" >/dev/null 2>&1; then
-          echo "✅ Applying $SUSFS_KERNEL_PATCH..."
-          patch -p1 < "$SUSFS_PATCHES_DIR/$SUSFS_KERNEL_PATCH"
-        else
-          echo "⚠️ Patch $SUSFS_KERNEL_PATCH already applied or conflicts detected"
-          
-          if patch -p1 -R --dry-run < "$SUSFS_PATCHES_DIR/$SUSFS_KERNEL_PATCH" >/dev/null 2>&1; then
-            echo "✅ Patch already applied, skipping"
-          else
-            echo "::error::Patch conflicts detected"
-            patch -p1 < "$SUSFS_PATCHES_DIR/$SUSFS_KERNEL_PATCH" || true
-            exit 1
-          fi
-        fi
-        
-        # ============================================
-        # ÉTAPE 2: Copier les fichiers SUSFS
-        # ============================================
-        
-        echo ""
-        echo "🔧 Step 2: Copy SUSFS source files..."
-        
-        cp -v "$SUSFS_PATCHES_DIR/fs"/* "$COMMON_DIR/fs/"
-        cp -v "$SUSFS_PATCHES_DIR/include/linux"/* "$COMMON_DIR/include/linux/"
-        
-        susfs_version=$(grep '#define SUSFS_VERSION' "$COMMON_DIR/include/linux/susfs.h" | awk -F'"' '{print $2}')
+        echo "Applying SUSFS patches..."
+        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch ./common/
+        cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        cd ./KernelSU-Next
+        susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
         
         if [ -z "$susfs_version" ]; then
-          echo "::error::Failed to extract SUSFS version from susfs.h"
+          echo "::error::Failed to extract SUSFS version"
           exit 1
         fi
         
-        echo "SUSVER=$susfs_version" >> "$GITHUB_ENV"
-        echo "✅ SUSFS Version: $susfs_version"
-        
-        # ============================================
-        # ÉTAPE 3: Calculer la version KernelSU Next
-        # ============================================
-        
-        echo ""
-        echo "🔧 Step 3: Calculate KernelSU Next version..."
-        
-        cd "$KSUN_DIR/kernel"
-        
+        echo "SUSVER=$susfs_version" >> $GITHUB_ENV
         BASE_VERSION=10200
-        COMMIT_COUNT=$(/usr/bin/git rev-list --count HEAD)
-        KSU_VERSION=$(expr "$COMMIT_COUNT" + "$BASE_VERSION")
-        
-        if grep -q "DKSU_VERSION=" Makefile; then
-          sed -i "s/DKSU_VERSION=[0-9]*/DKSU_VERSION=${KSU_VERSION}/" Makefile
-          echo "✅ KernelSU Version updated: $KSU_VERSION"
-        else
-          echo "::warning::DKSU_VERSION not found in Makefile"
-        fi
-        
-        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
-        
-        # ============================================
-        # ÉTAPE 4: Appliquer les patches KernelSU-SUSFS
-        # ============================================
-        
-        echo ""
-        echo "🔧 Step 4: Apply KernelSU-SUSFS integration patches..."
-        
-        cd "$KSUN_DIR"
-        
+        cd ./kernel
+        KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
+        sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+        cd ..
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        echo "KernelSU Next Version: $KSU_VERSION"
+        echo "SusFS Version: $susfs_version"
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
-            echo "📦 Using unified patch for SUSFS $susfs_version"
-            
-            UNIFIED_PATCH="$KERNEL_PATCHES_DIR/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch"
-            
-            if [ ! -f "$UNIFIED_PATCH" ]; then
-              echo "::error::Unified patch not found: $UNIFIED_PATCH"
-              exit 1
-            fi
-            
-            if patch -p1 --forward < "$UNIFIED_PATCH"; then
-              echo "✅ Unified patch applied"
-            else
-              echo "::warning::Unified patch failed, continuing..."
-            fi
+            cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
             ;;
-            
           "v1.5.8")
-            echo "📦 Using multi-patch approach for SUSFS $susfs_version"
-            
-            BASE_PATCH="$SUSFS_PATCHES_DIR/KernelSU/10_enable_susfs_for_ksu.patch"
-            
-            if [ ! -f "$BASE_PATCH" ]; then
-              echo "::error::Base patch not found: $BASE_PATCH"
-              exit 1
-            fi
-            
-            patch -p1 --forward --fuzz=3 < "$BASE_PATCH" || true
-            
-            for fix_file in apk_sign core_hook selinux ksud; do
-              FIX_PATCH="$KERNEL_PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_${fix_file}.c.patch"
-              
-              if [ -f "$FIX_PATCH" ]; then
-                echo "Applying fix: $fix_file"
-                patch -p1 --forward --fuzz=3 < "$FIX_PATCH"
-              else
-                echo "::warning::Fix patch not found: $FIX_PATCH"
-              fi
-            done
-            
-            echo "✅ Multi-patch approach completed"
+            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
+            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
+            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
             ;;
-            
           "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
-            echo "📦 Using reject-based patching for SUSFS $susfs_version"
-            
-            BASE_PATCH="$SUSFS_PATCHES_DIR/KernelSU/10_enable_susfs_for_ksu.patch"
-            
-            if [ ! -f "$BASE_PATCH" ]; then
-              echo "::error::Base patch not found: $BASE_PATCH"
-              exit 1
-            fi
-            
-            patch -p1 --forward < "$BASE_PATCH" || true
-            
-            REJECT_FILES=$(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" 2>/dev/null | cut -d'.' -f1 | sort -u || true)
-            
-            if [ -n "$REJECT_FILES" ]; then
-              echo "Found rejects, applying fixes..."
-              for file in $REJECT_FILES; do
-                FIX_PATCH="$KERNEL_PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_${file}.c.patch"
-                
-                if [ -f "$FIX_PATCH" ]; then
-                  echo "Patching file: $file.c"
-                  patch -p1 --forward < "$FIX_PATCH"
-                else
-                  echo "::warning::Fix patch not found for: $file"
-                fi
-              done
-            fi
-            
-            COMPAT_FIX="$KERNEL_PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
-            
-            if [ -f "$COMPAT_FIX" ]; then
-              echo "Applying kernel_compat fix..."
-              patch -p1 --forward < "$COMPAT_FIX"
-            else
-              echo "::warning::kernel_compat fix not found"
-            fi
-            
-            echo "✅ Reject-based patching completed"
+            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
+            for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
+              echo "Patching file: $file.c with fix_$file.c.patch"
+              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+            done
+            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
             ;;
-            
           *)
             echo "::error::Unsupported SUSFS version: $susfs_version"
             exit 1
             ;;
         esac
-        
-        # ============================================
-        # ÉTAPE 5: Patches kernel spécifiques
-        # ============================================
-        
-        echo ""
-        echo "🔧 Step 5: Apply kernel-specific patches..."
-        
-        cd "$COMMON_DIR"
-        
-        if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
+        patch -p1 --forward < ksun_susfs_latest.patch || true
+        cd ../common
+        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            echo "Adding missing include to fs/namespace.c..."
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
           fi
         fi
-        
+      
+        # Fake kernel patch to fix failures
         fake_patched=0
-        
-        if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
+        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            echo "⚠️ Applying fake patch to task_mmu.c..."
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
-                   -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' \
-                   ./fs/proc/task_mmu.c
+            echo "nr_subpages Line not found. Fake Patching!"
+            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
+            fake_patched=1
+          fi
+        fi
+        if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
+          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
+            echo "vma_pages Line not found. Fake Patching!"
+            fake_patched=1
+          fi
+        fi
+        if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
+          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
+            echo "vma_pages Line not found. Fake Patching!"
+            fake_patched=1
+          fi
+        fi
+
+        if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
+          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
+            echo "vma_pages Line not found. Fake Patching!"
             fake_patched=1
           fi
         fi
         
+        patch -p1 < 50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch
+      
+        # Revert Fake kernel patch
         if [ "$fake_patched" = 1 ]; then
-          COUNT=$(grep -c "unsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;" ./fs/proc/task_mmu.c 2>/dev/null || echo "0")
-          
-          if [ "$COUNT" -gt 1 ]; then
-            echo "✅ Real patch applied, removing fake patch..."
-            sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' \
-                   -e '/pagemap_entry_t \*res = NULL;/d' \
-                   ./fs/proc/task_mmu.c
-          fi
-        fi
-        
-        # ============================================
-        # ÉTAPE 6: Patch ptrace
-        # ============================================
-        
-        echo ""
-        echo "🔧 Step 6: Check ptrace patch requirement..."
-        
-        MIN_VERSION="5.16"
-        
-        if [ "$(printf '%s\n' "$KERNEL_VER" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VER" ]; then
-          echo "Kernel $KERNEL_VER < $MIN_VERSION, applying ptrace patch..."
-          
-          PTRACE_PATCH="$KERNEL_PATCHES_DIR/gki_ptrace.patch"
-          
-          if [ -f "$PTRACE_PATCH" ]; then
-            patch -p1 -F 3 < "$PTRACE_PATCH"
-            echo "✅ ptrace patch applied"
-          else
-            echo "::warning::ptrace patch not found"
-          fi
-        else
-          echo "✅ Kernel $KERNEL_VER >= $MIN_VERSION, skipping ptrace patch"
-        fi
-        
-        # ============================================
-        # ÉTAPE 7: Patch Hmbird
-        # ============================================
-        
-        if [ "${OP_HMBIRD:-false}" = "true" ]; then
-          echo ""
-          echo "🔧 Step 7: Apply OnePlus Hmbird patch..."
-          
-          HMBIRD_PATCH="$KERNEL_PATCHES_DIR/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
-          
-          if [ -f "$HMBIRD_PATCH" ]; then
-            dos2unix "$HMBIRD_PATCH" 2>/dev/null || true
-            
-            if patch -p1 -F 3 < "$HMBIRD_PATCH"; then
-              echo "✅ Hmbird patch applied"
-            else
-              echo "::warning::Hmbird patch failed"
+          if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
+            if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
+              echo "nr_subpages Line found. Revert Fake Patching!"
+              sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
             fi
-          else
-            echo "::warning::Hmbird patch not found"
           fi
-        else
-          echo "✅ Hmbird not enabled, skipping"
+          if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
+            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
+              echo "vma_pages Line found. Revert Fake Patching!"
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+          fi
+          if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
+            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
+              echo "vma_pages Line found. Revert Fake Patching!"
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+          fi
+          if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
+            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
+              echo "vma_pages Line found. Revert Fake Patching!"
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+          fi
         fi
-        
-        # ============================================
-        # RÉSUMÉ
-        # ============================================
-        
-        echo ""
-        echo "============================================"
-        echo "✅ SUSFS Integration Summary"
-        echo "============================================"
-        echo "SUSFS Version: $susfs_version"
-        echo "KernelSU Version: $KSU_VERSION"
-        echo "Kernel: ${ANDROID_VER}-${KERNEL_VER}"
-        echo "Hmbird: ${OP_HMBIRD:-false}"
-        echo "============================================"
-        
+      
+        KERNEL_VERSION="${{ env.KERNEL_VER }}"
+        MIN_VERSION="5.16"
+        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
+          echo "Patching ptrace!"
+          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
+        else
+          echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
+        fi
+        if [ "$OP_HMBIRD" = true ]; then
+          echo "Patching hmbird!"
+          dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+        else
+          echo "Hmbird not enabled, skipping fengchi patch"
+        fi        
+        echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
     - name: Apply KSUN Hooks
@@ -1028,7 +928,7 @@ runs:
         cd "$CONFIG/kernel_platform/common"
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
         echo "✅ KSUN hooks applied"
-        echo "::endgroup::"
+        echo "::endgroup::"  
 
     - name: Apply ZRAM Patches
       if: ${{ inputs.enable_zram == 'true' }}
@@ -1217,6 +1117,16 @@ runs:
         set -euo pipefail
         echo "::group::Build kernel with ccache optimization"
         
+        # Helper function for consistent cache checking
+        check_ccache_exists() {
+          local cache_dir="$1"
+          if [ -d "$cache_dir" ] && [ -n "$(find "$cache_dir" -type f -print -quit 2>/dev/null)" ]; then
+            return 0  # Cache exists
+          else
+            return 1  # No cache
+          fi
+        }
+        
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
@@ -1305,6 +1215,7 @@ runs:
           sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
         fi
         
+        # Configuration O2/O3 complète
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
           scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
@@ -1348,10 +1259,12 @@ runs:
         echo "============================================"
         
         if [ "${{ inputs.clean }}" != "true" ]; then
-          if [ ! -d "$CCACHE_DIR" ] || [ -z "$(find "$CCACHE_DIR" -type f 2>/dev/null | head -n1)" ]; then
+          if ! check_ccache_exists "$CCACHE_DIR"; then
             echo "🔥 Priming cache with header preprocessing..."
             make -C "$COMMON" O="$OUT" headers_install prepare 2>&1 | head -n 20 || true
             echo ""
+          else
+            echo "✅ Existing cache detected, skipping priming"
           fi
         fi
         
@@ -1559,7 +1472,7 @@ runs:
         
         echo "Fetching latest ZRAM module release..."
         
-        # Retry logic for API call with GitHub token
+        # Retry logic for API call with GitHub token from inputs
         retries=3
         download_url=""
         
@@ -1568,7 +1481,7 @@ runs:
           
           download_url=$(curl -fsSL --retry 3 --connect-timeout 30 \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Authorization: Bearer ${{ inputs.github_token }}" \
             "https://api.github.com/repos/Bouteillepleine/ZRAM-Module/releases/latest" 2>/dev/null | \
             jq -r '.assets[] | select(.name | test("ZRAM-Module-.*\\.zip")) | .browser_download_url' | \
             head -n 1 || true)
@@ -1800,9 +1713,10 @@ runs:
           if [ "${{ inputs.enable_zram }}" = "true" ]; then
             echo ""
             echo "=== ZRAM Module ==="
-            if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
-              echo "Status: ✅ Included"
-              echo "Modules: ${{ steps.zram_module.outputs.zram_module_count }}"
+            if [ "${{ steps.zram_find.outputs.upload }}" = "true" ]; then
+              echo "Status: ✅ Included with compiled module"
+            elif [ "${{ steps.zram_find.outputs.upload }}" = "partial" ]; then
+              echo "Status: ⚠️ Included without compiled module"
             else
               echo "Status: ⚠️ Not available"
             fi
@@ -1862,10 +1776,12 @@ runs:
           echo "| **ZRAM** | ${{ inputs.enable_zram }} |"
           
           if [ "${{ inputs.enable_zram }}" = "true" ]; then
-            if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
-              echo "| **ZRAM Modules** | ✅ ${{ steps.zram_module.outputs.zram_module_count }} modules |"
+            if [ "${{ steps.zram_find.outputs.upload }}" = "true" ]; then
+              echo "| **ZRAM Module** | ✅ Included with compiled module |"
+            elif [ "${{ steps.zram_find.outputs.upload }}" = "partial" ]; then
+              echo "| **ZRAM Module** | ⚠️ Included without compiled module |"
             else
-              echo "| **ZRAM Modules** | ⚠️ Not available |"
+              echo "| **ZRAM Module** | ⚠️ Not available |"
             fi
           fi
           
@@ -1886,6 +1802,11 @@ runs:
           echo "| **Image SHA256** | \`${{ steps.collect_stats.outputs.image_sha256 }}\` |"
           echo "| **Warnings** | ${{ steps.collect_stats.outputs.warnings_count }} |"
           echo "| **Compiler** | \`${CLANG_VERSION:-unknown}\` |"
+          
+          ZIP_SIZE=$(stat -c%s "${{ env.CONFIG }}/artifacts/${{ env.ZIP_NAME }}" 2>/dev/null || echo "0")
+          if [ "$ZIP_SIZE" -gt 0 ]; then
+            echo "| **ZIP Size** | $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE") |"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Artifacts
@@ -1896,4 +1817,3 @@ runs:
         path: ${{ env.CONFIG }}/artifacts/
         compression-level: 0
         retention-days: 20
-
