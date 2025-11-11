@@ -1,37 +1,30 @@
 name: 'Build OnePlus Kernel with KernelSU Next'
+description: 'Builds OnePlus kernel with KernelSU Next and SUSFS support'
 
-on:
-  workflow_dispatch:
-    inputs:
-      op_config_json:
-        description: 'JSON string containing full device config'
-        required: true
-        type: string
-      ksun_branch:
-        description: 'KernelSU Next branch to use'
-        required: true
-        type: string
-        default: stable
-      susfs_commit_hash_or_branch:
-        description: 'SUSFS branch or commit hash (empty = auto-detect by kernel version)'
-        required: false
-        type: string
-        default: "" 
-      optimize_level:
-        description: 'Compiler optimization level (O2 or O3)'
-        required: false
-        type: string
-        default: O2
-      clean:
-        description: 'Force clean build without ccache acceleration'
-        required: false
-        type: string
-        default: 'false'
-      enable_zram:
-        description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
-        required: false
-        type: string
-        default: 'false'
+inputs:
+  op_config_json:
+    description: 'JSON string containing full device config'
+    required: true
+  ksun_branch:
+    description: 'KernelSU Next branch to use'
+    required: true
+    default: stable
+  susfs_commit_hash_or_branch:
+    description: 'SUSFS branch or commit hash (empty = auto-detect by kernel version)'
+    required: false
+    default: "" 
+  optimize_level:
+    description: 'Compiler optimization level (O2 or O3)'
+    required: false
+    default: O2
+  clean:
+    description: 'Force clean build without ccache acceleration'
+    required: false
+    default: 'false'
+  enable_zram:
+    description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
+    required: false
+    default: 'false'
 
 outputs:
   kernel_version:
@@ -61,6 +54,9 @@ outputs:
   zip_name:
     description: 'Name of the generated flashable ZIP'
     value: ${{ steps.create_zip.outputs.zip_name }}
+  zram_available:
+    description: 'Whether ZRAM modules were successfully downloaded'
+    value: ${{ steps.zram_module.outputs.zram_available }}
 
 runs:
   using: 'composite'
@@ -218,8 +214,8 @@ runs:
         echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
         REPO="/usr/local/bin/repo"
         if [ ! -x "$REPO" ]; then
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
-          chmod +x "$REPO"
+          sudo curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
+          sudo chmod +x "$REPO"
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
 
@@ -411,6 +407,17 @@ runs:
         restore-keys: |
           ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
           ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+
+    - name: Cache Kernel Source
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.CONFIG }}/kernel_platform
+          !${{ env.CONFIG }}/kernel_platform/common/out
+        key: kernel-src-${{ env.OP_BRANCH }}-${{ env.OP_MANIFEST }}-${{ hashFiles('**/Makefile') }}
+        restore-keys: |
+          kernel-src-${{ env.OP_BRANCH }}-${{ env.OP_MANIFEST }}-
+          kernel-src-${{ env.OP_BRANCH }}-
    
     - name: Configure ccache
       shell: bash
@@ -428,7 +435,7 @@ runs:
         export CCACHE_NOHASHDIR="true"
         
         ccache -o compression=true
-        ccache -o compression_level=3
+        ccache -o compression_level=1
         ccache -o direct_mode=true
         ccache -o hash_dir=false
         ccache -o file_clone=true
@@ -453,7 +460,7 @@ runs:
         echo "✅ ccache configured for production"
         echo ""
         echo "Configuration applied:"
-        echo "  Max size: 12G (persisted)"
+        echo "  Max size: 1G (persisted)"
         echo "  Base dir: ${GITHUB_WORKSPACE}"
         echo "  Compression: zstd level 3"
         echo "  Direct mode: enabled"
@@ -496,10 +503,8 @@ runs:
         
         ANYKERNEL_BRANCH="gki-2.0"
         
-        # Determine SUSFS branch/commit to use
         SUSFS_INPUT="${{ inputs.susfs_commit_hash_or_branch }}"
         
-        # Default SUSFS branches for each kernel version
         declare -A DEFAULT_SUSFS=(
           ["android12-5.10"]="gki-android12-5.10"          
           ["android13-5.15"]="gki-android13-5.15"          
@@ -507,34 +512,141 @@ runs:
           ["android15-6.6"]="gki-android15-6.6"
         )
         
-        # Determine which SUSFS branch to use
         KERNEL_KEY="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
         if [ -z "$SUSFS_INPUT" ] || [ "$SUSFS_INPUT" = "next" ]; then
-          # Empty or "next": use kernel-specific default
           SUSFS_BRANCH="${DEFAULT_SUSFS[$KERNEL_KEY]:-gki-android14-6.1}"
           echo "ℹ️  Using default SUSFS branch for $KERNEL_KEY: $SUSFS_BRANCH"
         else
-          # User provided custom branch/commit
           SUSFS_BRANCH="$SUSFS_INPUT"
           echo "🔧 Using custom SUSFS ref: $SUSFS_BRANCH"
         fi
         
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
+        echo ""
+        echo "🚀 Starting parallel git clones..."
         
-        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        # ============================================
+        # PARALLÉLISATION DES CLONES
+        # ============================================
         
+        # Fonction pour cloner avec retry et logging
+        clone_with_retry() {
+          local repo_url="$1"
+          local target_dir="$2"
+          local branch="${3:-}"
+          local max_attempts=3
+          local attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "  📦 Cloning $(basename "$repo_url") (attempt $attempt/$max_attempts)..."
+            
+            if [ -n "$branch" ]; then
+              if git clone --depth=1 --single-branch -b "$branch" "$repo_url" "$target_dir" 2>&1 | \
+                 grep -v "Cloning into" | grep -v "remote: " | grep -v "Receiving objects" || true; then
+                echo "  ✅ $(basename "$repo_url") cloned successfully"
+                return 0
+              fi
+            else
+              if git clone "$repo_url" "$target_dir" 2>&1 | \
+                 grep -v "Cloning into" | grep -v "remote: " | grep -v "Receiving objects" || true; then
+                echo "  ✅ $(basename "$repo_url") cloned successfully"
+                return 0
+              fi
+            fi
+            
+            echo "  ⚠️  Clone failed, retrying in 5s..."
+            sleep 5
+            attempt=$((attempt + 1))
+            rm -rf "$target_dir" 2>/dev/null || true
+          done
+          
+          echo "  ❌ Failed to clone $(basename "$repo_url") after $max_attempts attempts"
+          return 1
+        }
+        
+        # Export pour utilisation dans subshells
+        export -f clone_with_retry
+        
+        # Lancer les clones en parallèle
+        (
+          clone_with_retry \
+            "https://github.com/TheWildJames/AnyKernel3.git" \
+            "AnyKernel3" \
+            "$ANYKERNEL_BRANCH" &
+          PID_AK3=$!
+          
+          clone_with_retry \
+            "https://github.com/TheWildJames/kernel_patches.git" \
+            "kernel_patches" \
+            "" &
+          PID_PATCHES=$!
+          
+          clone_with_retry \
+            "https://gitlab.com/simonpunk/susfs4ksu.git" \
+            "susfs4ksu" \
+            "" &
+          PID_SUSFS=$!
+          
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            clone_with_retry \
+              "https://github.com/SukiSU-Ultra/SukiSU_patch.git" \
+              "SukiSU_patch" \
+              "" &
+            PID_ZRAM=$!
+          fi
+          
+          # Attendre tous les clones
+          echo ""
+          echo "⏳ Waiting for all clones to complete..."
+          
+          failed=0
+          
+          if ! wait $PID_AK3; then
+            echo "::error::AnyKernel3 clone failed"
+            failed=1
+          fi
+          
+          if ! wait $PID_PATCHES; then
+            echo "::error::kernel_patches clone failed"
+            failed=1
+          fi
+          
+          if ! wait $PID_SUSFS; then
+            echo "::error::susfs4ksu clone failed"
+            failed=1
+          fi
+          
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            if ! wait $PID_ZRAM; then
+              echo "::error::SukiSU_patch clone failed"
+              failed=1
+            fi
+          fi
+          
+          if [ $failed -eq 1 ]; then
+            echo ""
+            echo "::error::One or more git clones failed"
+            exit 1
+          fi
+        )
+        
+        echo ""
+        echo "✅ All repositories cloned successfully"
+        
+        # ============================================
+        # CONFIGURATION SUSFS
+        # ============================================
+        
+        echo ""
+        echo "🔧 Configuring SUSFS..."
         cd susfs4ksu
         
-        # Try to checkout the specified branch/commit
+        # Vérifier si c'est une branche ou un commit
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1; then
-          # It's a remote branch
           echo "✅ Checking out remote branch: $SUSFS_BRANCH"
           git checkout "$SUSFS_BRANCH"
         elif git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
-          # It's a local ref or commit hash
           echo "✅ Checking out ref/commit: $SUSFS_BRANCH"
           git checkout "$SUSFS_BRANCH"
         else
@@ -558,14 +670,22 @@ runs:
         
         cd ..
         
-        # Clone ZRAM patches if enabled
+        # ============================================
+        # VÉRIFICATION FINALE
+        # ============================================
+        
+        echo ""
+        echo "📋 Cloned repositories summary:"
+        echo "   - AnyKernel3: $(cd AnyKernel3 && git rev-parse --short HEAD)"
+        echo "   - kernel_patches: $(cd kernel_patches && git rev-parse --short HEAD)"
+        echo "   - susfs4ksu: $SUSFS_COMMIT_SHA"
+        
         if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          echo "Cloning ZRAM patches repository..."
-          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git
-          echo "✅ ZRAM patches cloned"
+          echo "   - SukiSU_patch: $(cd SukiSU_patch && git rev-parse --short HEAD)"
         fi
         
-        echo "✅ Dependencies cloned"
+        echo ""
+        echo "✅ All dependencies ready"
         echo "::endgroup::"
 
     - name: Clean Up ABI Protected Exports
@@ -671,7 +791,6 @@ runs:
           fi
         fi
       
-        # Fake kernel patch to fix failures
         fake_patched=0
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
@@ -702,7 +821,6 @@ runs:
         
         patch -p1 < 50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch
       
-        # Revert Fake kernel patch
         if [ "$fake_patched" = 1 ]; then
           if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
             if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
@@ -1276,12 +1394,176 @@ runs:
         echo "   SHA256: $ZIP_SHA256"
         echo "::endgroup::"
 
+    - name: Download and Package ZRAM Module
+      id: zram_module
+      if: ${{ inputs.enable_zram == 'true' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Download and package ZRAM module"
+        
+        ARTIFACTS_DIR="${{ env.CONFIG }}/artifacts"
+        mkdir -p "${ARTIFACTS_DIR}"
+        
+        KERNEL_VER="${{ env.KERNEL_VER }}"
+        ANDROID_VER="${{ env.ANDROID_VER }}"
+        
+        ZRAM_BASE_URL="https://github.com/Bouteillepleine/Action-Build/releases/download/zram-modules"
+        
+        case "$KERNEL_VER" in
+          5.10|5.15|6.1|6.6)
+            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-${KERNEL_VER}.tar.gz"
+            ;;
+          *)
+            echo "::warning::ZRAM module not available for kernel $KERNEL_VER"
+            echo "zram_available=false" >> "$GITHUB_OUTPUT"
+            echo "zram_module_count=0" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
+            exit 0
+            ;;
+        esac
+        
+        echo "📦 Downloading ZRAM module from: $download_url"
+        echo "   Kernel: $KERNEL_VER"
+        echo "   Android: $ANDROID_VER"
+        
+        MAX_RETRIES=3
+        RETRY_COUNT=0
+        SUCCESS=0
+        
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $SUCCESS -eq 0 ]; do
+          echo ""
+          echo "Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
+          
+          if wget --timeout=30 --tries=3 --retry-connrefused \
+                  --progress=dot:giga \
+                  -O "${ARTIFACTS_DIR}/zram-module.tar.gz" \
+                  "$download_url" 2>&1 | tee /tmp/wget.log; then
+            
+            if [ -f "${ARTIFACTS_DIR}/zram-module.tar.gz" ]; then
+              FILE_SIZE=$(stat -c%s "${ARTIFACTS_DIR}/zram-module.tar.gz")
+              
+              if [ "$FILE_SIZE" -gt 1024 ]; then
+                echo "✅ Downloaded: $(numfmt --to=iec-i --suffix=B "$FILE_SIZE")"
+                
+                if tar -tzf "${ARTIFACTS_DIR}/zram-module.tar.gz" >/dev/null 2>&1; then
+                  cd "${ARTIFACTS_DIR}"
+                  
+                  if tar -xzf zram-module.tar.gz; then
+                    rm -f zram-module.tar.gz
+                    SUCCESS=1
+                    
+                    EXTRACTED_FILES=$(find . -maxdepth 1 -type f -name "*.ko" 2>/dev/null | wc -l)
+                    
+                    echo ""
+                    echo "✅ ZRAM module extracted successfully"
+                    echo "   Files extracted: $EXTRACTED_FILES kernel modules"
+                    
+                    if [ "$EXTRACTED_FILES" -gt 0 ]; then
+                      echo ""
+                      echo "📋 Extracted modules:"
+                      find . -maxdepth 1 -type f -name "*.ko" -exec basename {} \; | sort | sed 's/^/     - /'
+                      
+                      echo ""
+                      echo "📊 Module sizes:"
+                      find . -maxdepth 1 -type f -name "*.ko" -exec ls -lh {} \; | awk '{print "     - " $9 ": " $5}'
+                    else
+                      echo "::warning::No .ko files found in archive"
+                      SUCCESS=0
+                    fi
+                  else
+                    echo "::warning::Failed to extract ZRAM module (attempt $((RETRY_COUNT + 1)))"
+                    rm -f zram-module.tar.gz
+                  fi
+                else
+                  echo "::warning::Downloaded file is not a valid tar.gz archive"
+                  echo "File details:"
+                  file "${ARTIFACTS_DIR}/zram-module.tar.gz" || true
+                  rm -f "${ARTIFACTS_DIR}/zram-module.tar.gz"
+                fi
+              else
+                echo "::warning::Downloaded file is too small ($FILE_SIZE bytes)"
+                rm -f "${ARTIFACTS_DIR}/zram-module.tar.gz"
+              fi
+            else
+              echo "::warning::Downloaded file not found"
+            fi
+          else
+            echo "::warning::wget failed (attempt $((RETRY_COUNT + 1)))"
+            echo ""
+            echo "wget output:"
+            cat /tmp/wget.log 2>/dev/null | tail -n 20 || true
+          fi
+          
+          RETRY_COUNT=$((RETRY_COUNT + 1))
+          
+          if [ $SUCCESS -eq 0 ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            WAIT_TIME=$((5 * RETRY_COUNT))
+            echo ""
+            echo "⏳ Waiting ${WAIT_TIME}s before retry..."
+            sleep $WAIT_TIME
+          fi
+        done
+        
+        if [ "$SUCCESS" -eq 1 ]; then
+          echo "zram_available=true" >> "$GITHUB_OUTPUT"
+          echo "zram_module_count=$EXTRACTED_FILES" >> "$GITHUB_OUTPUT"
+          
+          {
+            echo ""
+            echo "### 📦 ZRAM Module"
+            echo ""
+            echo "| Info | Value |"
+            echo "|------|-------|"
+            echo "| **Status** | ✅ Downloaded & Extracted |"
+            echo "| **Kernel** | ${KERNEL_VER} |"
+            echo "| **Android** | ${ANDROID_VER} |"
+            echo "| **Modules** | $EXTRACTED_FILES |"
+            echo ""
+            echo "<details>"
+            echo "<summary>📋 Module List</summary>"
+            echo ""
+            echo '```'
+            find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name "*.ko" -exec basename {} \; | sort
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+          
+          echo ""
+          echo "✅ ZRAM module ready for packaging"
+        else
+          echo "zram_available=false" >> "$GITHUB_OUTPUT"
+          echo "zram_module_count=0" >> "$GITHUB_OUTPUT"
+          
+          echo "::warning::Failed to download ZRAM module after $MAX_RETRIES attempts"
+          
+          {
+            echo ""
+            echo "### ⚠️ ZRAM Module"
+            echo ""
+            echo "| Info | Value |"
+            echo "|------|-------|"
+            echo "| **Status** | ❌ Download Failed |"
+            echo "| **Kernel** | ${KERNEL_VER} |"
+            echo "| **Android** | ${ANDROID_VER} |"
+            echo "| **Attempts** | $MAX_RETRIES |"
+            echo ""
+            echo "> Build will continue without ZRAM modules"
+          } >> "$GITHUB_STEP_SUMMARY"
+          
+          echo ""
+          echo "⚠️ Build will continue without ZRAM modules"
+        fi
+        
+        echo "::endgroup::"
+
     - name: Final Build Summary
       shell: bash
       run: |
         set -euo pipefail
         
-        # Get commit SHAs with fallback
         KSUN_SHA="${KSUN_COMMIT_SHA:-unknown}"
         SUSFS_SHA="${SUSFS_COMMIT_SHA:-unknown}"
         
@@ -1309,6 +1591,18 @@ runs:
           echo "Hmbird: ${{ env.OP_HMBIRD }}"
           echo "TTL: ${{ env.OP_TTL }}"
           echo "IP_SET: ${{ env.OP_IP_SET }}"
+          
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            echo ""
+            echo "=== ZRAM Module ==="
+            if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
+              echo "Status: ✅ Included"
+              echo "Modules: ${{ steps.zram_module.outputs.zram_module_count }}"
+            else
+              echo "Status: ⚠️ Not available"
+            fi
+          fi
+          
           echo ""
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "Compiler: ${CLANG_VERSION:-unknown}"
@@ -1362,6 +1656,14 @@ runs:
           echo "| **IP_SET** | ${{ env.OP_IP_SET }} |"
           echo "| **ZRAM** | ${{ inputs.enable_zram }} |"
           
+          if [ "${{ inputs.enable_zram }}" = "true" ]; then
+            if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
+              echo "| **ZRAM Modules** | ✅ ${{ steps.zram_module.outputs.zram_module_count }} modules |"
+            else
+              echo "| **ZRAM Modules** | ⚠️ Not available |"
+            fi
+          fi
+          
           echo ""
           echo "### 📊 Build Metrics"
           echo ""
@@ -1382,7 +1684,7 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Artifacts
-      if: success() && steps.create_zip.conclusion == 'success'
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}
