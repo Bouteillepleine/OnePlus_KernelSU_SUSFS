@@ -121,12 +121,8 @@ jobs:
               jq_filter="map(select(.os_version == \"OOS14\"))"
               ;;
             android*-*.*)
-              # Extract android version and kernel version
               IFS='-' read -r av kv <<< "$input"
-              
-              # Build android*-* only for OOS15 and OOS16
               jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
-              
               echo "ℹ️  Android-Kernel filter applied: $av-$kv"
               echo "   Restricted to: OOS15 and OOS16 only"
               ;;
@@ -184,7 +180,6 @@ jobs:
           **SUSFS Configuration:**
           EOF
           
-          # Display SUSFS config for each kernel version
           declare -A susfs_inputs=(
             ["android12-5.10"]="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
             ["android13-5.15"]="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
@@ -205,7 +200,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "> **💡 Note:** Empty values auto-map to matching \`gki-androidX-Y.Z\` branches." >> $GITHUB_STEP_SUMMARY
           
-          # Add OOS restriction note for android-kernel filters
           if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "> **⚠️ Android-Kernel Filter:** Only OOS15 and OOS16 devices will be built for \`${{ inputs.op_model }}\`" >> $GITHUB_STEP_SUMMARY
@@ -254,7 +248,6 @@ jobs:
           
           echo "Looking up SUSFS branch for: $key"
           
-          # Map kernel version to input value
           case "$key" in
             "android12-5.10")
               susfs_branch="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
@@ -274,7 +267,6 @@ jobs:
               ;;
           esac
           
-          # If empty, it will be auto-resolved to gki-* branch in the action
           if [ -z "$susfs_branch" ]; then
             echo "ℹ️  No custom SUSFS branch specified for $key"
             echo "   Will auto-select: gki-$key"
@@ -408,14 +400,12 @@ jobs:
         run: |
           echo "::group::Cleanup"
           
-          # Remove build artifacts but PRESERVE ccache
           sudo rm -rf "$GITHUB_WORKSPACE/out" || true
           sudo rm -rf "$GITHUB_WORKSPACE/build" || true
           sudo rm -rf "$GITHUB_WORKSPACE/kernel/out" || true
           sudo rm -rf "$GITHUB_WORKSPACE/.repo" || true
           sudo rm -rf /tmp/* || true
           
-          # Show ccache stats (don't clear it!)
           if command -v ccache >/dev/null 2>&1; then
             echo ""
             echo "📊 ccache statistics after build:"
@@ -471,7 +461,6 @@ jobs:
         run: |
           echo "=== Start building the release notes ==="
           
-          # Collect build metadata
           declare -A device_info
           
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/build-matrix/matrix.json)
@@ -486,13 +475,11 @@ jobs:
             fi
           done
           
-          # Get workflow inputs for reference
           KSUN_BRANCH="${{ inputs.ksun_branch }}"
           OPTIMIZE_LEVEL="${{ inputs.optimize_level }}"
           CLEAN_BUILD="${{ inputs.clean_build }}"
           ENABLE_ZRAM="${{ inputs.enable_zram }}"
           
-          # Determine SUSFS branches used
           SUSFS_A12="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
           SUSFS_A13="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
           SUSFS_A14="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
@@ -521,7 +508,6 @@ jobs:
           for full_key in $(printf '%s\n' "${!device_info[@]}" | sort); do
             IFS='|' read -r model os_ver kernel_ver <<< "${device_info[$full_key]}"
             
-            # Use jq to extract feature flags for this model from the JSON matrix
             feature_flags=$(jq -r --arg MODEL "$model" '
               .[] | 
               select(.model == $MODEL) |
@@ -536,7 +522,6 @@ jobs:
             else
               IFS=$'\t' read -r hmbird bbr bbg ttl ip_set <<< "$feature_flags"
               
-              # Build features string based on boolean values
               [[ "$hmbird" == "true" ]] && features+="🐦 HMBIRD "
               [[ "$bbr" == "true" ]] && features+="🚀 BBR "
               [[ "$bbg" == "true" ]] && features+="🛡️ BBG "
@@ -565,7 +550,6 @@ jobs:
           | **Compiler** | Clang (version varies by device) |
           EOF
     
-          # Add ZRAM details if enabled
           if [ "$ENABLE_ZRAM" = "true" ]; then
             cat << EOF >> release_notes.md
           
