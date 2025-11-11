@@ -25,6 +25,9 @@ inputs:
     description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
     required: false
     default: 'false'
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
 
 outputs:
   kernel_version:
