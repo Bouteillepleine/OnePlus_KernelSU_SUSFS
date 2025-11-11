@@ -1378,166 +1378,217 @@ runs:
         echo "::endgroup::"
 
     - name: Download and Package ZRAM Module
-      id: zram_module
       if: ${{ inputs.enable_zram == 'true' }}
-      continue-on-error: true
+      id: zram_find
       shell: bash
+      continue-on-error: true
       run: |
         set -euo pipefail
         echo "::group::Download and package ZRAM module"
         
-        ARTIFACTS_DIR="${{ env.CONFIG }}/artifacts"
-        mkdir -p "${ARTIFACTS_DIR}"
+        echo "Fetching latest ZRAM module release..."
         
-        KERNEL_VER="${{ env.KERNEL_VER }}"
-        ANDROID_VER="${{ env.ANDROID_VER }}"
+        # Retry logic for API call with GitHub token
+        retries=3
+        download_url=""
         
-        ZRAM_BASE_URL="https://github.com/Bouteillepleine/Action-Build/releases/download/zram-modules"
-        
-        case "$KERNEL_VER" in
-          5.10|5.15|6.1|6.6)
-            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-${KERNEL_VER}.tar.gz"
-            ;;
-          *)
-            echo "::warning::ZRAM module not available for kernel $KERNEL_VER"
-            echo "zram_available=false" >> "$GITHUB_OUTPUT"
-            echo "zram_module_count=0" >> "$GITHUB_OUTPUT"
-            echo "::endgroup::"
-            exit 0
-            ;;
-        esac
-        
-        echo "📦 Downloading ZRAM module from: $download_url"
-        echo "   Kernel: $KERNEL_VER"
-        echo "   Android: $ANDROID_VER"
-        
-        MAX_RETRIES=3
-        RETRY_COUNT=0
-        SUCCESS=0
-        
-        while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $SUCCESS -eq 0 ]; do
-          echo ""
-          echo "Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
+        for attempt in $(seq 1 $retries); do
+          echo "Attempt $attempt of $retries..."
           
-          if wget --timeout=30 --tries=3 --retry-connrefused \
-                  --progress=dot:giga \
-                  -O "${ARTIFACTS_DIR}/zram-module.tar.gz" \
-                  "$download_url" 2>&1 | tee /tmp/wget.log; then
-            
-            if [ -f "${ARTIFACTS_DIR}/zram-module.tar.gz" ]; then
-              FILE_SIZE=$(stat -c%s "${ARTIFACTS_DIR}/zram-module.tar.gz")
-              
-              if [ "$FILE_SIZE" -gt 1024 ]; then
-                echo "✅ Downloaded: $(numfmt --to=iec-i --suffix=B "$FILE_SIZE")"
-                
-                if tar -tzf "${ARTIFACTS_DIR}/zram-module.tar.gz" >/dev/null 2>&1; then
-                  cd "${ARTIFACTS_DIR}"
-                  
-                  if tar -xzf zram-module.tar.gz; then
-                    rm -f zram-module.tar.gz
-                    SUCCESS=1
-                    
-                    EXTRACTED_FILES=$(find . -maxdepth 1 -type f -name "*.ko" 2>/dev/null | wc -l)
-                    
-                    echo ""
-                    echo "✅ ZRAM module extracted successfully"
-                    echo "   Files extracted: $EXTRACTED_FILES kernel modules"
-                    
-                    if [ "$EXTRACTED_FILES" -gt 0 ]; then
-                      echo ""
-                      echo "📋 Extracted modules:"
-                      find . -maxdepth 1 -type f -name "*.ko" -exec basename {} \; | sort | sed 's/^/     - /'
-                      
-                      echo ""
-                      echo "📊 Module sizes:"
-                      find . -maxdepth 1 -type f -name "*.ko" -exec ls -lh {} \; | awk '{print "     - " $9 ": " $5}'
-                    else
-                      echo "::warning::No .ko files found in archive"
-                      SUCCESS=0
-                    fi
-                  else
-                    echo "::warning::Failed to extract ZRAM module (attempt $((RETRY_COUNT + 1)))"
-                    rm -f zram-module.tar.gz
-                  fi
-                else
-                  echo "::warning::Downloaded file is not a valid tar.gz archive"
-                  echo "File details:"
-                  file "${ARTIFACTS_DIR}/zram-module.tar.gz" || true
-                  rm -f "${ARTIFACTS_DIR}/zram-module.tar.gz"
-                fi
-              else
-                echo "::warning::Downloaded file is too small ($FILE_SIZE bytes)"
-                rm -f "${ARTIFACTS_DIR}/zram-module.tar.gz"
-              fi
-            else
-              echo "::warning::Downloaded file not found"
-            fi
-          else
-            echo "::warning::wget failed (attempt $((RETRY_COUNT + 1)))"
-            echo ""
-            echo "wget output:"
-            cat /tmp/wget.log 2>/dev/null | tail -n 20 || true
+          download_url=$(curl -fsSL --retry 3 --connect-timeout 30 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/Bouteillepleine/ZRAM-Module/releases/latest" 2>/dev/null | \
+            jq -r '.assets[] | select(.name | test("ZRAM-Module-.*\\.zip")) | .browser_download_url' | \
+            head -n 1 || true)
+          
+          if [ -n "$download_url" ]; then
+            echo "✅ Found download URL: $download_url"
+            break
           fi
           
-          RETRY_COUNT=$((RETRY_COUNT + 1))
-          
-          if [ $SUCCESS -eq 0 ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-            WAIT_TIME=$((5 * RETRY_COUNT))
-            echo ""
-            echo "⏳ Waiting ${WAIT_TIME}s before retry..."
-            sleep $WAIT_TIME
+          if [ $attempt -lt $retries ]; then
+            echo "⚠️ Failed to get download URL, retrying in 5 seconds..."
+            sleep 5
           fi
         done
         
-        if [ "$SUCCESS" -eq 1 ]; then
-          echo "zram_available=true" >> "$GITHUB_OUTPUT"
-          echo "zram_module_count=$EXTRACTED_FILES" >> "$GITHUB_OUTPUT"
-          
-          {
-            echo ""
-            echo "### 📦 ZRAM Module"
-            echo ""
-            echo "| Info | Value |"
-            echo "|------|-------|"
-            echo "| **Status** | ✅ Downloaded & Extracted |"
-            echo "| **Kernel** | ${KERNEL_VER} |"
-            echo "| **Android** | ${ANDROID_VER} |"
-            echo "| **Modules** | $EXTRACTED_FILES |"
-            echo ""
-            echo "<details>"
-            echo "<summary>📋 Module List</summary>"
-            echo ""
-            echo '```'
-            find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name "*.ko" -exec basename {} \; | sort
-            echo '```'
-            echo ""
-            echo "</details>"
-          } >> "$GITHUB_STEP_SUMMARY"
-          
-          echo ""
-          echo "✅ ZRAM module ready for packaging"
+        if [ -z "$download_url" ]; then
+          echo "::warning::Failed to fetch ZRAM module download URL after $retries attempts"
+          echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        # Download ZRAM module ZIP
+        echo "Downloading ZRAM module from: $download_url"
+        
+        ZRAM_ZIP_NAME=$(basename "$download_url")
+        
+        if ! curl -fsSL --retry 3 --connect-timeout 30 -o "$ZRAM_ZIP_NAME" "$download_url"; then
+          echo "::warning::Failed to download ZRAM module ZIP"
+          echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        # Verify download
+        if [ ! -f "$ZRAM_ZIP_NAME" ]; then
+          echo "::warning::ZRAM module ZIP not found after download"
+          echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        ZIP_SIZE=$(stat -c%s "$ZRAM_ZIP_NAME")
+        if [ "$ZIP_SIZE" -lt 1024 ]; then
+          echo "::warning::Downloaded ZRAM ZIP is too small (${ZIP_SIZE} bytes)"
+          rm -f "$ZRAM_ZIP_NAME"
+          echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        echo "✅ ZRAM module ZIP downloaded successfully"
+        echo "   File: $ZRAM_ZIP_NAME"
+        echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
+        
+        # Extract ZRAM module
+        echo "Extracting ZRAM module..."
+        
+        EXTRACT_DIR="ZRAM-Module-Extract"
+        mkdir -p "$EXTRACT_DIR"
+        
+        if ! unzip -q "$ZRAM_ZIP_NAME" -d "$EXTRACT_DIR"; then
+          echo "::warning::Failed to extract ZRAM module ZIP"
+          rm -rf "$EXTRACT_DIR"
+          echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        # Validate extracted content
+        REQUIRED_FILES=("META-INF/com/google/android/update-binary" "META-INF/com/google/android/updater-script")
+        for file in "${REQUIRED_FILES[@]}"; do
+          if [ ! -f "$EXTRACT_DIR/$file" ]; then
+            echo "::warning::Missing required file: $file"
+            rm -rf "$EXTRACT_DIR" "$ZRAM_ZIP_NAME"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
+            exit 0
+          fi
+        done
+        
+        echo "✅ ZRAM module extracted and validated"
+        
+        # Search for built zram.ko in kernel build output
+        echo "Searching for compiled zram.ko module..."
+        
+        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+        
+        search_paths=(
+          "$CONFIG_DIR/kernel_platform/common/out"
+          "$CONFIG_DIR/kernel_platform/out"
+          "$CONFIG_DIR/kernel_platform/common"
+          "$CONFIG_DIR/device/qcom"
+          "$CONFIG_DIR"
+        )
+        
+        zram_ko_path=""
+        
+        for search_path in "${search_paths[@]}"; do
+          if [ -d "$search_path" ]; then
+            echo "Searching in: $search_path"
+            zram_ko_path=$(find "$search_path" -type f -name "zram.ko" 2>/dev/null | head -n 1 || true)
+            
+            if [ -n "$zram_ko_path" ] && [ -f "$zram_ko_path" ]; then
+              echo "✅ Found zram.ko at: $zram_ko_path"
+              break
+            fi
+          fi
+        done
+        
+        if [ -z "$zram_ko_path" ] || [ ! -f "$zram_ko_path" ]; then
+          echo "::warning::zram.ko module not found in kernel build output"
+          echo "::warning::ZRAM module will be packaged without compiled kernel module"
+          echo "upload=partial" >> "$GITHUB_OUTPUT"
         else
-          echo "zram_available=false" >> "$GITHUB_OUTPUT"
-          echo "zram_module_count=0" >> "$GITHUB_OUTPUT"
+          # Copy compiled zram.ko to ZRAM module package
+          TARGET_DIR="$EXTRACT_DIR/zram"
+          mkdir -p "$TARGET_DIR"
           
-          echo "::warning::Failed to download ZRAM module after $MAX_RETRIES attempts"
+          echo "Copying compiled zram.ko to ZRAM module package..."
           
-          {
-            echo ""
-            echo "### ⚠️ ZRAM Module"
-            echo ""
-            echo "| Info | Value |"
-            echo "|------|-------|"
-            echo "| **Status** | ❌ Download Failed |"
-            echo "| **Kernel** | ${KERNEL_VER} |"
-            echo "| **Android** | ${ANDROID_VER} |"
-            echo "| **Attempts** | $MAX_RETRIES |"
-            echo ""
-            echo "> Build will continue without ZRAM modules"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if cp "$zram_ko_path" "$TARGET_DIR/zram.ko"; then
+            echo "✅ Compiled zram.ko copied successfully"
+            
+            KO_SIZE=$(stat -c%s "$TARGET_DIR/zram.ko")
+            KO_SHA256=$(sha256sum "$TARGET_DIR/zram.ko" | awk '{print $1}')
+            
+            echo "   Size: $(numfmt --to=iec-i --suffix=B "$KO_SIZE")"
+            echo "   SHA256: $KO_SHA256"
+            
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Failed to copy zram.ko to package"
+            echo "upload=partial" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+        
+        # Repackage ZRAM module with compiled kernel module
+        echo "Creating final ZRAM module package..."
+        
+        FINAL_ZRAM_ZIP="ZRAM-Module-Packaged.zip"
+        
+        cd "$EXTRACT_DIR"
+        
+        if zip -r9 "../$FINAL_ZRAM_ZIP" ./* -x "*.git*" 2>&1 | tee /tmp/zram_zip.log; then
+          cd ..
           
-          echo ""
-          echo "⚠️ Build will continue without ZRAM modules"
+          if [ -f "$FINAL_ZRAM_ZIP" ]; then
+            FINAL_SIZE=$(stat -c%s "$FINAL_ZRAM_ZIP")
+            FINAL_SHA256=$(sha256sum "$FINAL_ZRAM_ZIP" | awk '{print $1}')
+            
+            echo "✅ ZRAM module package created successfully"
+            echo "   File: $FINAL_ZRAM_ZIP"
+            echo "   Size: $(numfmt --to=iec-i --suffix=B "$FINAL_SIZE")"
+            echo "   SHA256: $FINAL_SHA256"
+            
+            # Copy to AnyKernel3 directory
+            if [ -d "$GITHUB_WORKSPACE/AnyKernel3" ]; then
+              echo "Copying ZRAM module to AnyKernel3 directory..."
+              
+              if cp "$FINAL_ZRAM_ZIP" "$GITHUB_WORKSPACE/AnyKernel3/"; then
+                echo "✅ ZRAM module copied to AnyKernel3"
+              else
+                echo "::warning::Failed to copy ZRAM module to AnyKernel3"
+              fi
+            fi
+            
+            # Also copy to artifacts directory
+            ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+            if [ -d "$ARTIFACTS_DIR" ]; then
+              echo "Copying ZRAM module to artifacts directory..."
+              
+              if cp "$FINAL_ZRAM_ZIP" "$ARTIFACTS_DIR/"; then
+                echo "✅ ZRAM module copied to artifacts"
+              fi
+            fi
+          else
+            echo "::warning::Final ZRAM ZIP not created"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          cd ..
+          echo "::warning::Failed to create final ZRAM module package"
+          cat /tmp/zram_zip.log || true
+          echo "upload=false" >> "$GITHUB_OUTPUT"
+        fi
+        
+        # Cleanup with error handling
+        echo "Cleaning up temporary files..."
+        if ! rm -rf "$EXTRACT_DIR" "$ZRAM_ZIP_NAME" 2>/dev/null; then
+          echo "::warning::Failed to cleanup some temporary files"
         fi
         
         echo "::endgroup::"
