@@ -1,5 +1,4 @@
 name: 'Build OnePlus Kernel with KernelSU Next'
-description: 'Builds OnePlus kernel with KernelSU Next and SUSFS support'
 
 inputs:
   op_config_json:
@@ -1186,7 +1185,7 @@ runs:
         set -euo pipefail
         echo "::group::
 
-        - name: 📊 ccache Post-Build Statistics
+    - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
       if: ${{ always() && inputs.clean != 'true' }}
       shell: bash
