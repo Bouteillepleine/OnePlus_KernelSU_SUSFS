@@ -1176,15 +1176,7 @@ runs:
         fi
         echo "============================================"
         echo "::endgroup::"
-
-    - name: 📊 ccache Post-Build Statistics
-      id: ccache_stats
-      if: ${{ always() && inputs.clean != 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::
-
+   
     - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
       if: ${{ always() && inputs.clean != 'true' }}
