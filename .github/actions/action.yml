@@ -1,35 +1,37 @@
 name: 'Build OnePlus Kernel with KernelSU Next'
 
-inputs:
-  op_config_json:
-    description: 'JSON string containing full device config'
-    required: true
-    type: string
-  ksun_branch:
-    description: 'KernelSU Next branch to use'
-    required: true
-    type: string
-    default: stable
-  susfs_commit_hash_or_branch:
-    description: 'SUSFS branch or commit hash (empty = auto-detect by kernel version)'
-    required: false
-    type: string
-    default: "" 
-  optimize_level:
-    description: 'Compiler optimization level (O2 or O3)'
-    required: false
-    type: string
-    default: O2
-  enable_zram:
-    description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, 842, LZ4K_OPLUS)'
-    required: false
-    type: boolean
-    default: false
-  clean:
-    description: 'Force clean build without ccache acceleration'
-    required: false
-    type: string
-    default: 'false'
+on:
+  workflow_dispatch:
+    inputs:
+      op_config_json:
+        description: 'JSON string containing full device config'
+        required: true
+        type: string
+      ksun_branch:
+        description: 'KernelSU Next branch to use'
+        required: true
+        type: string
+        default: stable
+      susfs_commit_hash_or_branch:
+        description: 'SUSFS branch or commit hash (empty = auto-detect by kernel version)'
+        required: false
+        type: string
+        default: "" 
+      optimize_level:
+        description: 'Compiler optimization level (O2 or O3)'
+        required: false
+        type: string
+        default: O2
+      clean:
+        description: 'Force clean build without ccache acceleration'
+        required: false
+        type: string
+        default: 'false'
+      enable_zram:
+        description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
+        required: false
+        type: string
+        default: 'false'
 
 outputs:
   kernel_version:
@@ -59,9 +61,6 @@ outputs:
   zip_name:
     description: 'Name of the generated flashable ZIP'
     value: ${{ steps.create_zip.outputs.zip_name }}
-  zram_enabled:
-    description: 'Whether ZRAM modules were included'
-    value: ${{ steps.zram_module.outputs.zram_available }}
 
 runs:
   using: 'composite'
@@ -250,13 +249,12 @@ runs:
         success=false
         for i in 1 2 3; do
           if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-             --force-sync --force-remove-dirty \
-             -j32 --fail-fast; then  # ← Increased from $(nproc --all) to 32
+             -j"$(nproc --all)" --fail-fast; then
             success=true
             break
-          fi      
+          fi
           echo "⚠️ repo sync attempt $i failed; retrying..."
-          sleep 10
+          sleep 30
         done
         $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
         echo "✅ Kernel source synced"
@@ -400,16 +398,19 @@ runs:
         echo "  Max size: 1G"
         echo "  Android: ${ANDROID_VER:-unknown}"
         echo "  Kernel: ${KERNEL_VER:-unknown}"
+        echo "  OOS Version: ${OP_OS_VERSION:-unknown}"
+        echo "  Clang: ${CLANG_VERSION_SHORT:-unknown}"
+        echo "  Device: ${OP_MODEL:-unknown}"
         echo "::endgroup::"
     
     - name: Cache ccache
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-ksun-v4-${{ env.OP_MODEL }}-${{ env.KERNEL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-ksun-v4-${{ env.OP_MODEL }}-${{ env.KERNEL_VER }}-
-          ccache-ksun-v4-${{ env.OP_MODEL }}-
+          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
    
     - name: Configure ccache
       shell: bash
@@ -422,33 +423,52 @@ runs:
         
         ccache -M "$CCACHE_MAXSIZE"
         
-        # Speed-optimized settings
-        export CCACHE_COMPILERCHECK="none"
+        export CCACHE_COMPILERCHECK="content"
         export CCACHE_BASEDIR="${GITHUB_WORKSPACE}"
         export CCACHE_NOHASHDIR="true"
-        export CCACHE_NOSTATS=1
         
         ccache -o compression=true
-        ccache -o compression_level=1
+        ccache -o compression_level=3
         ccache -o direct_mode=true
         ccache -o hash_dir=false
         ccache -o file_clone=true
         ccache -o inode_cache=true
-        ccache -o depend_mode=true
-        ccache -o sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale,clang_index_store,modules
+        ccache -o umask=002
+        
+        if ccache --help 2>&1 | grep -q 'depend_mode'; then
+          ccache -o depend_mode=true
+        fi
+        
+        ccache -o sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale
+        
+        export CCACHE_IGNOREOPTIONS="--sysroot*"
         
         {
-          echo "CCACHE_COMPILERCHECK=none"
+          echo "CCACHE_COMPILERCHECK=content"
           echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}"
           echo "CCACHE_NOHASHDIR=true"
-          echo "CCACHE_NOSTATS=1"
+          echo "CCACHE_IGNOREOPTIONS=$CCACHE_IGNOREOPTIONS"
         } >> "$GITHUB_ENV"
+        
+        echo "✅ ccache configured for production"
+        echo ""
+        echo "Configuration applied:"
+        echo "  Max size: 12G (persisted)"
+        echo "  Base dir: ${GITHUB_WORKSPACE}"
+        echo "  Compression: zstd level 3"
+        echo "  Direct mode: enabled"
+        echo "  File cloning: enabled"
+        echo "  Inode cache: enabled"
+        echo ""
         
         if [ -d "$CCACHE_DIR" ] && find "$CCACHE_DIR" -type f -print -quit 2>/dev/null | grep -q .; then
           echo "✅ Restored cache found"
-          ccache -s | head -n 15
+          echo ""
+          echo "Pre-build cache statistics:"
+          ccache -s | head -n 20
         else
-          echo "⚠️ No existing cache - first build will be slower"
+          echo "⚠️ No existing cache - building from scratch"
+          echo "Cache will be populated for future builds"
         fi
         
         echo "::endgroup::"
@@ -475,43 +495,55 @@ runs:
         echo "Cloning AnyKernel3 and other dependencies..."
         
         ANYKERNEL_BRANCH="gki-2.0"
-        SUSFS_BRANCH="${{ inputs.susfs_commit_hash_or_branch }}"
         
-        # Default to master if empty or "next"
-        if [ -z "$SUSFS_BRANCH" ] || [ "$SUSFS_BRANCH" = "next" ]; then
-          SUSFS_BRANCH="master"
+        # Determine SUSFS branch/commit to use
+        SUSFS_INPUT="${{ inputs.susfs_commit_hash_or_branch }}"
+        
+        # Default SUSFS branches for each kernel version
+        declare -A DEFAULT_SUSFS=(
+          ["android12-5.10"]="gki-android12-5.10"          
+          ["android13-5.15"]="gki-android13-5.15"          
+          ["android14-6.1"]="gki-android14-6.1"
+          ["android15-6.6"]="gki-android15-6.6"
+        )
+        
+        # Determine which SUSFS branch to use
+        KERNEL_KEY="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
+        if [ -z "$SUSFS_INPUT" ] || [ "$SUSFS_INPUT" = "next" ]; then
+          # Empty or "next": use kernel-specific default
+          SUSFS_BRANCH="${DEFAULT_SUSFS[$KERNEL_KEY]:-gki-android14-6.1}"
+          echo "ℹ️  Using default SUSFS branch for $KERNEL_KEY: $SUSFS_BRANCH"
+        else
+          # User provided custom branch/commit
+          SUSFS_BRANCH="$SUSFS_INPUT"
+          echo "🔧 Using custom SUSFS ref: $SUSFS_BRANCH"
         fi
         
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
-        echo "Using SUSFS ref: $SUSFS_BRANCH"
+        echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
         
-        # Parallel cloning
-        (
-          git clone --depth=1 --single-branch --no-tags \
-            https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
-          
-          git clone --depth=1 --single-branch --no-tags \
-            https://github.com/TheWildJames/kernel_patches.git &
-          
-          git clone --depth=1 --single-branch \
-            https://gitlab.com/simonpunk/susfs4ksu.git &
-          
-          if [ "${{ inputs.enable_zram }}" = "true" ]; then
-            # FIXED: Use correct repository URL
-            git clone --depth=1 --single-branch --no-tags \
-              https://github.com/SukiSU-Ultra/SukiSU_patch.git &
-          fi
-          
-          wait
-        )
+        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git
         
-        # Checkout SUSFS
         cd susfs4ksu
-        git checkout "$SUSFS_BRANCH" || {
-          echo "::error::Failed to checkout $SUSFS_BRANCH"
-          git branch -a
+        
+        # Try to checkout the specified branch/commit
+        if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1; then
+          # It's a remote branch
+          echo "✅ Checking out remote branch: $SUSFS_BRANCH"
+          git checkout "$SUSFS_BRANCH"
+        elif git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
+          # It's a local ref or commit hash
+          echo "✅ Checking out ref/commit: $SUSFS_BRANCH"
+          git checkout "$SUSFS_BRANCH"
+        else
+          echo "::error::SUSFS branch or commit '$SUSFS_BRANCH' not found in repository"
+          echo ""
+          echo "Available remote branches:"
+          git branch -r | head -n 20
           exit 1
-        }
+        fi
         
         SUSFS_COMMIT_SHA=$(git rev-parse HEAD)
         SUSFS_BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
@@ -519,44 +551,23 @@ runs:
         echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> $GITHUB_ENV
         echo "SUSFS_BRANCH_NAME=$SUSFS_BRANCH_NAME" >> $GITHUB_ENV
         
-        echo "✅ SUSFS: $SUSFS_BRANCH_NAME @ ${SUSFS_COMMIT_SHA:0:8}"
+        echo ""
+        echo "✅ SUSFS checked out successfully"
+        echo "   Branch/Ref: $SUSFS_BRANCH_NAME"
+        echo "   Commit: $SUSFS_COMMIT_SHA"
+        
         cd ..
         
-        # Verify ZRAM repository structure
+        # Clone ZRAM patches if enabled
         if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          echo ""
-          echo "Verifying SukiSU_patch repository..."
-          
-          if [ -d "SukiSU_patch" ]; then
-            echo "Repository structure:"
-            find SukiSU_patch/other/zram -type f | head -n 20
-            
-            # Validate expected paths
-            if [ ! -d "SukiSU_patch/other/zram/lz4k" ]; then
-              echo "::error::Expected ZRAM path not found: SukiSU_patch/other/zram/lz4k"
-              exit 1
-            fi
-            
-            if [ ! -d "SukiSU_patch/other/zram/lz4k/include/linux" ]; then
-              echo "::error::lz4k headers directory not found"
-              exit 1
-            fi
-            
-            if [ ! -d "SukiSU_patch/other/zram/lz4k/lib" ]; then
-              echo "::error::lz4k library directory not found"
-              exit 1
-            fi
-            
-            echo "✅ ZRAM repository structure validated"
-          else
-            echo "::error::SukiSU_patch directory not found"
-            exit 1
-          fi
+          echo "Cloning ZRAM patches repository..."
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git
+          echo "✅ ZRAM patches cloned"
         fi
         
-        echo "✅ Dependencies cloned and verified"
+        echo "✅ Dependencies cloned"
         echo "::endgroup::"
-            
+
     - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
@@ -601,115 +612,16 @@ runs:
         echo "✅ KernelSU Next added (commit: ${KSUN_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
-    - name: Apply SUSFS and ZRAM Patches
+    - name: Apply SUSFS Patches
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Apply SUSFS and ZRAM patches"
+        echo "::group::Apply SUSFS patches"
         cd "$CONFIG/kernel_platform"
-        
-        # ===== SUSFS Patches =====
         echo "Applying SUSFS patches..."
         cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch ./common/
         cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
         cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-        
-        # ===== ZRAM Source Files & Patches =====
-        if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          echo ""
-          echo "Applying ZRAM patches..."
-          
-          ZRAM_BASE="../../SukiSU_patch/other/zram"
-          KERNEL_VER="${{ env.KERNEL_VER }}"
-          
-          # Validate ZRAM source exists
-          if [ ! -d "$ZRAM_BASE" ]; then
-            echo "::error::ZRAM source not found at $ZRAM_BASE"
-            exit 1
-          fi
-          
-          # 1. Copy lz4k source files
-          echo "  Copying lz4k source files..."
-          
-          if [ -d "$ZRAM_BASE/lz4k/include/linux" ]; then
-            echo "    Copying lz4k headers..."
-            for header in "$ZRAM_BASE/lz4k/include/linux/"*.h; do
-              if [ -f "$header" ]; then
-                cp -v "$header" ./common/include/linux/
-              fi
-            done
-          else
-            echo "::error::lz4k headers not found at $ZRAM_BASE/lz4k/include/linux"
-            exit 1
-          fi
-          
-          if [ -d "$ZRAM_BASE/lz4k/lib" ]; then
-            echo "    Copying lz4k library files..."
-            for libfile in "$ZRAM_BASE/lz4k/lib/"*.c; do
-              if [ -f "$libfile" ]; then
-                cp -v "$libfile" ./common/lib/
-              fi
-            done
-          else
-            echo "::error::lz4k library files not found at $ZRAM_BASE/lz4k/lib"
-            exit 1
-          fi
-          
-          # 2. Apply kernel patches
-          echo "  Applying ZRAM kernel patches..."
-          
-          cd ./common
-          
-          PATCH_DIR="$GITHUB_WORKSPACE/SukiSU_patch/other/zram/zram_patch/$KERNEL_VER"
-          
-          if [ ! -d "$PATCH_DIR" ]; then
-            echo "::warning::ZRAM patches not found for kernel $KERNEL_VER at $PATCH_DIR"
-            echo "Checking for patches in base directory..."
-            
-            # Try base directory patches
-            ZRAM_PATCHES=("$ZRAM_BASE"/*.patch)
-            if [ -f "${ZRAM_PATCHES[0]}" ]; then
-              for patch in "${ZRAM_PATCHES[@]}"; do
-                if [ -f "$patch" ]; then
-                  echo "    Applying: $(basename "$patch")"
-                  if patch -p1 -F 3 < "$patch"; then
-                    echo "      ✅ Applied successfully"
-                  else
-                    echo "      ::warning::Failed to apply $(basename "$patch")"
-                  fi
-                fi
-              done
-            else
-              echo "::warning::No ZRAM patches found in base directory"
-            fi
-          else
-            # Apply version-specific patches
-            echo "    Found version-specific patches for kernel $KERNEL_VER"
-            
-            if [ -f "$PATCH_DIR/lz4kd.patch" ]; then
-              echo "    Applying lz4kd.patch..."
-              if patch -p1 -F 3 < "$PATCH_DIR/lz4kd.patch"; then
-                echo "      ✅ lz4kd patch applied"
-              else
-                echo "      ::warning::lz4kd patch applied with warnings"
-              fi
-            fi
-            
-            if [ -f "$PATCH_DIR/lz4k_oplus.patch" ]; then
-              echo "    Applying lz4k_oplus.patch..."
-              if patch -p1 -F 3 < "$PATCH_DIR/lz4k_oplus.patch"; then
-                echo "      ✅ lz4k_oplus patch applied"
-              else
-                echo "      ::warning::lz4k_oplus patch applied with warnings"
-              fi
-            fi
-          fi
-          
-          cd ..
-          echo "✅ ZRAM patches applied"
-        fi
-        
-        # ===== KernelSU Next Configuration =====
         cd ./KernelSU-Next
         susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
@@ -721,8 +633,6 @@ runs:
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
         echo "KernelSU Next Version: $KSU_VERSION"
         echo "SusFS Version: $susfs_version"
-        
-        # ===== SUSFS Version-Specific Patches =====
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
             cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
@@ -753,10 +663,7 @@ runs:
             exit 1
             ;;
         esac
-        
         patch -p1 --forward < ksun_susfs_latest.patch || true
-        
-        # ===== Android 15 Specific Fixes =====
         cd ../common
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
@@ -764,7 +671,7 @@ runs:
           fi
         fi
       
-        # ===== Fake Kernel Patches =====
+        # Fake kernel patch to fix failures
         fake_patched=0
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
@@ -785,6 +692,7 @@ runs:
             fake_patched=1
           fi
         fi
+
         if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
           if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
             echo "vma_pages Line not found. Fake Patching!"
@@ -794,7 +702,7 @@ runs:
         
         patch -p1 < 50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch
       
-        # ===== Revert Fake Patches =====
+        # Revert Fake kernel patch
         if [ "$fake_patched" = 1 ]; then
           if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
             if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
@@ -822,7 +730,6 @@ runs:
           fi
         fi
       
-        # ===== Additional Patches =====
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         MIN_VERSION="5.16"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
@@ -831,7 +738,6 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
-        
         if [ "$OP_HMBIRD" = true ]; then
           echo "Patching hmbird!"
           dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
@@ -839,8 +745,7 @@ runs:
         else
           echo "Hmbird not enabled, skipping fengchi patch"
         fi        
-        
-        echo "✅ All patches applied"
+        echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
     - name: Apply KSUN Hooks
@@ -852,7 +757,55 @@ runs:
         patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
         echo "✅ KSUN hooks applied"
         echo "::endgroup::"
-   
+
+    - name: Apply ZRAM Patches
+      if: ${{ inputs.enable_zram == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply ZRAM patches"
+        cd "$CONFIG/kernel_platform"
+        
+        echo "Copying ZRAM source files..."
+        cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k/include/linux/"* ./common/include/linux/
+        cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k/lib/"* ./common/lib/
+        cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k/crypto/"* ./common/crypto/
+        cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k_oplus" ./common/lib/
+        
+        cd ./common
+        
+        KERNEL_VER="${{ env.KERNEL_VER }}"
+        PATCH_DIR="$GITHUB_WORKSPACE/SukiSU_patch/other/zram/zram_patch/$KERNEL_VER"
+        
+        if [ ! -d "$PATCH_DIR" ]; then
+          echo "::warning::ZRAM patches not found for kernel $KERNEL_VER"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        if [ -f "$PATCH_DIR/lz4kd.patch" ]; then
+          cp "$PATCH_DIR/lz4kd.patch" ./
+          echo "Applying lz4kd patch..."
+          if patch -p1 -F 3 < lz4kd.patch; then
+            echo "✅ lz4kd patch applied"
+          else
+            echo "::warning::lz4kd patch applied with warnings"
+          fi
+        fi
+        
+        if [ -f "$PATCH_DIR/lz4k_oplus.patch" ]; then
+          cp "$PATCH_DIR/lz4k_oplus.patch" ./
+          echo "Applying lz4k_oplus patch..."
+          if patch -p1 -F 3 < lz4k_oplus.patch; then
+            echo "✅ lz4k_oplus patch applied"
+          else
+            echo "::warning::lz4k_oplus patch applied with warnings"
+          fi
+        fi
+        
+        echo "✅ ZRAM patches applied"
+        echo "::endgroup::"
+
     - name: Add KernelSU-Next and SUSFS Configuration Settings
       shell: bash
       run: |
@@ -880,6 +833,21 @@ runs:
         CONFIG_KSU_SUSFS_SUS_SU=n
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
+        EOF
+
+    - name: Add ZRAM Configuration
+      if: ${{ inputs.enable_zram == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
+        CONFIG_CRYPTO_LZ4HC=y
+        CONFIG_CRYPTO_LZ4K=y
+        CONFIG_CRYPTO_LZ4KD=y
+        CONFIG_CRYPTO_842=y
+        CONFIG_CRYPTO_LZ4K_OPLUS=y
+        CONFIG_ZRAM_WRITEBACK=y
         EOF
 
     - name: Add Oneplus BBR
@@ -934,24 +902,6 @@ runs:
         CONFIG_IP_SET_LIST_SET=y
         EOF
 
-    - name: Add ZRAM Configuration
-      if: ${{ inputs.enable_zram == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Add ZRAM configuration"
-        cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<EOF
-        CONFIG_CRYPTO_LZ4HC=y
-        CONFIG_CRYPTO_LZ4K=y
-        CONFIG_CRYPTO_LZ4KD=y
-        CONFIG_CRYPTO_842=y
-        CONFIG_CRYPTO_LZ4K_OPLUS=y
-        CONFIG_ZRAM_WRITEBACK=y
-        EOF
-        echo "✅ ZRAM configuration added"
-        echo "::endgroup::"
-
     - name: Add Build based configs
       shell: bash
       run: |
@@ -963,13 +913,7 @@ runs:
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
         CONFIG_OPTIMIZE_INLINING=y
-        # Speed optimizations
-        CONFIG_DEBUG_INFO=n
-        CONFIG_DEBUG_INFO_DWARF4=n
-        CONFIG_DEBUG_INFO_BTF=n
-        CONFIG_GDB_SCRIPTS=n
-        CONFIG_FRAME_POINTER=n
-        EOF       
+        EOF
 
     - name: Save Build Metadata
       id: save_metadata
@@ -991,9 +935,6 @@ runs:
         cd "$KERNEL_PATH/common"
         mkdir -p out
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-Wild"
-        if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          CUSTOM_LOCALVERSION="${CUSTOM_LOCALVERSION}-ZRAM"
-        fi
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
     - name: Build Kernel
@@ -1109,32 +1050,26 @@ runs:
         KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
         
-        # Calculate optimal parallel job count (2x CPU cores for maximum throughput)
-        NPROC=$(nproc --all)
-        BUILD_JOBS=$((NPROC * 2))
-        
         echo "============================================"
         echo "🔧 Build Configuration"
         echo "============================================"
         echo "Device: ${OP_MODEL}"
         echo "Kernel: ${KERNEL_FULL_VER}"
-        echo "CPU Cores: $NPROC"
-        echo "Parallel Jobs: $BUILD_JOBS (2x cores)"
+        echo "Threads: $(nproc --all)"
         echo "Optimization: ${{ inputs.optimize_level }}"
-        echo "ZRAM: ${{ inputs.enable_zram }}"
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
         echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
         echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
         echo "Workspace: $WORKSPACE"
+        echo "ZRAM: ${{ inputs.enable_zram }}"
         
         if [ "${{ inputs.clean }}" != "true" ]; then
           echo "ccache: ENABLED"
           echo "  Dir: $CCACHE_DIR"
           echo "  Base: $CCACHE_BASEDIR"
           echo "  Max size: $CCACHE_MAXSIZE"
-          echo "  Compression: level 1 (fast)"
-          echo "  Features: direct_mode, file_clone, inode_cache, depend_mode"
-          echo "  Sloppiness: maximum (for speed)"
+          echo "  Compression: zstd level 3"
+          echo "  Features: readonly_direct, file_clone, inode_cache, depend"
         else
           echo "ccache: DISABLED (clean build)"
         fi
@@ -1151,14 +1086,7 @@ runs:
         BUILD_START=$(date +%s)
         set -o pipefail
         
-        echo ""
-        echo "🚀 Starting parallel build with $BUILD_JOBS jobs..."
-        echo ""
-        
-        # Use optimized parallel job count
-        make -j"$BUILD_JOBS" O="$OUT" \
-          KCFLAGS="$KCFLAGS" \
-          KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
+        make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
         
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
@@ -1166,7 +1094,6 @@ runs:
         echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
         echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
         echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
-        echo "BUILD_JOBS=$BUILD_JOBS" >> "$GITHUB_ENV"
         
         IMG="$OUT/arch/arm64/boot/Image"
         if [ ! -f "$IMG" ]; then
@@ -1183,7 +1110,6 @@ runs:
         echo "✅ Build Completed Successfully"
         echo "============================================"
         echo "Duration: $((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
-        echo "Parallel Jobs: $BUILD_JOBS"
         echo "Image: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
         
         if [ "${{ inputs.clean }}" != "true" ]; then
@@ -1191,9 +1117,6 @@ runs:
           echo "📊 ccache Post-Build Statistics"
           echo "============================================"
           ccache -s
-          echo ""
-          echo "Cache efficiency:"
-          ccache -s | grep -E "(hit rate|direct|preprocessed)" || true
         fi
         echo "============================================"
         echo "::endgroup::"
@@ -1299,74 +1222,6 @@ runs:
         echo "   - SHA256: $IMG_SHA256"
         echo "   - Build time: ${BUILD_TIME}s"
 
-    - name: Download and Package ZRAM Module
-      id: zram_module
-      if: ${{ inputs.enable_zram == 'true' }}
-      continue-on-error: true
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Download ZRAM module"
-        
-        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        mkdir -p "${ARTIFACTS_DIR}"
-        
-        KERNEL_VER="${{ env.KERNEL_VER }}"
-        ANDROID_VER="${{ env.ANDROID_VER }}"
-        
-        ZRAM_BASE_URL="https://github.com/Bouteillepleine/Action-Build/releases/download/zram-modules"
-        
-        case "$KERNEL_VER" in
-          5.10)
-            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-5.10.tar.gz"
-            ;;
-          5.15)
-            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-5.15.tar.gz"
-            ;;
-          6.1)
-            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-6.1.tar.gz"
-            ;;
-          6.6)
-            download_url="$ZRAM_BASE_URL/zram-${ANDROID_VER}-6.6.tar.gz"
-            ;;
-          *)
-            echo "::warning::ZRAM module not available for kernel $KERNEL_VER"
-            echo "zram_available=false" >> "$GITHUB_OUTPUT"
-            echo "::endgroup::"
-            exit 0
-            ;;
-        esac
-        
-        echo "Downloading ZRAM module from: $download_url"
-        
-        success=0
-        if [ -n "$download_url" ]; then
-          if wget -N "$download_url" -O "${ARTIFACTS_DIR}/zram-module.tar.gz" 2>&1 | tee /tmp/wget.log; then
-            if [ -f "${ARTIFACTS_DIR}/zram-module.tar.gz" ]; then
-              cd "${ARTIFACTS_DIR}"
-              if tar -xzf zram-module.tar.gz; then
-                rm -f zram-module.tar.gz
-                success=1
-                echo "✅ ZRAM module downloaded and extracted"
-              else
-                echo "::warning::Failed to extract ZRAM module"
-              fi
-            fi
-          else
-            echo "::warning::wget failed for $download_url"
-            cat /tmp/wget.log || true
-          fi
-        fi
-        
-        if [ "$success" = "1" ]; then
-          echo "zram_available=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "zram_available=false" >> "$GITHUB_OUTPUT"
-        fi
-        
-        echo "::endgroup::"
-
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -1385,25 +1240,12 @@ runs:
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
         
-        # Include ZRAM modules if available
-        if [ "${{ inputs.enable_zram }}" = "true" ] && [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
-          echo "Including ZRAM modules in flashable ZIP..."
-          ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-          if [ -d "${ARTIFACTS_DIR}/modules" ]; then
-            mkdir -p ./modules
-            cp -r "${ARTIFACTS_DIR}/modules/"* ./modules/ || true
-            echo "✅ ZRAM modules included in ZIP"
-          else
-            echo "⚠️ ZRAM modules directory not found at ${ARTIFACTS_DIR}/modules"
-          fi
-        fi
-        
-        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Next_${KSUVER}_${SUSVER}"
+        ZRAM_SUFFIX=""
         if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          ZIP_NAME="${ZIP_NAME}_ZRAM"
+          ZRAM_SUFFIX="_ZRAM"
         fi
-        ZIP_NAME="${ZIP_NAME}.zip"
         
+        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Next_${KSUVER}_${SUSVER}${ZRAM_SUFFIX}.zip"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
         
@@ -1419,7 +1261,7 @@ runs:
         
         mv "$ZIP_NAME" "$ARTIFACTS_DIR/"
         
-        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" ! -name "*.ko" -delete
+        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" -delete
         
         ZIP_SIZE=$(stat -c%s "$ARTIFACTS_DIR/$ZIP_NAME")
         ZIP_SHA256=$(sha256sum "$ARTIFACTS_DIR/$ZIP_NAME" | awk '{print $1}')
@@ -1432,13 +1274,6 @@ runs:
         echo "   Name: $ZIP_NAME"
         echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
         echo "   SHA256: $ZIP_SHA256"
-        if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
-            echo "   ZRAM Modules: ✅ Included"
-          else
-            echo "   ZRAM Modules: ⚠️ Not available"
-          fi
-        fi
         echo "::endgroup::"
 
     - name: Final Build Summary
@@ -1467,9 +1302,6 @@ runs:
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Clean Build: ${{ inputs.clean }}"
           echo "ZRAM Enabled: ${{ inputs.enable_zram }}"
-          if [ "${{ inputs.enable_zram }}" = "true" ]; then
-            echo "ZRAM Modules: ${{ steps.zram_module.outputs.zram_available }}"
-          fi
           echo ""
           echo "=== OnePlus Features ==="
           echo "BBR: ${{ env.OP_BBR }}"
@@ -1530,14 +1362,6 @@ runs:
           echo "| **IP_SET** | ${{ env.OP_IP_SET }} |"
           echo "| **ZRAM** | ${{ inputs.enable_zram }} |"
           
-          if [ "${{ inputs.enable_zram }}" = "true" ]; then
-            if [ "${{ steps.zram_module.outputs.zram_available }}" = "true" ]; then
-              echo "| **ZRAM Modules** | ✅ Included |"
-            else
-              echo "| **ZRAM Modules** | ⚠️ Not available |"
-            fi
-          fi
-          
           echo ""
           echo "### 📊 Build Metrics"
           echo ""
@@ -1555,20 +1379,6 @@ runs:
           echo "| **Image SHA256** | \`${{ steps.collect_stats.outputs.image_sha256 }}\` |"
           echo "| **Warnings** | ${{ steps.collect_stats.outputs.warnings_count }} |"
           echo "| **Compiler** | \`${CLANG_VERSION:-unknown}\` |"
-          
-          if [ "${{ inputs.enable_zram }}" = "true" ]; then
-            echo ""
-            echo "### 💾 ZRAM Configuration"
-            echo ""
-            echo "ZRAM support has been enabled with the following compressors:"
-            echo "- LZ4HC"
-            echo "- LZ4K"
-            echo "- LZ4KD"
-            echo "- 842"
-            echo "- LZ4K_OPLUS"
-            echo ""
-            echo "ZRAM writeback support is also enabled."
-          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Artifacts
