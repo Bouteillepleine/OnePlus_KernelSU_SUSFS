@@ -528,7 +528,10 @@ runs:
         CONFIG_LOCK_DEBUGGING=n
         CONFIG_DEBUG_MUTEXES=n
         CONFIG_DEBUG_SPINLOCK=n
-        CONFIG_DEBUG_ATOMIC_SLEEP=n
+        CONFIG_DEBUG_ATOMIC_SLEEP=n        
+        CONFIG_DEBUG_INFO_BTF=n
+        CONFIG_GDB_SCRIPTS=n
+        CONFIG_FRAME_POINTER=n
         EOF
 
     - name: Save Build Metadata
