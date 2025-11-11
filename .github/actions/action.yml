@@ -1,4 +1,5 @@
 name: 'Build OnePlus Kernel with KernelSU Next'
+description: 'Builds OnePlus kernel with KernelSU Next and SUSFS support'
 
 inputs:
   op_config_json:
@@ -24,9 +25,6 @@ inputs:
     description: 'Enable ZRAM with advanced compressors (LZ4K, LZ4KD, etc.)'
     required: false
     default: 'false'
-  github_token:
-    description: 'GitHub token for API access'
-    required: true
 
 outputs:
   kernel_version:
@@ -59,6 +57,9 @@ outputs:
   zram_available:
     description: 'Whether ZRAM modules were successfully downloaded'
     value: ${{ steps.zram_find.outputs.upload }}
+  zram_zip_name:
+    description: 'Name of the ZRAM module ZIP file'
+    value: ${{ steps.zram_find.outputs.zram_zip_name }}
 
 runs:
   using: 'composite'
@@ -77,6 +78,7 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Validate inputs"
+        
         model="$OP_MODEL"
         soc="$OP_SOC"
         branch="$OP_BRANCH"
@@ -90,28 +92,31 @@ runs:
         ttl="$OP_TTL"
         ip_set="$OP_IP_SET"
         optimize='${{ inputs.optimize_level }}'
-        github_token='${{ inputs.github_token }}'
       
         errors=()
       
+        # Validate model
         if [[ -z "$model" ]]; then
           errors+=("Input 'model' cannot be empty")
         elif [[ ! "$model" =~ ^OP ]]; then
           errors+=("Input 'model' does not start with 'OP'. Got: '$model'")
         fi
       
+        # Validate soc
         if [[ -z "$soc" ]]; then
           errors+=("Input 'soc' cannot be empty")
         elif [[ ! "$soc" =~ ^[A-Za-z0-9_-]+$ ]]; then
           errors+=("Input 'soc' contains invalid characters. Allowed: letters, digits, underscore, dash. Got: '$soc'")
         fi
       
+        # Validate branch
         if [[ -z "$branch" ]]; then
           errors+=("Input 'branch' cannot be empty")
         elif [[ ! "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
           errors+=("Input 'branch' contains invalid characters. Allowed: letters, digits, ., _, -, /. Got: '$branch'")
         fi
       
+        # Validate manifest
         if [[ -z "$manifest" ]]; then
           errors+=("Input 'manifest' cannot be empty")
         elif [[ "$manifest" == http*://* ]]; then
@@ -130,71 +135,60 @@ runs:
           fi
         fi
       
+        # Validate android_version
         if [[ -z "$android_version" ]]; then
           errors+=("Input 'android_version' cannot be empty")
         elif [[ ! "$android_version" =~ ^android[0-9]+$ ]]; then
           errors+=("Input 'android_version' contains invalid characters. Allowed: android followed by a number. Got: '$android_version'")
         fi
       
+        # Validate kernel_version
         if [[ -z "$kernel_version" ]]; then
           errors+=("Input 'kernel_version' cannot be empty")
         elif [[ ! "$kernel_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
           errors+=("Input 'kernel_version' contains invalid characters. Allowed: number in X.Y format. Got: '$kernel_version'")
         fi
       
+        # Validate os_version
         if [[ -z "$os_version" ]]; then
           errors+=("Input 'os_version' cannot be empty")
         elif [[ ! "$os_version" =~ ^OOS ]]; then
           errors+=("Input 'os_version' does not start with 'OOS'. Got: '$os_version'")
         fi
       
-        if [[ -z "$hmbird" ]]; then
-          errors+=("Input 'hmbird' cannot be empty")
-        elif [[ "$hmbird" != "true" && "$hmbird" != "false" ]]; then
-          errors+=("Input 'hmbird' contains invalid characters. Allowed: 'true' or 'false'. Got: '$hmbird'")
-        fi
+        # Validate boolean flags
+        for flag in hmbird bbg bbr ttl ip_set; do
+          value="${!flag}"
+          if [[ -z "$value" ]]; then
+            errors+=("Input '$flag' cannot be empty")
+          elif [[ "$value" != "true" && "$value" != "false" ]]; then
+            errors+=("Input '$flag' must be 'true' or 'false'. Got: '$value'")
+          fi
+        done
       
-        if [[ -z "$bbg" ]]; then
-          errors+=("Input 'bbg' cannot be empty")
-        elif [[ "$bbg" != "true" && "$bbg" != "false" ]]; then
-          errors+=("Input 'bbg' contains invalid characters. Allowed: 'true' or 'false'. Got: '$bbg'")
-        fi
-      
-        if [[ -z "$bbr" ]]; then
-          errors+=("Input 'bbr' cannot be empty")
-        elif [[ "$bbr" != "true" && "$bbr" != "false" ]]; then
-          errors+=("Input 'bbr' contains invalid characters. Allowed: 'true' or 'false'. Got: '$bbr'")
-        fi
-      
-        if [[ -z "$ttl" ]]; then
-          errors+=("Input 'ttl' cannot be empty")
-        elif [[ "$ttl" != "true" && "$ttl" != "false" ]]; then
-          errors+=("Input 'ttl' contains invalid characters. Allowed: 'true' or 'false'. Got: '$ttl'")
-        fi
-      
-        if [[ -z "$ip_set" ]]; then
-          errors+=("Input 'ip_set' cannot be empty")
-        elif [[ "$ip_set" != "true" && "$ip_set" != "false" ]]; then
-          errors+=("Input 'ip_set' contains invalid characters. Allowed: 'true' or 'false'. Got: '$ip_set'")
-        fi
-      
+        # Validate optimize_level
         case "$optimize" in
           O2|O3) ;;
           *) errors+=("optimize_level must be O2 or O3. Got: '$optimize'"); ;;
         esac
         
-        # Validate GitHub token
+        # Validate GitHub token (automatic from context)
+        github_token="${{ github.token }}"
+        
         if [[ -z "$github_token" ]]; then
-          errors+=("Input 'github_token' cannot be empty")
+          errors+=("GitHub token is not available from GitHub Actions context")
         else
           # Optional: Test token validity
-          if ! curl -fsSL -H "Authorization: Bearer $github_token" \
+          if curl -fsSL -H "Authorization: Bearer $github_token" \
                -H "Accept: application/vnd.github+json" \
                "https://api.github.com/rate_limit" >/dev/null 2>&1; then
+            echo "✅ GitHub token validated successfully"
+          else
             echo "::warning::GitHub token may be invalid or expired"
           fi
         fi
       
+        # Report errors
         if [ ${#errors[@]} -ne 0 ]; then
           echo "Found ${#errors[@]} validation error(s):" >&2
           for error in "${errors[@]}"; do
@@ -416,13 +410,13 @@ runs:
         
         CACHE_DIR="$HOME/.ccache"
         echo "CCACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
-        echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
+        echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
         
         mkdir -p "$CACHE_DIR"
         
         echo "Cache configuration:"
         echo "  Directory: $CACHE_DIR"
-        echo "  Max size: 1G"
+        echo "  Max size: 500M"
         echo "  Android: ${ANDROID_VER:-unknown}"
         echo "  Kernel: ${KERNEL_VER:-unknown}"
         echo "  OOS Version: ${OP_OS_VERSION:-unknown}"
@@ -456,7 +450,7 @@ runs:
         }
         
         export CCACHE_DIR="$HOME/.ccache"
-        export CCACHE_MAXSIZE="1G"
+        export CCACHE_MAXSIZE="500M"
         
         ccache -M "$CCACHE_MAXSIZE"
         
@@ -465,7 +459,7 @@ runs:
         export CCACHE_NOHASHDIR="true"
         
         ccache -o compression=true
-        ccache -o compression_level=1
+        ccache -o compression_level=3
         ccache -o direct_mode=true
         ccache -o hash_dir=false
         ccache -o file_clone=true
@@ -490,9 +484,9 @@ runs:
         echo "✅ ccache configured for production"
         echo ""
         echo "Configuration applied:"
-        echo "  Max size: 1G (persisted)"
+        echo "  Max size: 500M (persisted)"
         echo "  Base dir: ${GITHUB_WORKSPACE}"
-        echo "  Compression: zstd level 1"
+        echo "  Compression: zstd level 3"
         echo "  Direct mode: enabled"
         echo "  File cloning: enabled"
         echo "  Inode cache: enabled"
@@ -1000,9 +994,9 @@ runs:
         check_ccache_exists() {
           local cache_dir="$1"
           if [ -d "$cache_dir" ] && [ -n "$(find "$cache_dir" -type f -print -quit 2>/dev/null)" ]; then
-            return 0  # Cache exists
+            return 0
           else
-            return 1  # No cache
+            return 1
           fi
         }
         
@@ -1094,7 +1088,6 @@ runs:
           sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
         fi
         
-        # Configuration O2/O3 complète
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
           scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
@@ -1130,7 +1123,7 @@ runs:
           echo "  Dir: $CCACHE_DIR"
           echo "  Base: $CCACHE_BASEDIR"
           echo "  Max size: $CCACHE_MAXSIZE"
-          echo "  Compression: zstd level 1"
+          echo "  Compression: zstd level 3"
           echo "  Features: readonly_direct, file_clone, inode_cache, depend"
         else
           echo "ccache: DISABLED (clean build)"
@@ -1191,153 +1184,95 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::
+
+        - name: 📊 ccache Post-Build Statistics
+      id: ccache_stats
+      if: ${{ always() && inputs.clean != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
         echo "::group::ccache final statistics"
         
-        export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+        if [ ! -d "$CCACHE_DIR" ]; then
+          echo "⚠️ ccache directory not found"
+          echo "hit_rate=0%" >> "$GITHUB_OUTPUT"
+          echo "direct_rate=0%" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit 0
+        fi
         
-        echo "ccache Statistics"
-        ccache -s
+        STATS=$(ccache -s)
         
-        STATS="$(ccache -s)"
+        echo "$STATS"
         
-        CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
+        # Extract hit rates with fallback
+        HIT_RATE=$(echo "$STATS" | grep -oP 'cache hit rate\s+\K[\d.]+' || echo "0")
+        DIRECT_RATE=$(echo "$STATS" | grep -oP 'direct cache hit rate\s+\K[\d.]+' || echo "0")
         
-        HITS=$(echo "$STATS" | awk '/^[[:space:]]*Hits:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
+        # Ensure we have valid percentages
+        if [ -z "$HIT_RATE" ] || [ "$HIT_RATE" = "0" ]; then
+          HIT_RATE="0"
+        fi
         
-        DIRECT=$(echo "$STATS" | awk '/Direct:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
-          DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
-        else
-          HIT_RATE="0.0"
-          DIRECT_RATE="0.0"
+        if [ -z "$DIRECT_RATE" ] || [ "$DIRECT_RATE" = "0" ]; then
+          DIRECT_RATE="0"
         fi
         
         echo "hit_rate=${HIT_RATE}%" >> "$GITHUB_OUTPUT"
         echo "direct_rate=${DIRECT_RATE}%" >> "$GITHUB_OUTPUT"
         
-        echo "::endgroup::"
+        echo ""
+        echo "📈 Cache Performance Summary:"
+        echo "   Overall hit rate: ${HIT_RATE}%"
+        echo "   Direct hit rate: ${DIRECT_RATE}%"
         
-        echo "## 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        ccache -s >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "::endgroup::"
 
-    - name: Collect Build Stats / Validate Image
+    - name: Collect Build Statistics
       id: collect_stats
       shell: bash
       run: |
         set -euo pipefail
-        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        COMMON="$KERNEL_PATH/common"
-        OUT="$COMMON/out"
-        IMG="$OUT/arch/arm64/boot/Image"
+        echo "::group::Collect build statistics"
         
-        if [ -f "$COMMON/build.log" ]; then
-          WARNINGS_COUNT="$(grep -ciE '\bwarning:' "$COMMON/build.log" || true)"
-          [ -n "$WARNINGS_COUNT" ] || WARNINGS_COUNT="0"
-        else
-          WARNINGS_COUNT="0"
-        fi
+        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
+        IMG="$KERNEL_PATH/out/arch/arm64/boot/Image"
         
         if [ ! -f "$IMG" ]; then
-          echo "::error::Kernel Image not found at: $IMG"
-          exit 1
-        fi
-        
-        if ! file "$IMG" | grep -qi 'ARM64'; then
-          echo "::error::Image is not ARM64 format"
-          file "$IMG"
-          exit 1
-        fi
-        
-        IMG_SIZE=$(stat -c %s "$IMG")
-        MIN_SIZE=6102400
-        if [ "$IMG_SIZE" -lt "$MIN_SIZE" ]; then
-          echo "::error::Image size too small: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
+          echo "::error::Kernel Image not found at $IMG"
           exit 1
         fi
         
         IMG_SHA256=$(sha256sum "$IMG" | awk '{print $1}')
+        echo "image_sha256=$IMG_SHA256" >> "$GITHUB_OUTPUT"
+        
+        # Extract kernel uname string
+        if command -v strings >/dev/null 2>&1; then
+          KERNEL_UNAME=$(strings "$IMG" | grep -m1 "Linux version" | sed 's/Linux version //' || echo "unknown")
+          echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
+          echo "Kernel uname: $KERNEL_UNAME"
+        else
+          echo "KERNEL_UNAME=unknown" >> "$GITHUB_ENV"
+          echo "⚠️ 'strings' command not available, cannot extract kernel uname"
+        fi
+        
+        # Count warnings
+        if [ -f "$KERNEL_PATH/build.log" ]; then
+          WARNINGS=$(grep -c "warning:" "$KERNEL_PATH/build.log" || echo "0")
+          echo "warnings_count=$WARNINGS" >> "$GITHUB_OUTPUT"
+          echo "Build warnings: $WARNINGS"
+        else
+          echo "warnings_count=0" >> "$GITHUB_OUTPUT"
+          echo "⚠️ Build log not found"
+        fi
+        
+        # Build time
         BUILD_TIME="${BUILD_TIME:-0}"
+        echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+        echo "Build time: ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
         
-        KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
-        echo "Kernel Uname: $KERNEL_UNAME"
-        echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
-        
-        printf 'warnings_count=%s\n' "$WARNINGS_COUNT" >> "$GITHUB_OUTPUT"
-        printf 'image_sha256=%s\n' "$IMG_SHA256" >> "$GITHUB_OUTPUT"
-        printf 'build_time=%s\n' "$BUILD_TIME" >> "$GITHUB_OUTPUT"
-        
-        echo "✅ Validation passed:"
-        echo "   - Warnings: $WARNINGS_COUNT"
-        echo "   - Image size: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
-        echo "   - SHA256: $IMG_SHA256"
-        echo "   - Build time: ${BUILD_TIME}s"
-
-    - name: Create Kernel ZIP
-      id: create_zip
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Create kernel ZIP package"
-        
-        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
-        IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
-        
-        if [ ! -f "$IMAGE_PATH" ]; then
-          echo "::error::Built Image not found at: $IMAGE_PATH"
-          exit 1
-        fi
-        
-        cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-        cd "$GITHUB_WORKSPACE/AnyKernel3"
-        
-        ZRAM_SUFFIX=""
-        if [ "${{ inputs.enable_zram }}" = "true" ]; then
-          ZRAM_SUFFIX="_ZRAM"
-        fi
-        
-        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Next_${KSUVER}_${SUSVER}${ZRAM_SUFFIX}.zip"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        mkdir -p "$ARTIFACTS_DIR"
-        
-        echo "Creating flashable ZIP: $ZIP_NAME"
-        
-        if ! zip -r9 "$ZIP_NAME" ./* \
-             -x "*.git*" \
-             -x "$ZIP_NAME" \
-             -x "README.md" 2>&1 | tee /tmp/zip.log; then
-          echo "::error::Failed to create ZIP package"
-          exit 1
-        fi
-        
-        mv "$ZIP_NAME" "$ARTIFACTS_DIR/"
-        
-        find "$ARTIFACTS_DIR" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" -delete
-        
-        ZIP_SIZE=$(stat -c%s "$ARTIFACTS_DIR/$ZIP_NAME")
-        ZIP_SHA256=$(sha256sum "$ARTIFACTS_DIR/$ZIP_NAME" | awk '{print $1}')
-        
-        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-        echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-        
-        echo ""
-        echo "✅ Kernel ZIP created successfully"
-        echo "   Name: $ZIP_NAME"
-        echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
-        echo "   SHA256: $ZIP_SHA256"
+        echo "✅ Statistics collected"
         echo "::endgroup::"
 
     - name: Download and Package ZRAM Module
@@ -1351,7 +1286,7 @@ runs:
         
         echo "Fetching latest ZRAM module release..."
         
-        # Retry logic for API call with GitHub token from inputs
+        # Retry logic for API call with GitHub token
         retries=3
         download_url=""
         
@@ -1360,7 +1295,7 @@ runs:
           
           download_url=$(curl -fsSL --retry 3 --connect-timeout 30 \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ inputs.github_token }}" \
+            -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/Bouteillepleine/ZRAM-Module/releases/latest" 2>/dev/null | \
             jq -r '.assets[] | select(.name | test("ZRAM-Module-.*\\.zip")) | .browser_download_url' | \
             head -n 1 || true)
@@ -1379,6 +1314,7 @@ runs:
         if [ -z "$download_url" ]; then
           echo "::warning::Failed to fetch ZRAM module download URL after $retries attempts"
           echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
           exit 0
         fi
@@ -1391,6 +1327,7 @@ runs:
         if ! curl -fsSL --retry 3 --connect-timeout 30 -o "$ZRAM_ZIP_NAME" "$download_url"; then
           echo "::warning::Failed to download ZRAM module ZIP"
           echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
           exit 0
         fi
@@ -1399,6 +1336,7 @@ runs:
         if [ ! -f "$ZRAM_ZIP_NAME" ]; then
           echo "::warning::ZRAM module ZIP not found after download"
           echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
           exit 0
         fi
@@ -1408,6 +1346,7 @@ runs:
           echo "::warning::Downloaded ZRAM ZIP is too small (${ZIP_SIZE} bytes)"
           rm -f "$ZRAM_ZIP_NAME"
           echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
           exit 0
         fi
@@ -1426,6 +1365,7 @@ runs:
           echo "::warning::Failed to extract ZRAM module ZIP"
           rm -rf "$EXTRACT_DIR"
           echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
           exit 0
         fi
@@ -1437,6 +1377,7 @@ runs:
             echo "::warning::Missing required file: $file"
             rm -rf "$EXTRACT_DIR" "$ZRAM_ZIP_NAME"
             echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
             echo "::endgroup::"
             exit 0
           fi
@@ -1498,10 +1439,11 @@ runs:
           fi
         fi
         
-        # Repackage ZRAM module with compiled kernel module
+        # Repackage ZRAM module with device-specific naming
         echo "Creating final ZRAM module package..."
         
-        FINAL_ZRAM_ZIP="ZRAM-Module-Packaged.zip"
+        # Format: ZRAM-Module_DEVICE.zip
+        FINAL_ZRAM_ZIP="ZRAM-Module_${OP_MODEL}.zip"
         
         cd "$EXTRACT_DIR"
         
@@ -1516,6 +1458,9 @@ runs:
             echo "   File: $FINAL_ZRAM_ZIP"
             echo "   Size: $(numfmt --to=iec-i --suffix=B "$FINAL_SIZE")"
             echo "   SHA256: $FINAL_SHA256"
+            
+            # Save ZIP name to output
+            echo "zram_zip_name=$FINAL_ZRAM_ZIP" >> "$GITHUB_OUTPUT"
             
             # Copy to AnyKernel3 directory
             if [ -d "$GITHUB_WORKSPACE/AnyKernel3" ]; then
@@ -1540,18 +1485,90 @@ runs:
           else
             echo "::warning::Final ZRAM ZIP not created"
             echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
           fi
         else
           cd ..
           echo "::warning::Failed to create final ZRAM module package"
           cat /tmp/zram_zip.log || true
           echo "upload=false" >> "$GITHUB_OUTPUT"
+          echo "zram_zip_name=" >> "$GITHUB_OUTPUT"
         fi
         
         # Cleanup with error handling
         echo "Cleaning up temporary files..."
         if ! rm -rf "$EXTRACT_DIR" "$ZRAM_ZIP_NAME" 2>/dev/null; then
           echo "::warning::Failed to cleanup some temporary files"
+        fi
+        
+        echo "::endgroup::"
+
+    - name: Create Flashable ZIP
+      id: create_zip
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Create flashable ZIP"
+        
+        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
+        IMG="$KERNEL_PATH/out/arch/arm64/boot/Image"
+        
+        if [ ! -f "$IMG" ]; then
+          echo "::error::Kernel Image not found"
+          exit 1
+        fi
+        
+        cd "$GITHUB_WORKSPACE/AnyKernel3"
+        
+        # Copy kernel image
+        cp "$IMG" ./
+        
+        # Determine ZRAM suffix
+        if [ "${{ inputs.enable_zram }}" = "true" ]; then
+          ZRAM_SUFFIX="_ZRAM"
+        else
+          ZRAM_SUFFIX=""
+        fi
+        
+        # Create ZIP name
+        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Next_${KSUVER}_${SUSVER}${ZRAM_SUFFIX}.zip"
+        
+        echo "Creating flashable ZIP: $ZIP_NAME"
+        
+        # Create ZIP
+        if zip -r9 "$ZIP_NAME" ./* -x .git README.md ./*placeholder 2>&1 | tee /tmp/ak3_zip.log; then
+          if [ -f "$ZIP_NAME" ]; then
+            ZIP_SIZE=$(stat -c%s "$ZIP_NAME")
+            ZIP_SHA256=$(sha256sum "$ZIP_NAME" | awk '{print $1}')
+            
+            echo "✅ Flashable ZIP created successfully"
+            echo "   Name: $ZIP_NAME"
+            echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
+            echo "   SHA256: $ZIP_SHA256"
+            
+            # Save ZIP name
+            echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+            echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+            
+            # Copy to artifacts
+            ARTIFACTS_DIR="$GITHUB_WORKSPACE/$CONFIG/artifacts"
+            if [ -d "$ARTIFACTS_DIR" ]; then
+              echo "Copying ZIP to artifacts directory..."
+              if cp "$ZIP_NAME" "$ARTIFACTS_DIR/"; then
+                echo "✅ ZIP copied to artifacts"
+              else
+                echo "::warning::Failed to copy ZIP to artifacts"
+              fi
+            fi
+          else
+            echo "::error::ZIP file not created"
+            cat /tmp/ak3_zip.log || true
+            exit 1
+          fi
+        else
+          echo "::error::Failed to create ZIP"
+          cat /tmp/ak3_zip.log || true
+          exit 1
         fi
         
         echo "::endgroup::"
@@ -1563,6 +1580,7 @@ runs:
         
         KSUN_SHA="${KSUN_COMMIT_SHA:-unknown}"
         SUSFS_SHA="${SUSFS_COMMIT_SHA:-unknown}"
+        ZRAM_ZIP="${{ steps.zram_find.outputs.zram_zip_name }}"
         
         {
           echo "Model: ${{ env.OP_MODEL }}"
@@ -1594,8 +1612,10 @@ runs:
             echo "=== ZRAM Module ==="
             if [ "${{ steps.zram_find.outputs.upload }}" = "true" ]; then
               echo "Status: ✅ Included with compiled module"
+              echo "File: ${ZRAM_ZIP:-ZRAM-Module_${OP_MODEL}.zip}"
             elif [ "${{ steps.zram_find.outputs.upload }}" = "partial" ]; then
               echo "Status: ⚠️ Included without compiled module"
+              echo "File: ${ZRAM_ZIP:-ZRAM-Module_${OP_MODEL}.zip}"
             else
               echo "Status: ⚠️ Not available"
             fi
@@ -1657,8 +1677,10 @@ runs:
           if [ "${{ inputs.enable_zram }}" = "true" ]; then
             if [ "${{ steps.zram_find.outputs.upload }}" = "true" ]; then
               echo "| **ZRAM Module** | ✅ Included with compiled module |"
+              echo "| **ZRAM File** | \`${ZRAM_ZIP:-ZRAM-Module_${OP_MODEL}.zip}\` |"
             elif [ "${{ steps.zram_find.outputs.upload }}" = "partial" ]; then
               echo "| **ZRAM Module** | ⚠️ Included without compiled module |"
+              echo "| **ZRAM File** | \`${ZRAM_ZIP:-ZRAM-Module_${OP_MODEL}.zip}\` |"
             else
               echo "| **ZRAM Module** | ⚠️ Not available |"
             fi
@@ -1686,13 +1708,11 @@ runs:
           if [ "$ZIP_SIZE" -gt 0 ]; then
             echo "| **ZIP Size** | $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE") |"
           fi
+          
+          if [ -n "$ZRAM_ZIP" ] && [ -f "${{ env.CONFIG }}/artifacts/$ZRAM_ZIP" ]; then
+            ZRAM_SIZE=$(stat -c%s "${{ env.CONFIG }}/artifacts/$ZRAM_ZIP" 2>/dev/null || echo "0")
+            if [ "$ZRAM_SIZE" -gt 0 ]; then
+              echo "| **ZRAM Size** | $(numfmt --to=iec-i --suffix=B "$ZRAM_SIZE") |"
+            fi
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
-
-    - name: Upload Artifacts
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}
-        path: ${{ env.CONFIG }}/artifacts/
-        compression-level: 0
-        retention-days: 20
