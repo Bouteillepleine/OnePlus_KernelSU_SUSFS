@@ -47,9 +47,7 @@ on:
         description: 'Enable ZRAM with advanced compressors'
         type: boolean
         default: false
-      github_token:
-        description: 'GitHub token for API access'
-        required: true 
+      # ✅ SUPPRIMÉ: github_token input (SÉCURITÉ)
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
@@ -70,7 +68,7 @@ on:
 jobs:
   set-op-model:
     runs-on: ubuntu-latest
-      permissions:
+    permissions:  # ✅ CORRIGÉ: Indentation
       contents: read
       packages: read
     outputs:
@@ -215,6 +213,10 @@ jobs:
     name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ inputs.ksun_branch }})
     needs: set-op-model
     runs-on: ubuntu-latest
+    permissions:  # ✅ AJOUTÉ
+      contents: read
+      packages: read
+      actions: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
@@ -302,7 +304,7 @@ jobs:
             echo "::group::ccache configuration"
             ccache -o max_size=1.0G
             ccache -o compression=true
-            ccache -o compression_level=1
+            ccache -o compression_level=3  # ✅ CORRIGÉ: 1 → 3
             ccache -s
             echo "::endgroup::"
           fi
@@ -317,7 +319,7 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
           enable_zram: ${{ inputs.enable_zram }}
-          github_token: ${{ github.token }} 
+          github_token: ${{ github.token }}  # ✅ Utilise le token automatique
 
       - name: 📊 Build statistics
         if: always()
@@ -445,28 +447,61 @@ jobs:
           
       - name: 🏷️ Generate and Create New Tag
         run: |
+          set -euo pipefail  # ✅ AJOUTÉ
+          
           BASE_TAG="$SUSFS_BASE_VERSION-r0"
-          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name')
+          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name' 2>/dev/null || echo "")
+          
           if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="$BASE_TAG"
+            echo "No existing tags found, using base: $BASE_TAG"
+            NEW_TAG="$BASE_TAG"
           else
+            echo "Latest tag: $LATEST_TAG"
             LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
+            NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
           fi
-          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
+          
           echo "New tag: $NEW_TAG"
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
-          git tag $NEW_TAG
-          git push origin $NEW_TAG
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
 
       - name: 📥 Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./downloaded-artifacts
 
+      - name: 🔍 Verify artifacts  # ✅ AJOUTÉ
+        run: |
+          set -euo pipefail
+          
+          zip_count=$(find ./downloaded-artifacts -name "*.zip" -type f | wc -l)
+          txt_count=$(find ./downloaded-artifacts -name "*.txt" -type f | wc -l)
+          
+          echo "Found: $zip_count ZIPs, $txt_count TXT files"
+          
+          if [ "$zip_count" -eq 0 ] || [ "$txt_count" -eq 0 ]; then
+            echo "::error::Missing artifacts! Build may have failed."
+            exit 1
+          fi
+          
+          echo "✅ Artifacts verified"
+
       - name: 📝 Generate Device List and Final Release Notes
         id: generate-notes
         run: |
+          set -euo pipefail  # ✅ AJOUTÉ
+          
           echo "=== Start building the release notes ==="
+          
+          # Vérifier que matrix.json existe
+          if [ ! -f ./downloaded-artifacts/build-matrix/matrix.json ]; then
+            echo "::error::matrix.json not found!"
+            exit 1
+          fi
           
           declare -A device_info
           
@@ -719,6 +754,11 @@ jobs:
 
       - name: 📤 Upload Release Assets Dynamically
         run: |
+          set -euo pipefail  # ✅ AJOUTÉ
+          
+          uploaded=0
+          failed=0
+          
           for file in ./downloaded-artifacts/*/*.zip; do
             if [ -f "$file" ]; then
               size=$(stat -c%s "$file")
@@ -730,9 +770,30 @@ jobs:
               fi
               
               echo "✅ Uploading $file ($(numfmt --to=iec-i --suffix=B $size))..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
+              
+              if gh release upload "${{ env.NEW_TAG }}" "$file" --clobber; then
+                uploaded=$((uploaded + 1))
+                echo "   ✅ Uploaded successfully"
+              else
+                failed=$((failed + 1))
+                echo "   ❌ Upload failed"
+              fi
             fi
           done
+          
+          echo ""
+          echo "📊 Upload Summary:"
+          echo "   - Successful: $uploaded"
+          echo "   - Failed: $failed"
+          
+          if [ "$uploaded" -eq 0 ]; then
+            echo "::error::No files were uploaded successfully!"
+            exit 1
+          fi
+          
+          if [ "$failed" -gt 0 ]; then
+            echo "::warning::Some uploads failed ($failed files)"
+          fi
 
       - name: 📊 Release summary
         if: success()
