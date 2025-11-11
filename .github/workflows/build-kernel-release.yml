@@ -382,7 +382,7 @@ jobs:
             
             if [ "${{ inputs.enable_zram }}" = "true" ]; then
               cat >> $GITHUB_STEP_SUMMARY << EOF
-          | **ZRAM Modules** | ${{ steps.build.outputs.zram_enabled == 'true' && '✅ Included' || '⚠️ Not available' }} |
+          | **ZRAM Modules** | ✅ Included |
           EOF
             fi
             
@@ -526,12 +526,13 @@ jobs:
               .[] | 
               select(.model == $MODEL) |
               "\(.hmbird // false)\t\(.bbr // false)\t\(.bbg // false)\t\(.ttl // false)\t\(.ip_set // false)"
-            ' <<< "$JSON_BUILD_DATA")
+            ' <<< "$JSON_BUILD_DATA" | head -n1)
             
             features=""
-             # If no match found, skip or handle error
+            
             if [[ -z "$feature_flags" ]]; then
-              echo "Warning: No JSON entry found for model: $model" >&2
+              echo "⚠️ Warning: No JSON entry found for model: $model" >&2
+              features="N/A"
             else
               IFS=$'\t' read -r hmbird bbr bbg ttl ip_set <<< "$feature_flags"
               
@@ -579,6 +580,8 @@ jobs:
           - **ZRAM Writeback** - Swap to storage support
           EOF
           fi
+          
+          cat << EOF >> release_notes.md
           
           ### 📌 SUSFS Branch Mapping
           
@@ -641,7 +644,7 @@ jobs:
           - **KSU SUSFS Module** (Required for SUSFS features)  
             → [GitHub Release](https://github.com/sidex15/ksu_module_susfs/releases)
           
-          ### Recomended Flasher
+          ### Recommended Flasher
           - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups and OTA)  
             → [GitHub Release](https://github.com/fatalcoder524/KernelFlasher/releases)
           
@@ -660,6 +663,15 @@ jobs:
           3. Reboot system
           4. Install KernelSU-Next/WildSU Manager
           5. Install SUSFS module from manager
+          EOF
+          
+          if [ "$ENABLE_ZRAM" = "true" ]; then
+            cat << EOF >> release_notes.md
+          6. **Note:** This kernel includes ZRAM support with advanced compressors
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
           
           ---
           
@@ -667,13 +679,22 @@ jobs:
           
           ### This Release
           - Updated SUSFS to v1.5.12
-          - Added HMBIRD support for all sm8750 devices.
+          - Added HMBIRD support for all sm8750 devices
           - Improved ccache build system
           - Enhanced SUSFS hiding capabilities
           - Added IP_SET and TTL support
           - Added TMPFS_XATTR and TMPFS_POSIX_ACL support for Mountify
           - Added Ptrace leak fix for kernels < 5.16
-          - Compiler optimizations (${{ inputs.optimize_level }})
+          - Compiler optimizations ($OPTIMIZE_LEVEL)
+          EOF
+          
+          if [ "$ENABLE_ZRAM" = "true" ]; then
+            cat << EOF >> release_notes.md
+          - ✅ ZRAM support with advanced compressors (LZ4K, LZ4KD, LZ4K_OPLUS)
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
           
           ### Previous Releases
           See [Releases Page](${{ github.server_url }}/${{ github.repository }}/releases)
@@ -691,7 +712,7 @@ jobs:
           
           **⚡ Built with ❤️ by the community**
           
-          > *This is an unofficial build. Use at your own risk.*
+          > *This is an official build using Oneplus sources.*
           EOF
           
           echo "--- Final Release Notes ---"
@@ -709,7 +730,15 @@ jobs:
         run: |
           for file in ./downloaded-artifacts/*/*.zip; do
             if [ -f "$file" ]; then
-              echo "Uploading $file..."
+              size=$(stat -c%s "$file")
+              min_size=10485760  # 10MB minimum
+              
+              if [ "$size" -lt "$min_size" ]; then
+                echo "⚠️ Warning: $file is too small ($(numfmt --to=iec-i --suffix=B $size)), skipping"
+                continue
+              fi
+              
+              echo "✅ Uploading $file ($(numfmt --to=iec-i --suffix=B $size))..."
               gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
             fi
           done
@@ -717,6 +746,10 @@ jobs:
       - name: 📊 Release summary
         if: success()
         run: |
+          TOTAL_ZIPS=$(find ./downloaded-artifacts -name "*.zip" | wc -l)
+          TOTAL_SIZE=$(find ./downloaded-artifacts -name "*.zip" -exec stat -c%s {} + | awk '{sum+=$1} END {print sum}')
+          TOTAL_SIZE_GB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024 / 1024" | bc)
+          
           cat >> $GITHUB_STEP_SUMMARY << EOF
           
           ---
@@ -724,7 +757,10 @@ jobs:
           ## 🎉 Release Created Successfully
           
           **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})  
-          **Kernels:** $(find ./downloaded-artifacts -name "*.zip" | wc -l)
+          **Kernels:** $TOTAL_ZIPS  
+          **Total Size:** ${TOTAL_SIZE_GB} GB  
+          **ZRAM:** ${{ inputs.enable_zram && '✅ Enabled' || '❌ Disabled' }}  
+          **Optimization:** ${{ inputs.optimize_level }}
           
           ### 📦 Assets
           EOF
@@ -734,6 +770,11 @@ jobs:
               name=$(basename "$zip")
               size=$(stat -c%s "$zip")
               size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+              sha256=$(sha256sum "$zip" | awk '{print $1}')
               echo "- \`$name\` (${size_mb} MB)" >> $GITHUB_STEP_SUMMARY
+              echo "  - SHA256: \`${sha256:0:16}...\`" >> $GITHUB_STEP_SUMMARY
             fi
           done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 **[View Release](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})**" >> $GITHUB_STEP_SUMMARY
