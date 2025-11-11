@@ -47,6 +47,9 @@ on:
         description: 'Enable ZRAM with advanced compressors'
         type: boolean
         default: false
+      github_token:
+        description: 'GitHub token for API access'
+        required: true 
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
@@ -67,6 +70,9 @@ on:
 jobs:
   set-op-model:
     runs-on: ubuntu-latest
+      permissions:
+      contents: read
+      packages: read
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       device_count: ${{ steps.set-matrix.outputs.count }}
@@ -296,7 +302,7 @@ jobs:
             echo "::group::ccache configuration"
             ccache -o max_size=1.0G
             ccache -o compression=true
-            ccache -o compression_level=3
+            ccache -o compression_level=1
             ccache -s
             echo "::endgroup::"
           fi
@@ -311,6 +317,7 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
           enable_zram: ${{ inputs.enable_zram }}
+          github_token: ${{ github.token }} 
 
       - name: 📊 Build statistics
         if: always()
