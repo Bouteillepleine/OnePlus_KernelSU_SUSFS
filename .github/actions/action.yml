@@ -462,7 +462,7 @@ runs:
         echo "Configuration applied:"
         echo "  Max size: 1G (persisted)"
         echo "  Base dir: ${GITHUB_WORKSPACE}"
-        echo "  Compression: zstd level 3"
+        echo "  Compression: zstd level 1"
         echo "  Direct mode: enabled"
         echo "  File cloning: enabled"
         echo "  Inode cache: enabled"
@@ -526,11 +526,6 @@ runs:
         echo ""
         echo "🚀 Starting parallel git clones..."
         
-        # ============================================
-        # PARALLÉLISATION DES CLONES
-        # ============================================
-        
-        # Fonction pour cloner avec retry et logging
         clone_with_retry() {
           local repo_url="$1"
           local target_dir="$2"
@@ -565,10 +560,8 @@ runs:
           return 1
         }
         
-        # Export pour utilisation dans subshells
         export -f clone_with_retry
         
-        # Lancer les clones en parallèle
         (
           clone_with_retry \
             "https://github.com/TheWildJames/AnyKernel3.git" \
@@ -596,7 +589,6 @@ runs:
             PID_ZRAM=$!
           fi
           
-          # Attendre tous les clones
           echo ""
           echo "⏳ Waiting for all clones to complete..."
           
@@ -634,15 +626,10 @@ runs:
         echo ""
         echo "✅ All repositories cloned successfully"
         
-        # ============================================
-        # CONFIGURATION SUSFS
-        # ============================================
-        
         echo ""
         echo "🔧 Configuring SUSFS..."
         cd susfs4ksu
         
-        # Vérifier si c'est une branche ou un commit
         if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1; then
           echo "✅ Checking out remote branch: $SUSFS_BRANCH"
           git checkout "$SUSFS_BRANCH"
@@ -669,10 +656,6 @@ runs:
         echo "   Commit: $SUSFS_COMMIT_SHA"
         
         cd ..
-        
-        # ============================================
-        # VÉRIFICATION FINALE
-        # ============================================
         
         echo ""
         echo "📋 Cloned repositories summary:"
@@ -1186,7 +1169,7 @@ runs:
           echo "  Dir: $CCACHE_DIR"
           echo "  Base: $CCACHE_BASEDIR"
           echo "  Max size: $CCACHE_MAXSIZE"
-          echo "  Compression: zstd level 3"
+          echo "  Compression: zstd level 1"
           echo "  Features: readonly_direct, file_clone, inode_cache, depend"
         else
           echo "ccache: DISABLED (clean build)"
@@ -1691,3 +1674,4 @@ runs:
         path: ${{ env.CONFIG }}/artifacts/
         compression-level: 0
         retention-days: 20
+
