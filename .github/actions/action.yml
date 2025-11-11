@@ -723,133 +723,318 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Apply SUSFS patches"
+        
         cd "$CONFIG/kernel_platform"
-        echo "Applying SUSFS patches..."
-        cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch ./common/
-        cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
-        cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-        cd ./KernelSU-Next
-        susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
-        echo "SUSVER=$susfs_version" >> $GITHUB_ENV
-        BASE_VERSION=10200
-        cd ./kernel
-        KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
-        sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+        
+        echo "📋 Preparing SUSFS integration..."
+        echo "   SUSFS Version: ${SUSFS_BRANCH_NAME}"
+        echo "   SUSFS Commit: ${SUSFS_COMMIT_SHA:0:8}"
+        echo "   Kernel: ${ANDROID_VER}-${KERNEL_VER}"
+        
+        # ============================================
+        # ÉTAPE 1: Appliquer le patch kernel principal AVANT de copier les fichiers SUSFS
+        # ============================================
+        
+        echo ""
+        echo "🔧 Step 1: Apply kernel-side SUSFS patch..."
+        
+        SUSFS_KERNEL_PATCH="50_add_susfs_in_${SUSFS_KERNEL_BRANCH}.patch"
+        
+        if [ ! -f "../../susfs4ksu/kernel_patches/$SUSFS_KERNEL_PATCH" ]; then
+          echo "::error::SUSFS kernel patch not found: $SUSFS_KERNEL_PATCH"
+          echo "Available patches:"
+          ls -1 ../../susfs4ksu/kernel_patches/*.patch || true
+          exit 1
+        fi
+        
+        cd ./common
+        
+        # Appliquer le patch kernel AVANT de copier les fichiers SUSFS
+        if patch -p1 --dry-run < "../../susfs4ksu/kernel_patches/$SUSFS_KERNEL_PATCH" >/dev/null 2>&1; then
+          echo "✅ Applying $SUSFS_KERNEL_PATCH..."
+          patch -p1 < "../../susfs4ksu/kernel_patches/$SUSFS_KERNEL_PATCH"
+        else
+          echo "⚠️ Patch $SUSFS_KERNEL_PATCH already applied or conflicts detected"
+          
+          # Vérifier si déjà appliqué
+          if patch -p1 -R --dry-run < "../../susfs4ksu/kernel_patches/$SUSFS_KERNEL_PATCH" >/dev/null 2>&1; then
+            echo "✅ Patch already applied, skipping"
+          else
+            echo "::error::Patch conflicts detected"
+            patch -p1 < "../../susfs4ksu/kernel_patches/$SUSFS_KERNEL_PATCH" || true
+            exit 1
+          fi
+        fi
+        
         cd ..
-        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-        echo "KernelSU Next Version: $KSU_VERSION"
-        echo "SusFS Version: $susfs_version"
+        
+        # ============================================
+        # ÉTAPE 2: Copier les fichiers SUSFS
+        # ============================================
+        
+        echo ""
+        echo "🔧 Step 2: Copy SUSFS source files..."
+        
+        cp -v ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
+        cp -v ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+        
+        # Extraire la version SUSFS
+        susfs_version=$(grep '#define SUSFS_VERSION' ./common/include/linux/susfs.h | awk -F'"' '{print $2}')
+        
+        if [ -z "$susfs_version" ]; then
+          echo "::error::Failed to extract SUSFS version from susfs.h"
+          exit 1
+        fi
+        
+        echo "SUSVER=$susfs_version" >> "$GITHUB_ENV"
+        echo "✅ SUSFS Version: $susfs_version"
+        
+        # ============================================
+        # ÉTAPE 3: Calculer la version KernelSU Next
+        # ============================================
+        
+        echo ""
+        echo "🔧 Step 3: Calculate KernelSU Next version..."
+        
+        cd ./KernelSU-Next/kernel
+        
+        BASE_VERSION=10200
+        COMMIT_COUNT=$(/usr/bin/git rev-list --count HEAD)
+        KSU_VERSION=$(expr "$COMMIT_COUNT" + "$BASE_VERSION")
+        
+        # Mettre à jour le Makefile
+        if grep -q "DKSU_VERSION=" Makefile; then
+          sed -i "s/DKSU_VERSION=[0-9]*/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          echo "✅ KernelSU Version updated: $KSU_VERSION"
+        else
+          echo "::warning::DKSU_VERSION not found in Makefile"
+        fi
+        
+        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
+        
+        cd ../..
+        
+        # ============================================
+        # ÉTAPE 4: Appliquer les patches KernelSU-SUSFS
+        # ============================================
+        
+        echo ""
+        echo "🔧 Step 4: Apply KernelSU-SUSFS integration patches..."
+        
+        cd ./KernelSU-Next
+        
         case "$susfs_version" in
           "v1.5.5"|"v1.5.6"|"v1.5.7")
-            cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
+            echo "📦 Using unified patch for SUSFS $susfs_version"
+            
+            UNIFIED_PATCH="../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch"
+            
+            if [ ! -f "$UNIFIED_PATCH" ]; then
+              echo "::error::Unified patch not found: $UNIFIED_PATCH"
+              exit 1
+            fi
+            
+            if patch -p1 --dry-run < "$UNIFIED_PATCH" >/dev/null 2>&1; then
+              patch -p1 < "$UNIFIED_PATCH"
+              echo "✅ Unified patch applied successfully"
+            else
+              echo "::warning::Unified patch already applied or conflicts"
+              patch -p1 --forward < "$UNIFIED_PATCH" || true
+            fi
             ;;
+            
           "v1.5.8")
-            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch  || true
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_apk_sign.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_selinux.c.patch
-            cp "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" ./
-            patch -p1 --forward --fuzz=3 < fix_ksud.c.patch
-            ;;
-          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
-            cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-            patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
-            for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-              echo "Patching file: $file.c with fix_$file.c.patch"
-              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+            echo "📦 Using multi-patch approach for SUSFS $susfs_version"
+            
+            BASE_PATCH="../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+            
+            if [ ! -f "$BASE_PATCH" ]; then
+              echo "::error::Base patch not found: $BASE_PATCH"
+              exit 1
+            fi
+            
+            # Appliquer le patch de base
+            patch -p1 --forward --fuzz=3 < "$BASE_PATCH" || true
+            
+            # Appliquer les fix patches
+            for fix_file in apk_sign core_hook selinux ksud; do
+              FIX_PATCH="../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_${fix_file}.c.patch"
+              
+              if [ -f "$FIX_PATCH" ]; then
+                echo "Applying fix: $fix_file"
+                patch -p1 --forward --fuzz=3 < "$FIX_PATCH"
+              else
+                echo "::warning::Fix patch not found: $FIX_PATCH"
+              fi
             done
-            patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+            
+            echo "✅ Multi-patch approach completed"
             ;;
+            
+          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
+            echo "📦 Using reject-based patching for SUSFS $susfs_version"
+            
+            BASE_PATCH="../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+            
+            if [ ! -f "$BASE_PATCH" ]; then
+              echo "::error::Base patch not found: $BASE_PATCH"
+              exit 1
+            fi
+            
+            # Appliquer le patch de base (peut générer des rejets)
+            patch -p1 --forward < "$BASE_PATCH" || true
+            
+            # Trouver et corriger les rejets
+            echo "Searching for reject files..."
+            REJECT_FILES=$(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1 | sort -u || true)
+            
+            if [ -n "$REJECT_FILES" ]; then
+              echo "Found rejects in: $REJECT_FILES"
+              
+              for file in $REJECT_FILES; do
+                FIX_PATCH="../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_${file}.c.patch"
+                
+                if [ -f "$FIX_PATCH" ]; then
+                  echo "Applying fix: $file"
+                  patch -p1 --forward < "$FIX_PATCH"
+                else
+                  echo "::warning::Fix patch not found for: $file"
+                fi
+              done
+            else
+              echo "✅ No rejects found"
+            fi
+            
+            # Appliquer kernel_compat fix (toujours nécessaire)
+            COMPAT_FIX="../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+            
+            if [ -f "$COMPAT_FIX" ]; then
+              echo "Applying kernel_compat fix..."
+              patch -p1 --forward < "$COMPAT_FIX"
+            else
+              echo "::warning::kernel_compat fix not found"
+            fi
+            
+            echo "✅ Reject-based patching completed"
+            ;;
+            
           *)
             echo "::error::Unsupported SUSFS version: $susfs_version"
+            echo "Supported versions: v1.5.5 - v1.5.12"
             exit 1
             ;;
         esac
-        patch -p1 --forward < ksun_susfs_latest.patch || true
-        cd ../common
-        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
+        
+        cd ..
+        
+        # ============================================
+        # ÉTAPE 5: Patches spécifiques au kernel
+        # ============================================
+        
+        echo ""
+        echo "🔧 Step 5: Apply kernel-specific patches..."
+        
+        cd ./common
+        
+        # Android 15 + Kernel 6.6: Ajouter l'include manquant
+        if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+            echo "Adding missing include to fs/namespace.c..."
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
           fi
         fi
-      
+        
+        # Fake patching pour task_mmu.c (workaround pour certains kernels)
         fake_patched=0
-        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
+        
+        if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
           if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            echo "nr_subpages Line not found. Fake Patching!"
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            echo "vma_pages Line not found. Fake Patching!"
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            echo "vma_pages Line not found. Fake Patching!"
-            fake_patched=1
-          fi
-        fi
-
-        if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            echo "vma_pages Line not found. Fake Patching!"
+            echo "⚠️ Applying fake patch to task_mmu.c (android15-6.6 workaround)..."
+            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
+                   -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' \
+                   ./fs/proc/task_mmu.c
             fake_patched=1
           fi
         fi
         
-        patch -p1 < 50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch
-      
+        # Vérifier et reverter le fake patch si le vrai patch l'a appliqué
         if [ "$fake_patched" = 1 ]; then
-          if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-            if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-              echo "nr_subpages Line found. Revert Fake Patching!"
-              sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
-            fi
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
-            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              echo "vma_pages Line found. Revert Fake Patching!"
-              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-            fi
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
-            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              echo "vma_pages Line found. Revert Fake Patching!"
-              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-            fi
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
-            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              echo "vma_pages Line found. Revert Fake Patching!"
-              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+          if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
+            # Le vrai patch a été appliqué, supprimer le fake
+            if grep -c "unsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;" ./fs/proc/task_mmu.c | grep -q "^2$"; then
+              echo "✅ Real patch applied, removing fake patch..."
+              sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' \
+                     -e '/pagemap_entry_t \*res = NULL;/d' \
+                     ./fs/proc/task_mmu.c
             fi
           fi
         fi
-      
-        KERNEL_VERSION="${{ env.KERNEL_VER }}"
+        
+        # ============================================
+        # ÉTAPE 6: Patch ptrace (si kernel < 5.16)
+        # ============================================
+        
+        echo ""
+        echo "🔧 Step 6: Check ptrace patch requirement..."
+        
         MIN_VERSION="5.16"
-        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
+        
+        if [ "$(printf '%s\n' "$KERNEL_VER" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VER" ]; then
+          echo "Kernel $KERNEL_VER < $MIN_VERSION, applying ptrace patch..."
+          
+          PTRACE_PATCH="../../../kernel_patches/gki_ptrace.patch"
+          
+          if [ -f "$PTRACE_PATCH" ]; then
+            patch -p1 -F 3 < "$PTRACE_PATCH"
+            echo "✅ ptrace patch applied"
+          else
+            echo "::warning::ptrace patch not found: $PTRACE_PATCH"
+          fi
         else
-          echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
+          echo "✅ Kernel $KERNEL_VER >= $MIN_VERSION, skipping ptrace patch"
         fi
-        if [ "$OP_HMBIRD" = true ]; then
-          echo "Patching hmbird!"
-          dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+        
+        # ============================================
+        # ÉTAPE 7: Patch Hmbird (OnePlus)
+        # ============================================
+        
+        if [ "${OP_HMBIRD:-false}" = "true" ]; then
+          echo ""
+          echo "🔧 Step 7: Apply OnePlus Hmbird patch..."
+          
+          HMBIRD_PATCH="../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+          
+          if [ -f "$HMBIRD_PATCH" ]; then
+            dos2unix "$HMBIRD_PATCH" 2>/dev/null || true
+            
+            if patch -p1 -F 3 < "$HMBIRD_PATCH"; then
+              echo "✅ Hmbird patch applied"
+            else
+              echo "::warning::Hmbird patch failed, continuing anyway"
+            fi
+          else
+            echo "::warning::Hmbird patch not found: $HMBIRD_PATCH"
+          fi
         else
-          echo "Hmbird not enabled, skipping fengchi patch"
-        fi        
-        echo "✅ SUSFS patches applied"
+          echo "✅ Hmbird not enabled, skipping"
+        fi
+        
+        cd ../..
+        
+        # ============================================
+        # RÉSUMÉ
+        # ============================================
+        
+        echo ""
+        echo "============================================"
+        echo "✅ SUSFS Integration Summary"
+        echo "============================================"
+        echo "SUSFS Version: $susfs_version"
+        echo "KernelSU Version: $KSU_VERSION"
+        echo "Kernel: ${ANDROID_VER}-${KERNEL_VER}"
+        echo "Hmbird: ${OP_HMBIRD:-false}"
+        echo "============================================"
+        
         echo "::endgroup::"
 
     - name: Apply KSUN Hooks
