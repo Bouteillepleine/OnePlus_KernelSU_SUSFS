@@ -47,7 +47,6 @@ on:
         description: 'Enable ZRAM with advanced compressors'
         type: boolean
         default: false
-      # ✅ SUPPRIMÉ: github_token input (SÉCURITÉ)
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
@@ -68,7 +67,7 @@ on:
 jobs:
   set-op-model:
     runs-on: ubuntu-latest
-    permissions:  # ✅ CORRIGÉ: Indentation
+    permissions:
       contents: read
       packages: read
     outputs:
@@ -213,7 +212,7 @@ jobs:
     name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ inputs.ksun_branch }})
     needs: set-op-model
     runs-on: ubuntu-latest
-    permissions:  # ✅ AJOUTÉ
+    permissions:
       contents: read
       packages: read
       actions: read
@@ -304,7 +303,7 @@ jobs:
             echo "::group::ccache configuration"
             ccache -o max_size=1.0G
             ccache -o compression=true
-            ccache -o compression_level=3  # ✅ CORRIGÉ: 1 → 3
+            ccache -o compression_level=3
             ccache -s
             echo "::endgroup::"
           fi
@@ -319,7 +318,6 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
           enable_zram: ${{ inputs.enable_zram }}
-          github_token: ${{ github.token }}  # ✅ Utilise le token automatique
 
       - name: 📊 Build statistics
         if: always()
@@ -352,6 +350,13 @@ jobs:
             if [ -n "${{ steps.build.outputs.warnings }}" ]; then
               echo "  - Warnings: ${{ steps.build.outputs.warnings }}"
             fi
+            
+            if [ "${{ inputs.enable_zram }}" = "true" ]; then
+              echo "  - ZRAM module: ${{ steps.build.outputs.zram_available }}"
+              if [ -n "${{ steps.build.outputs.zram_zip_name }}" ]; then
+                echo "  - ZRAM ZIP: ${{ steps.build.outputs.zram_zip_name }}"
+              fi
+            fi
           else
             echo "❌ Build failed"
           fi
@@ -382,9 +387,24 @@ jobs:
           EOF
             
             if [ "${{ inputs.enable_zram }}" = "true" ]; then
-              cat >> $GITHUB_STEP_SUMMARY << EOF
-          | **ZRAM Modules** | ✅ Included |
+              zram_status="${{ steps.build.outputs.zram_available }}"
+              zram_file="${{ steps.build.outputs.zram_zip_name }}"
+              
+              if [ "$zram_status" = "true" ]; then
+                cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **ZRAM Module** | ✅ Included with compiled module |
+          | **ZRAM File** | \`${zram_file:-ZRAM-Module_${{ matrix.model }}.zip}\` |
           EOF
+              elif [ "$zram_status" = "partial" ]; then
+                cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **ZRAM Module** | ⚠️ Included without compiled module |
+          | **ZRAM File** | \`${zram_file:-ZRAM-Module_${{ matrix.model }}.zip}\` |
+          EOF
+              else
+                cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **ZRAM Module** | ⚠️ Not available |
+          EOF
+              fi
             fi
             
             if [ "${{ inputs.clean_build }}" != "true" ]; then
@@ -403,6 +423,17 @@ jobs:
           **SHA256:** \`${{ steps.build.outputs.image_sha256 }}\`
           EOF
           fi
+
+      - name: 📤 Upload Kernel Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.model }}-${{ matrix.os_version }}
+          path: |
+            ${{ matrix.model }}/artifacts/*.zip
+            ${{ matrix.model }}/artifacts/*.txt
+          retention-days: 7
+          if-no-files-found: error
 
       - name: 🧹 Final cleanup and space report
         if: always()
@@ -430,9 +461,11 @@ jobs:
           echo "::endgroup::"
 
   trigger-release:
-    needs: [build]
+    needs: [build, set-op-model]
     runs-on: ubuntu-latest
-    if: ${{ inputs.make_release }}
+    if: ${{ inputs.make_release && success() }}
+    permissions:
+      contents: write
     env:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
@@ -447,7 +480,7 @@ jobs:
           
       - name: 🏷️ Generate and Create New Tag
         run: |
-          set -euo pipefail  # ✅ AJOUTÉ
+          set -euo pipefail
           
           BASE_TAG="$SUSFS_BASE_VERSION-r0"
           LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name' 2>/dev/null || echo "")
@@ -474,30 +507,48 @@ jobs:
         with:
           path: ./downloaded-artifacts
 
-      - name: 🔍 Verify artifacts  # ✅ AJOUTÉ
+      - name: 🔍 Verify artifacts
         run: |
           set -euo pipefail
+          
+          echo "::group::Artifact verification"
           
           zip_count=$(find ./downloaded-artifacts -name "*.zip" -type f | wc -l)
           txt_count=$(find ./downloaded-artifacts -name "*.txt" -type f | wc -l)
           
-          echo "Found: $zip_count ZIPs, $txt_count TXT files"
+          echo "Found artifacts:"
+          echo "  - ZIPs: $zip_count"
+          echo "  - TXTs: $txt_count"
           
-          if [ "$zip_count" -eq 0 ] || [ "$txt_count" -eq 0 ]; then
-            echo "::error::Missing artifacts! Build may have failed."
+          if [ "$zip_count" -eq 0 ]; then
+            echo "::error::No ZIP files found! Build may have failed."
             exit 1
           fi
           
-          echo "✅ Artifacts verified"
+          if [ "$txt_count" -eq 0 ]; then
+            echo "::warning::No TXT metadata files found"
+          fi
+          
+          echo ""
+          echo "ZIP files:"
+          find ./downloaded-artifacts -name "*.zip" -type f -exec basename {} \;
+          
+          echo ""
+          echo "TXT files:"
+          find ./downloaded-artifacts -name "*.txt" -type f -exec basename {} \;
+          
+          echo "::endgroup::"
+          
+          echo "✅ Artifacts verified successfully"
 
       - name: 📝 Generate Device List and Final Release Notes
         id: generate-notes
         run: |
-          set -euo pipefail  # ✅ AJOUTÉ
+          set -euo pipefail
           
-          echo "=== Start building the release notes ==="
+          echo "::group::Generate release notes"
           
-          # Vérifier que matrix.json existe
+          # Verify matrix.json exists
           if [ ! -f ./downloaded-artifacts/build-matrix/matrix.json ]; then
             echo "::error::matrix.json not found!"
             exit 1
@@ -507,6 +558,7 @@ jobs:
           
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/build-matrix/matrix.json)
           
+          # Parse device info from TXT files
           for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
             if [ -f "$file" ]; then
               full_model=$(basename "$file" .txt)
@@ -604,6 +656,8 @@ jobs:
           - **842** - IBM 842 compression algorithm
           - **LZ4K_OPLUS** - OnePlus-optimized LZ4K
           - **ZRAM Writeback** - Swap to storage support
+          
+          > **📦 ZRAM Module:** Separate \`ZRAM-Module_DEVICE.zip\` files are provided for each device with ZRAM support enabled.
           EOF
           fi
           
@@ -693,7 +747,7 @@ jobs:
           
           if [ "$ENABLE_ZRAM" = "true" ]; then
             cat << EOF >> release_notes.md
-          6. **Note:** This kernel includes ZRAM support with advanced compressors
+          6. **(Optional)** Flash the corresponding \`ZRAM-Module_DEVICE.zip\` for advanced ZRAM support
           EOF
           fi
           
@@ -717,6 +771,7 @@ jobs:
           if [ "$ENABLE_ZRAM" = "true" ]; then
             cat << EOF >> release_notes.md
           - ✅ ZRAM support with advanced compressors (LZ4K, LZ4KD, LZ4K_OPLUS)
+          - 📦 Separate ZRAM module packages per device
           EOF
           fi
           
@@ -743,9 +798,13 @@ jobs:
           
           echo "--- Final Release Notes ---"
           cat release_notes.md
+          
+          echo "::endgroup::"
 
       - name: 🚀 Create GitHub Release
         run: |
+          set -euo pipefail
+          
           gh release create "${{ env.NEW_TAG }}" \
             --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}" \
             --title "${{ env.RELEASE_NAME }}" \
@@ -754,22 +813,27 @@ jobs:
 
       - name: 📤 Upload Release Assets Dynamically
         run: |
-          set -euo pipefail  # ✅ AJOUTÉ
+          set -euo pipefail
+          
+          echo "::group::Upload release assets"
           
           uploaded=0
           failed=0
+          skipped=0
           
           for file in ./downloaded-artifacts/*/*.zip; do
             if [ -f "$file" ]; then
+              filename=$(basename "$file")
               size=$(stat -c%s "$file")
               min_size=10485760  # 10MB minimum
               
               if [ "$size" -lt "$min_size" ]; then
-                echo "⚠️ Warning: $file is too small ($(numfmt --to=iec-i --suffix=B $size)), skipping"
+                echo "⚠️ Skipping $filename (too small: $(numfmt --to=iec-i --suffix=B $size))"
+                skipped=$((skipped + 1))
                 continue
               fi
               
-              echo "✅ Uploading $file ($(numfmt --to=iec-i --suffix=B $size))..."
+              echo "📤 Uploading $filename ($(numfmt --to=iec-i --suffix=B $size))..."
               
               if gh release upload "${{ env.NEW_TAG }}" "$file" --clobber; then
                 uploaded=$((uploaded + 1))
@@ -785,6 +849,7 @@ jobs:
           echo "📊 Upload Summary:"
           echo "   - Successful: $uploaded"
           echo "   - Failed: $failed"
+          echo "   - Skipped: $skipped"
           
           if [ "$uploaded" -eq 0 ]; then
             echo "::error::No files were uploaded successfully!"
@@ -794,12 +859,14 @@ jobs:
           if [ "$failed" -gt 0 ]; then
             echo "::warning::Some uploads failed ($failed files)"
           fi
+          
+          echo "::endgroup::"
 
       - name: 📊 Release summary
         if: success()
         run: |
-          TOTAL_ZIPS=$(find ./downloaded-artifacts -name "*.zip" | wc -l)
-          TOTAL_SIZE=$(find ./downloaded-artifacts -name "*.zip" -exec stat -c%s {} + | awk '{sum+=$1} END {print sum}')
+          TOTAL_ZIPS=$(find ./downloaded-artifacts -name "*.zip" -type f | wc -l)
+          TOTAL_SIZE=$(find ./downloaded-artifacts -name "*.zip" -type f -exec stat -c%s {} + | awk '{sum+=$1} END {print sum}')
           TOTAL_SIZE_GB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024 / 1024" | bc)
           
           cat >> $GITHUB_STEP_SUMMARY << EOF
