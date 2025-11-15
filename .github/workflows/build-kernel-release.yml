@@ -18,6 +18,7 @@ on:
         type: choice
         options:
           - ALL
+          - android16-6.12      
           - android15-6.6
           - android14-6.1
           - android14-5.15
@@ -84,6 +85,10 @@ on:
         default: ''
       android15-6_6_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android15-6.6'
+        type: string
+        default: ''
+      android16-6_12_susfs_branch_or_commit:      
+        description: 'Enter SusFS Branch or commit hash for android16-6.12'
         type: string
         default: ''
 
@@ -169,6 +174,7 @@ jobs:
             ["android14-5.15"]="${{ inputs.android14-5_15_susfs_branch_or_commit }}"
             ["android14-6.1"]="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
             ["android15-6.6"]="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
+            ["android16-6.12"]="${{ inputs.android16-6_12_susfs_branch_or_commit }}"     
           )
           # Only validate mapping presence; allow empty string value to be passed through.
           if [[ -z "${map[$key]+_exists}" ]]; then
