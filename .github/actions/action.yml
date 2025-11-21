@@ -742,32 +742,72 @@ runs:
       shell: bash
       run: |
         cd "$CONFIG/kernel_platform/common"
+        
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         MIN_VERSION="5.16"
+        
+        echo "::group::🔧 Applying Kernel Patches"
+        echo "Kernel: $KERNEL_VERSION | Model: ${OP_MODEL} | OS: ${OP_OS_VERSION}"
+        echo ""
+        
+        # Helper function
+        apply_patch() {
+          local name="$1"
+          local patch="$2"
+          
+          if patch -p1 --forward --dry-run < "$patch" &>/dev/null; then
+            patch -p1 --forward < "$patch"
+            echo "✅ $name"
+            return 0
+          else
+            echo "⏭️  $name (already applied)"
+            return 1
+          fi
+        }
+        
+        # 1. Ptrace (kernel < 5.16)
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          echo "Patching ptrace!"
-          patch -p1 -F 3 < "../../../kernel_patches/gki_ptrace.patch"
+          apply_patch "Ptrace leak fix" "../../../kernel_patches/gki_ptrace.patch"
         else
-          echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
+          echo "⏭️  Ptrace leak fix (kernel >= $MIN_VERSION)"
         fi
+        
+        # 2. HMBIRD
         if [ "$OP_HMBIRD" = true ]; then
-          echo "Patching hmbird!"
-          dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
-          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+          HMBIRD_PATCH="../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+          if [ -f "$HMBIRD_PATCH" ]; then
+            dos2unix "$HMBIRD_PATCH" 2>/dev/null || true
+            apply_patch "HMBIRD (fengchi)" "$HMBIRD_PATCH"
+          else
+            echo "⚠️  HMBIRD patch not found"
+          fi
         else
-          echo "Hmbird not enabled, skipping fengchi patch"
+          echo "⏭️  HMBIRD (not enabled)"
         fi
         
-        patch -p1 --forward "../../../kernel_patches/common/optimized_mem_operations.patch"
-        patch -p1 --forward "../../../kernel_patches/common/file_struct_8bytes_align.patch"
-        patch -p1 --forward "../../../kernel_patches/common/reduce_cache_pressure.patch"
+        # 3-5. Common patches
+        apply_patch "Optimized memory ops" "../../../kernel_patches/common/optimized_mem_operations.patch"
+        apply_patch "File struct alignment" "../../../kernel_patches/common/file_struct_8bytes_align.patch"
+        apply_patch "Cache pressure" "../../../kernel_patches/common/reduce_cache_pressure.patch"
+        
+        # 6. Clear page (version-specific)
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          patch -p1 --forward "../../../kernel_patches/common/clear_page_16bytes_align.patch"
+          apply_patch "Clear page alignment" "../../../kernel_patches/common/clear_page_16bytes_align.patch"
         else
-          cat "../../../kernel_patches/common/clear_page_16bytes_align.patch" | sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | patch -p1 -F3 --forward
+          if cat "../../../kernel_patches/common/clear_page_16bytes_align.patch" | \
+             sed 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | \
+             patch -p1 -F3 --forward --dry-run &>/dev/null; then
+            cat "../../../kernel_patches/common/clear_page_16bytes_align.patch" | \
+              sed 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | \
+              patch -p1 -F3 --forward
+            echo "✅ Clear page alignment (modified)"
+          else
+            echo "⏭️  Clear page alignment (already applied)"
+          fi
         fi
         
-        echo "✅ Other patches applied"
+        echo ""
+        echo "✅ Patch application completed"
         echo "::endgroup::"
 
     - name: Apply KSUN Hooks
