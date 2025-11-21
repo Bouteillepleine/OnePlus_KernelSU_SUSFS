@@ -17,17 +17,53 @@ on:
         required: true
         type: choice
         options:
+          # Bulk Build Options
           - OOS14+15+16
           - OOS15+16
           - OOS14+15
           - OOS16
           - OOS15
           - OOS14
+          # Android-Kernel Specific (OOS15+16 only)
           - android16-6.12
           - android15-6.6
           - android14-6.1
           - android13-5.15
           - android12-5.10
+          # OnePlus 13 Series
+          - OP13-CPH
+          - OP13-PJZ
+          - OP13r
+          - OP13S
+          - OP13T
+          # OnePlus 12 Series
+          - OP12
+          - OP12r
+          # OnePlus 11 Series
+          - OP11
+          - OP11r
+          # OnePlus 10 Series
+          - OP10pro
+          - OP10t
+          # OnePlus Nord Series
+          - OP-Nord-5
+          - OP-NORD-4
+          - OP-NORD-4-CE
+          - OP-NORD-CE4-LITE
+          # OnePlus Ace Series
+          - OP-ACE-5-PRO
+          - OP-ACE-5
+          - OP-ACE-3-PRO
+          - OP-ACE-3V
+          - OP-ACE-2-PRO
+          - OP-ACE-2
+          # OnePlus Other Devices
+          - OP-OPEN
+          # OnePlus Pad Series
+          - OP-PAD-3
+          - OP-PAD-2-PRO
+          - OP-PAD-2
+          - OP-PAD-PRO
         default: OOS15
       ksu_options:
         description: 'Enter KernelSU build json'
