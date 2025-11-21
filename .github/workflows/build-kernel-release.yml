@@ -67,9 +67,6 @@ on:
           - OP-PAD-PRO
         default: OOS15
       
-      # ========================================
-      # 🆕 NOUVEAU : Menu KSU au lieu de JSON
-      # ========================================
       ksu_preset:
         description: 'KernelSU build configuration'
         required: true
@@ -152,7 +149,7 @@ jobs:
           echo "::group::Matrix generation"
           
           # ========================================
-          # 🆕 CONVERSION PRESET → JSON
+          # CONVERSION PRESET → JSON
           # ========================================
           preset="${{ inputs.ksu_preset }}"
           custom="${{ inputs.ksu_custom_json }}"
@@ -183,6 +180,19 @@ jobs:
               ;;
             "Custom (use JSON below)")
               echo "🔧 Using custom JSON configuration"
+              
+              if [ -z "$custom" ] || [ "$custom" = "[]" ]; then
+                echo "::error::Custom preset selected but ksu_custom_json is empty!"
+                echo "Please provide a valid JSON array like: [{'type':'ksun','hash':'next'}]"
+                exit 1
+              fi
+              
+              if ! echo "$custom" | jq empty 2>/dev/null; then
+                echo "::error::Invalid JSON in ksu_custom_json!"
+                echo "Received: $custom"
+                exit 1
+              fi
+              
               ksu_options_raw="$custom"
               ;;
             *)
@@ -191,7 +201,7 @@ jobs:
               ;;
           esac
           
-          echo "✅ KSU Configuration: $ksu_options_raw"
+          echo "✅ Raw KSU Config: $ksu_options_raw"
           echo ""
           
           # ========================================
@@ -220,7 +230,6 @@ jobs:
           echo "✅ Normalized: $ksu_options_normalized"
           echo ""
           
-          # Save for summary and release notes
           echo "ksu_config=$ksu_options_normalized" >> "$GITHUB_OUTPUT"
           
           # ========================================
@@ -266,9 +275,19 @@ jobs:
               jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
               echo "ℹ️  Android-Kernel filter: $av-$kv (OOS15/16 only)"
               ;;
+            OP*)
+              normalized_model=$(echo "$input" | tr '-' '_')
+              jq_filter="map(select(.model == \"$normalized_model\"))"
+              echo "ℹ️  Single device filter: $normalized_model"
+              ;;
             *)
-              echo "::warning::Unknown input '$input'. Using empty filter."
-              jq_filter="map(select(false))"
+              echo "::error::Unknown input: $input"
+              echo ""
+              echo "Available options:"
+              echo "  - Bulk: OOS14+15+16, OOS15+16, OOS14+15, OOS16, OOS15, OOS14"
+              echo "  - Android-Kernel: android16-6.12, android15-6.6, etc."
+              echo "  - Individual devices: OP13-CPH, OP12, OP-Nord-5, etc."
+              exit 1
               ;;
           esac
           
@@ -284,7 +303,7 @@ jobs:
           fi
           
           # ========================================
-          # COMBINAISON DEVICES × KSU OPTIONS
+          # COMBINAISON DEVICES × KSU
           # ========================================
           merged_matrix=$(jq -n \
             --argjson devices "$filtered" \
@@ -293,16 +312,22 @@ jobs:
           )
           
           final_count=$(echo "$merged_matrix" | jq 'length')
+          ksu_count=$(echo "$ksu_options_normalized" | jq 'length')
           wrapped=$(jq -n --argjson items "$merged_matrix" '{ include: $items }')
           
-          echo "✅ Generated $final_count build configuration(s)"
           echo ""
-          echo "Build matrix:"
-          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version)) → \(.ksu_type)/\(.ksu_hash)"' <<<"$merged_matrix"
+          echo "✅ Matrix Summary:"
+          echo "  - Unique devices: $count"
+          echo "  - KSU variants: $ksu_count"
+          echo "  - Total builds: $final_count"
+          echo ""
+          echo "Build configurations:"
+          jq -r '.[] | "  - \(.model) (\(.os_version)) → \(.ksu_type)/\(.ksu_hash)"' <<<"$merged_matrix"
           
           echo "matrix=$(jq -c . <<< "$wrapped")" >> "$GITHUB_OUTPUT"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "count=$final_count" >> "$GITHUB_OUTPUT"
           
+          echo "::notice::✅ Generated $final_count builds ($count devices × $ksu_count KSU variants)"
           echo "::endgroup::"
 
       - name: Upload build matrix
@@ -321,16 +346,23 @@ jobs:
           
           **Target:** `${{ inputs.op_model }}`  
           **KSU Preset:** `${{ inputs.ksu_preset }}`  
-          **Devices:** ${{ steps.set-matrix.outputs.count }}  
+          **Total Builds:** ${{ steps.set-matrix.outputs.count }}
           
           **Configuration:**
           EOF
           
-          # Display KSU config in a readable format
           echo "- **KSU Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo "$ksu_config" | jq '.' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          ksu_count=$(echo "$ksu_config" | jq 'length')
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "  **KSU variants:** $ksu_count" >> $GITHUB_STEP_SUMMARY
           echo "$ksu_config" | jq -r '.[] | "  - \(.type)/\(.hash)"' >> $GITHUB_STEP_SUMMARY
           
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
           - **Optimization:** `${{ inputs.optimize_level }}`
           - **Clean Build:** ${{ inputs.clean_build && '✅ Yes (no ccache)' || '❌ No (ccache enabled)' }}
           - **Create Release:** ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
@@ -338,7 +370,6 @@ jobs:
           **SUSFS Configuration:**
           EOF
           
-          # SUSFS config display
           declare -A susfs_inputs=(
             ["android12-5.10"]="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
             ["android13-5.15"]="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
@@ -371,9 +402,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
-    outputs:
-      ksun_ver: ${{ steps.build-stat.outputs.ksun_ver }}
-      ksu_ver: ${{ steps.build-stat.outputs.ksu_ver }}
     
     steps:
       - name: 🧹 Emergency Disk Cleanup
@@ -503,15 +531,17 @@ jobs:
             echo ""
             echo "Outputs:"
             echo "  - Kernel: ${{ steps.build.outputs.kernel_version }}"
+            
+            # Save version info to artifact
+            mkdir -p build-versions
             if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
               echo "  - KSU Next: v${{ steps.build.outputs.ksu_version }}"
-              echo "ksun_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
-              echo "ksu_ver=" >> "$GITHUB_OUTPUT"
+              echo "${{ steps.build.outputs.ksu_version }}" > build-versions/ksun_${{ matrix.model }}.txt
             else
               echo "  - KSU: v${{ steps.build.outputs.ksu_version }}"
-              echo "ksun_ver=" >> "$GITHUB_OUTPUT"
-              echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
+              echo "${{ steps.build.outputs.ksu_version }}" > build-versions/ksu_${{ matrix.model }}.txt
             fi
+            
             if [ "${{ matrix.susfs }}" = true ]; then
               echo "  - SUSFS: ${{ steps.build.outputs.susfs_version }}"
             fi
@@ -532,6 +562,14 @@ jobs:
           fi
           
           echo "::endgroup::"
+
+      - name: 📤 Upload version info
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-version-${{ matrix.model }}-${{ matrix.ksu_type }}
+          path: build-versions/*.txt
+          retention-days: 1
 
       - name: 📝 Job summary
         if: always()
@@ -659,6 +697,35 @@ jobs:
         with:
           path: ./downloaded-artifacts
 
+      - name: 📥 Download Version Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: build-version-*
+          path: ./build-versions
+
+      - name: 📝 Extract KSU Versions
+        id: versions
+        run: |
+          # Récupérer la première version KSUN trouvée
+          if compgen -G "build-versions/*/ksun_*.txt" > /dev/null; then
+            ksun_ver=$(cat build-versions/*/ksun_*.txt | head -n1)
+            echo "ksun_ver=$ksun_ver" >> "$GITHUB_OUTPUT"
+            echo "✅ Found KSUN version: $ksun_ver"
+          else
+            echo "ksun_ver=" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No KSUN builds found"
+          fi
+          
+          # Récupérer la première version KSU trouvée
+          if compgen -G "build-versions/*/ksu_*.txt" > /dev/null; then
+            ksu_ver=$(cat build-versions/*/ksu_*.txt | head -n1)
+            echo "ksu_ver=$ksu_ver" >> "$GITHUB_OUTPUT"
+            echo "✅ Found KSU version: $ksu_ver"
+          else
+            echo "ksu_ver=" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No KSU builds found"
+          fi
+
       - name: 📝 Generate Device List and Final Release Notes
         id: generate-notes
         run: |
@@ -678,7 +745,6 @@ jobs:
             fi
           done
           
-          # 🆕 RÉCUPÉRATION KSU CONFIG DEPUIS LE JOB PRÉCÉDENT
           ksu_config='${{ needs.set-op-model.outputs.ksu_config }}'
           
           ksun_hash=$(echo "$ksu_config" | jq -r 'map(select(.type == "KSUN")) | first | .hash // empty')
@@ -751,6 +817,16 @@ jobs:
           
           ## 🔧 Build Configuration
           
+          **KSU Preset Used:** \`${{ inputs.ksu_preset }}\`
+          
+          ### 🔐 KernelSU Variants Built
+          
+          EOF
+          
+          echo "$ksu_config" | jq -r '.[] | "- **\(.type)** @ \(.hash)"' >> release_notes.md
+          
+          cat << EOF >> release_notes.md
+          
           | Component | Version/Setting |
           |-----------|----------------|
           EOF
@@ -758,14 +834,14 @@ jobs:
           if [ -n "$KSUN_BRANCH" ]; then
             cat << EOF >> release_notes.md
           | **KernelSU Next Branch** | \`$KSUN_BRANCH\` |
-          | **KernelSU Next Version** | \`${{ needs.build.outputs.ksun_ver }}\` |
+          | **KernelSU Next Version** | \`${{ steps.versions.outputs.ksun_ver }}\` |
           EOF
           fi
           
           if [ -n "$KSU_BRANCH" ]; then
             cat << EOF >> release_notes.md
           | **KernelSU Branch** | \`$KSU_BRANCH\` |
-          | **KernelSU Version** | \`${{ needs.build.outputs.ksu_ver }}\` |
+          | **KernelSU Version** | \`${{ steps.versions.outputs.ksu_ver }}\` |
           EOF
           fi
           
@@ -952,6 +1028,19 @@ jobs:
           **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})  
           **KSU Preset:** \`${{ inputs.ksu_preset }}\`  
           **Kernels:** $(find ./downloaded-artifacts -name "*.zip" | wc -l)
+          
+          ### 🔐 KSU Versions
+          EOF
+          
+          if [ -n "${{ steps.versions.outputs.ksun_ver }}" ]; then
+            echo "- **KernelSU Next:** v${{ steps.versions.outputs.ksun_ver }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "${{ steps.versions.outputs.ksu_ver }}" ]; then
+            echo "- **KernelSU:** v${{ steps.versions.outputs.ksu_ver }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
           
           ### 📦 Assets
           EOF
