@@ -17,23 +17,59 @@ on:
         required: true
         type: choice
         options:
+          # Bulk Build Options
           - OOS14+15+16
           - OOS15+16
           - OOS14+15
           - OOS16
           - OOS15
           - OOS14
+          # Android-Kernel Specific (OOS15+16 only)
           - android16-6.12
           - android15-6.6
           - android14-6.1
           - android13-5.15
           - android12-5.10
+          # OnePlus 13 Series
+          - OP13-CPH
+          - OP13-PJZ
+          - OP13r
+          - OP13S
+          - OP13T
+          # OnePlus 12 Series
+          - OP12
+          - OP12r
+          # OnePlus 11 Series
+          - OP11
+          - OP11r
+          # OnePlus 10 Series
+          - OP10pro
+          - OP10t
+          # OnePlus Nord Series
+          - OP-Nord-5
+          - OP-NORD-4
+          - OP-NORD-4-CE
+          - OP-NORD-CE4-LITE
+          # OnePlus Ace Series
+          - OP-ACE-5-PRO
+          - OP-ACE-5
+          - OP-ACE-3-PRO
+          - OP-ACE-3V
+          - OP-ACE-2-PRO
+          - OP-ACE-2
+          # OnePlus Other Devices
+          - OP-OPEN
+          # OnePlus Pad Series
+          - OP-PAD-3
+          - OP-PAD-2-PRO
+          - OP-PAD-2
+          - OP-PAD-PRO
         default: OOS15
-      ksu_options:
-        description: 'Enter KernelSU build json'
+      ksun_branch:
+        description: 'Enter KernelSU Next Branch or commit hash (blank for stable tag)'
         required: true
         type: string
-        default: '[{"type":"ksun","hash":"next"}]'
+        default: next
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -44,24 +80,8 @@ on:
         description: 'Clean build (no ccache)'
         type: boolean
         default: false
-      android12-5_10_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android12-5.10'
-        type: string
-        default: ''      
-      android13-5_15_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android13-5.15'
-        type: string
-        default: ''      
-      android14-6_1_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android14-6.1'
-        type: string
-        default: ''
-      android15-6_6_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android15-6.6'
-        type: string
-        default: ''
-      android16-6_12_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android16-6.12'
+      susfs_override:
+        description: 'Override SUSFS branch for ALL kernels (blank = auto gki-* branches)'
         type: string
         default: ''
 
@@ -87,87 +107,150 @@ jobs:
           echo "::group::Matrix generation"
           
           input="${{ github.event.inputs.op_model }}"
-          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "next" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
-            echo "::error::ksu_options validation failed: $ksu_options_normalized"
+          
+          # Build matrix.json from all config files
+          echo "📁 Scanning for configuration files..."
+          mapfile -t all_json_files < <(find configs/ -name "*.json" -type f | sort)
+          
+          echo "Found ${#all_json_files[@]} config file(s):"
+          printf '  - %s\n' "${all_json_files[@]}"
+          
+          if [ ${#all_json_files[@]} -eq 0 ]; then
+            echo "::error::No JSON config files found in configs/ directory!"
             exit 1
           fi
           
-          echo "[" > matrix.json
-          mapfile -t all_json_files < <(find configs/ -name "*.json" -print0 | xargs -0 -n1)
-          for i in "${!all_json_files[@]}"; do
-            file="${all_json_files[$i]}"
-            if [ -f "$file" ]; then
-              jq -r '.' "$file" >> matrix.json
-              if [ $((i+1)) -lt ${#all_json_files[@]} ]; then
-                echo "," >> matrix.json
-              fi
-            fi
-          done
-          echo "]" >> matrix.json
+          # Merge all JSON files into array
+          echo ""
+          echo "🔨 Building matrix.json..."
+          jq -s '.' "${all_json_files[@]}" > matrix.json
+          
+          # Validate JSON
+          if ! jq empty matrix.json 2>/dev/null; then
+            echo "::error::Generated matrix.json is invalid!"
+            echo "Content:"
+            cat matrix.json
+            exit 1
+          fi
+          
+          total_configs=$(jq 'length' matrix.json)
+          echo "✅ Successfully merged $total_configs configuration(s)"
+          
+          # Debug: Show first config
+          echo ""
+          echo "📋 Sample configuration:"
+          jq '.[0]' matrix.json
           
           jq_filter="."
+          filter_type="bulk"
           
           case "$input" in
             OOS14+15+16)
+              filter_type="bulk"
               ;;
             OOS15+16)
               jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\"))"
+              filter_type="bulk"
               ;;
             OOS14+15)
               jq_filter="map(select(.os_version == \"OOS14\" or .os_version == \"OOS15\"))"
+              filter_type="bulk"
               ;;
             OOS16)
               jq_filter="map(select(.os_version == \"OOS16\"))"
+              filter_type="bulk"
               ;;
             OOS15)
               jq_filter="map(select(.os_version == \"OOS15\"))"
+              filter_type="bulk"
               ;;
             OOS14)
               jq_filter="map(select(.os_version == \"OOS14\"))"
+              filter_type="bulk"
               ;;
             android*-*.*)
-              # Extract android version and kernel version
               IFS='-' read -r av kv <<< "$input"
-              
-              # Build android*-* only for OOS15 and OOS16
               jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
+              filter_type="android-kernel"
               
+              echo ""
               echo "ℹ️  Android-Kernel filter applied: $av-$kv"
               echo "   Restricted to: OOS15 and OOS16 only"
               ;;
             *)
-              echo "::warning::Unknown input '$input'. Using empty filter."
-              jq_filter="map(select(false))"
+              # Device model filter (case-insensitive)
+              filter_type="device"
+              
+              # Try exact match first
+              jq_filter="map(select(.model | ascii_upcase == \"${input^^}\"))"
+              
+              echo ""
+              echo "ℹ️  Device model filter applied: $input"
+              echo "   Searching across all OS versions..."
+              
+              # Debug: Show what we're searching for
+              echo ""
+              echo "🔍 Debug info:"
+              echo "   Looking for model: ${input^^}"
+              echo "   Available models:"
+              jq -r '.[].model' matrix.json | sort -u | sed 's/^/     - /'
               ;;
           esac
+          
+          echo ""
+          echo "🔧 Applying filter: $jq_filter"
           
           filtered=$(jq -c "$jq_filter" matrix.json)
           count=$(jq 'length' <<<"$filtered")
           
+          echo "📊 Filter result: $count device(s) matched"
+          
           if [ "$count" -eq 0 ]; then
+            echo ""
             echo "::error::No config files found for input '$input' after applying filters!"
             echo ""
-            echo "Available configurations:"
-            jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json
+            
+            if [ "$filter_type" = "device" ]; then
+              echo "❌ Device model '$input' not found in any configuration."
+              echo ""
+              
+              # Show similar models
+              similar=$(jq -r --arg model "${input^^}" '
+                .[] | 
+                select(.model | ascii_upcase | contains($model[0:4])) | 
+                .model
+              ' matrix.json | sort -u)
+              
+              if [ -n "$similar" ]; then
+                echo "💡 Did you mean one of these similar models?"
+                while IFS= read -r model; do
+                  jq -r --arg m "$model" '
+                    .[] | 
+                    select(.model == $m) | 
+                    "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"
+                  ' matrix.json
+                done <<< "$similar"
+                echo ""
+              fi
+            fi
+            
+            echo "📋 All available configurations:"
+            jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json | sort -u
+            
             exit 1
           fi
           
-          # For each device + each ksu option → one combined entry
-          merged_matrix=$(jq -n --argjson devices "$filtered" --argjson ksu_list "$ksu_options_normalized" '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+          wrapped=$(jq -n --argjson items "$filtered" '{ include: $items }')
           
-          final_count=$(echo "$merged_matrix" | jq -s length)
-          
-          wrapped=$(jq -n --argjson items "$merged_matrix" '{ include: $items }')
-          
-          echo "✅ Found $final_count device(s) to build"
+          echo ""
+          echo "✅ Found $count device(s) to build"
           echo ""
           echo "Selected devices:"
-          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' <<<"$merged_matrix"
+          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' <<<"$filtered"
           
           echo "matrix=$(jq -c . <<< "$wrapped")" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          
+    
           echo "::endgroup::"
 
       - name: Upload build matrix
@@ -179,71 +262,42 @@ jobs:
 
       - name: 📊 Build plan summary
         run: |
-          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "next" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1)
-          
-          # export KSU_OPTIONS="$ksu_options_normalized"
-          
-          # cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          # ## 🎯 Build Plan
-          
-          # **Target:** `${{ inputs.op_model }}`  
-          # **Devices:** ${{ steps.set-matrix.outputs.count }}  
-          
-          # **Configuration:**
-          # - KSU Config: `"$KSU_OPTIONS"`
-          # - Optimization: `${{ inputs.optimize_level }}`
-          # - Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}
-          # - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
-          
-          # **SUSFS Configuration:**
-          # EOF
-          
-          {
-            cat << 'EOF'
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
           ## 🎯 Build Plan
           
-          **Target:** ${{ inputs.op_model }}  
+          **Target:** `${{ inputs.op_model }}`  
           **Devices:** ${{ steps.set-matrix.outputs.count }}  
           
           **Configuration:**
-          - KSU Config: `
-          EOF
-          
-            # Inject the shell variable
-            printf '%s' "$ksu_options_normalized"
-          
-            cat << 'EOF'
-          `
-          - Optimization: ${{ inputs.optimize_level }}
+          - KSU Branch: `${{ inputs.ksun_branch }}`
+          - Optimization: `${{ inputs.optimize_level }}`
           - Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}
           - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
           
           **SUSFS Configuration:**
           EOF
-          } >> "$GITHUB_STEP_SUMMARY"
           
-          # Display SUSFS config for each kernel version
-          declare -A susfs_inputs=(
-            ["android12-5.10"]="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
-            ["android13-5.15"]="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
-            ["android14-6.1"]="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
-            ["android15-6.6"]="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
-            ["android16-6.12"]="${{ inputs.android16-6_12_susfs_branch_or_commit }}"
-          )
+          SUSFS_OVERRIDE="${{ inputs.susfs_override }}"
           
-          for key in "android12-5.10" "android13-5.15" "android14-6.1" "android15-6.6" "android16-6.12"; do
-            value="${susfs_inputs[$key]}"
-            
-            if [ -z "$value" ]; then
-              echo "- $key: 🔄 auto (\`gki-$key\`)" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "- $key: 📌 \`$value\`" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+          if [ -z "$SUSFS_OVERRIDE" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          - Mode: 🔄 **Auto** (each kernel uses matching `gki-androidX-Y.Z` branch)
+            - android12-5.10 → `gki-android12-5.10`
+            - android13-5.15 → `gki-android13-5.15`
+            - android14-6.1 → `gki-android14-6.1`
+            - android15-6.6 → `gki-android15-6.6`
+            - android16-6.12 → `gki-android16-6.12`
+          EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          - Mode: 📌 **Override** - All kernels use: \`$SUSFS_OVERRIDE\`
+          
+          > **⚠️ Warning:** Using the same SUSFS branch for all kernel versions may cause compatibility issues!
+          EOF
+          fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> **💡 Note:** Empty values auto-map to matching \`gki-androidX-Y.Z\` branches." >> $GITHUB_STEP_SUMMARY
+          echo "> **💡 Tip:** Leave \`susfs_override\` empty to auto-select compatible branches per kernel version." >> $GITHUB_STEP_SUMMARY
           
           # Add OOS restriction note for android-kernel filters
           if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
@@ -252,18 +306,16 @@ jobs:
           fi
 
   build:
-    name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ matrix.ksu_type }})
+    name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ inputs.ksun_branch }})
     needs: set-op-model
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
     outputs:
-      ksun_ver: ${{ steps.build-stat.outputs.ksu_version }}
-      ksu_ver: ${{ steps.build-stat.outputs.ksu_version }}
+      ksun_ver: ${{ steps.build.outputs.ksu_version }}
     steps:
       - name: 🧹 Emergency Disk Cleanup
-        if: ${{ matrix.disk_cleanup }}
         run: |
           echo "::group::Disk Usage Before Cleanup"
           df -h
@@ -286,49 +338,29 @@ jobs:
           echo "✅ Available space: $AVAIL"
           echo "::endgroup::"
 
-      - name: 🔍 Resolve SUSFS branch from inputs
+      - name: 🔍 Resolve SUSFS branch (smart auto-detection)
         id: susfs
         shell: bash
         if: ${{ matrix.susfs }}
         run: |
           set -euo pipefail
           
-          key="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          SUSFS_OVERRIDE="${{ inputs.susfs_override }}"
+          KERNEL_KEY="${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           
-          echo "Looking up SUSFS branch for: $key"
-          
-          # Map kernel version to input value
-          case "$key" in
-            "android12-5.10")
-              susfs_branch="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
-              ;;
-            "android13-5.15")
-              susfs_branch="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
-              ;;
-            "android14-6.1")
-              susfs_branch="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
-              ;;
-            "android15-6.6")
-              susfs_branch="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
-              ;;
-            "android16-6.12")
-              susfs_branch="${{ inputs.android16-6_12_susfs_branch_or_commit }}"
-              ;;
-            *)
-              echo "::error::Unsupported kernel version: $key"
-              exit 1
-              ;;
-          esac
-          
-          # If empty, it will be auto-resolved to gki-* branch in the action
-          if [ -z "$susfs_branch" ]; then
-            echo "ℹ️  No custom SUSFS branch specified for $key"
-            echo "   Will auto-select: gki-$key"
+          if [ -n "$SUSFS_OVERRIDE" ]; then
+            # User provided override - use it for ALL kernels
+            SUSFS_BRANCH="$SUSFS_OVERRIDE"
+            echo "📌 Using global SUSFS override: '$SUSFS_BRANCH'"
+            echo "   Applied to: $KERNEL_KEY"
           else
-            echo "✅ Using custom SUSFS branch for $key: '$susfs_branch'"
+            # Auto-select matching gki-* branch
+            SUSFS_BRANCH="gki-$KERNEL_KEY"
+            echo "🔄 Auto-selected SUSFS branch: '$SUSFS_BRANCH'"
+            echo "   For kernel: $KERNEL_KEY"
           fi
           
-          echo "susfs_branch=$susfs_branch" >> "$GITHUB_OUTPUT"
+          echo "susfs_branch=$SUSFS_BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
@@ -355,25 +387,17 @@ jobs:
             echo "::endgroup::"
           fi
 
-      - name: 🧹 Prepare op_config_json (without KSU fields)
-        id: prepare_config
-        shell: bash
-        run: |
-          echo "config_json=$(jq -nc --argjson m '${{ toJSON(matrix) }}' '$m | del(.ksu_type, .ksu_hash)')" >> "$GITHUB_OUTPUT"
-
       - name: 🔨 Build Kernel
         id: build
         uses: ./.github/actions
         with:
-          op_config_json: ${{ steps.prepare_config.outputs.config_json }}
-          ksu_type: ${{ matrix.ksu_type }}
-          ksu_branch_or_hash: ${{ matrix.ksu_hash }}
+          op_config_json: ${{ toJSON(matrix) }}
+          ksun_branch: ${{ inputs.ksun_branch }}
           susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
 
       - name: 📊 Build statistics
-        id: build-stat
         if: always()
         run: |
           echo "::group::Build Statistics"
@@ -392,15 +416,7 @@ jobs:
             echo ""
             echo "Outputs:"
             echo "  - Kernel: ${{ steps.build.outputs.kernel_version }}"
-            if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
-              echo "  - KSU Next: v${{ steps.build.outputs.ksu_version }}"
-              echo "ksun_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
-              echo "ksu_ver=" >> "$GITHUB_OUTPUT"
-            else
-              echo "  - KSU: v${{ steps.build.outputs.ksu_version }}"
-              echo "ksun_ver=" >> "$GITHUB_OUTPUT"
-              echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
-            fi
+            echo "  - KSU Next: v${{ steps.build.outputs.ksu_version }}"
             if [ "${{ matrix.susfs }}" = true ]; then
               echo "  - SUSFS: ${{ steps.build.outputs.susfs_version }}"
             fi
@@ -434,7 +450,7 @@ jobs:
           
           if [ "${{ matrix.susfs }}" = true ]; then
             cat >> $GITHUB_STEP_SUMMARY << EOF
-          **SUSFS Branch:** \`${{ steps.susfs.outputs.susfs_branch || format('(auto: gki-{0}-{1})', matrix.android_version, matrix.kernel_version) }}\`
+          **SUSFS Branch:** \`${{ steps.susfs.outputs.susfs_branch }}\`
           EOF
           fi
           
@@ -443,22 +459,13 @@ jobs:
           | Metric | Value |
           |--------|-------|
           | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
-          EOF
-            if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
-              cat >> $GITHUB_STEP_SUMMARY << EOF
           | **KSU Next** | v${{ steps.build.outputs.ksu_version }} |
           EOF
-            else
-              cat >> $GITHUB_STEP_SUMMARY << EOF
-          | **KSU** | v${{ steps.build.outputs.ksu_version }} |
-          EOF
-            fi
-            
-            if [ "${{ matrix.susfs }}" = true ]; then
-              cat >> $GITHUB_STEP_SUMMARY << EOF
+          if [ "${{ matrix.susfs }}" = true ]; then
+            cat >> $GITHUB_STEP_SUMMARY << EOF
           | **SUSFS** | ${{ steps.build.outputs.susfs_version }} |
           EOF
-            fi
+          fi
           cat >> $GITHUB_STEP_SUMMARY << EOF
           | **Build Time** | ${{ steps.build.outputs.build_time }}s |
           EOF
@@ -563,31 +570,28 @@ jobs:
             fi
           done
           
-          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "next" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1)
-          
-          ksun_hash=$(echo "$ksu_options_normalized" | jq -r 'map(select(.type == "KSUN")) | first | .hash // empty')
-          ksu_hash=$(echo "$ksu_options_normalized" | jq -r 'map(select(.type == "KSU")) | first | .hash // empty')
-          
           # Get workflow inputs for reference
-          KSUN_BRANCH="$ksun_hash"
-          KSU_BRANCH="$ksu_hash"
-          
+          KSUN_BRANCH="${{ inputs.ksun_branch }}"
           OPTIMIZE_LEVEL="${{ inputs.optimize_level }}"
           CLEAN_BUILD="${{ inputs.clean_build }}"
+          SUSFS_OVERRIDE="${{ inputs.susfs_override }}"
           
-          # Determine SUSFS branches used
-          SUSFS_A12="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
-          SUSFS_A13="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
-          SUSFS_A14="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
-          SUSFS_A15="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
-          SUSFS_A16="${{ inputs.android16-6_12_susfs_branch_or_commit }}"
-          
-          [ -z "$SUSFS_A12" ] && SUSFS_A12="gki-android12-5.10 (auto)"
-          [ -z "$SUSFS_A13" ] && SUSFS_A13="gki-android13-5.15 (auto)"
-          [ -z "$SUSFS_A14" ] && SUSFS_A14="gki-android14-6.1 (auto)"
-          [ -z "$SUSFS_A15" ] && SUSFS_A15="gki-android15-6.6 (auto)"
-          [ -z "$SUSFS_A16" ] && SUSFS_A16="gki-android16-6.12 (auto)"
+          # Determine SUSFS configuration display
+          if [ -z "$SUSFS_OVERRIDE" ]; then
+            SUSFS_CONFIG_MODE="Auto (per-kernel gki-* branches)"
+            SUSFS_A12="gki-android12-5.10 (auto)"
+            SUSFS_A13="gki-android13-5.15 (auto)"
+            SUSFS_A14="gki-android14-6.1 (auto)"
+            SUSFS_A15="gki-android15-6.6 (auto)"
+            SUSFS_A16="gki-android16-6.12 (auto)"
+          else
+            SUSFS_CONFIG_MODE="Global Override"
+            SUSFS_A12="$SUSFS_OVERRIDE (override)"
+            SUSFS_A13="$SUSFS_OVERRIDE (override)"
+            SUSFS_A14="$SUSFS_OVERRIDE (override)"
+            SUSFS_A15="$SUSFS_OVERRIDE (override)"
+            SUSFS_A16="$SUSFS_OVERRIDE (override)"
+          fi
           
           cat << EOF > release_notes.md
           # 🎯 OnePlus Kernels with KernelSU Next & SUSFS $SUSFS_BASE_VERSION
@@ -642,21 +646,10 @@ jobs:
           
           | Component | Version/Setting |
           |-----------|----------------|
-          EOF
-          if [ -n ${{ needs.build.outputs.ksun_ver }}]; then
-            cat << EOF >> release_notes.md
           | **KernelSU Next Branch** | \`$KSUN_BRANCH\` |
           | **KernelSU Next Version** | \`${{ needs.build.outputs.ksun_ver }}\` |
-          EOF
-          fi
-          if [ -n ${{ needs.build.outputs.ksu_ver }}]; then
-            cat << EOF >> release_notes.md
-          | **KernelSU Branch** | \`$KSU_BRANCH\` |
-          | **KernelSU Version** | \`${{ needs.build.outputs.ksu_ver }}\` |
-          EOF
-          fi
-          cat << EOF >> release_notes.md
           | **SUSFS Version** | \`$SUSFS_BASE_VERSION\` |
+          | **SUSFS Mode** | \`$SUSFS_CONFIG_MODE\` |
           | **Optimization Level** | \`$OPTIMIZE_LEVEL\` |
           | **Clean Build** | $( [ "$CLEAN_BUILD" = "true" ] && echo "✅ Yes (no ccache)" || echo "❌ No (ccache enabled)" ) |
           | **Compiler** | Clang (version varies by device) |
@@ -671,23 +664,22 @@ jobs:
           | android15-6.6  | \`$SUSFS_A15\` |
           | android16-6.12 | \`$SUSFS_A16\` |
           
+          EOF
+          
+          if [ -n "$SUSFS_OVERRIDE" ]; then
+            cat << EOF >> release_notes.md
+          > **⚠️ Note:** Global SUSFS override was used. All kernels use the same SUSFS branch: \`$SUSFS_OVERRIDE\`
+          
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
           ---
           
           ## ✨ Features & Capabilities
           
           ### 🔐 Root Management
-          EOF
-          if [ -n ${{ needs.build.outputs.ksun_ver }}]; then
-            cat << EOF >> release_notes.md
           - **KernelSU Next** - Next-generation kernel-level root solution
-          EOF
-          fi
-          if [ -n ${{ needs.build.outputs.ksu_ver }}]; then
-            cat << EOF >> release_notes.md
-          - **KernelSU** - Kernel-level root solution
-          EOF
-          fi
-          cat << EOF >> release_notes.md
           - **SUSFS $SUSFS_BASE_VERSION** - Advanced hiding and security features
           - **Magic Mount Support** - Seamless file system modifications
           - **Manual Hooks** - scope_min_manual_hooks_v1.4 for better compatibility
@@ -723,20 +715,9 @@ jobs:
           ## 📱 Manager Applications
           
           ### Official Manager
-          EOF
-          if [ -n ${{ needs.build.outputs.ksun_ver }}]; then
-            cat << EOF >> release_notes.md
           - **KernelSU Next Manager**  
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
-          EOF
-          fi
-          if [ -n ${{ needs.build.outputs.ksu_ver }}]; then
-            cat << EOF >> release_notes.md
-          - **KernelSU Next Manager**  
-            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
-          EOF
-          fi
-          cat << EOF >> release_notes.md
+          
           ### Community Managers
           - **WildKSU Manager** (Recommended for additional features)  
             → [GitHub Release](https://github.com/WildKernels/Wild_KSU/releases)
@@ -778,6 +759,7 @@ jobs:
           - Added TMPFS_XATTR and TMPFS_POSIX_ACL support for Mountify
           - Added Ptrace leak fix for kernels < 5.16
           - Compiler optimizations (${{ inputs.optimize_level }})
+          - Simplified SUSFS branch configuration (auto or global override)
           
           ### Previous Releases
           See [Releases Page](${{ github.server_url }}/${{ github.repository }}/releases)
@@ -787,7 +769,6 @@ jobs:
           ## 🙏 Credits
           
           - **KernelSU Next Team** - Root solution
-          - **KernelSU Team** - Root solution
           - **simonpunk** - SUSFS development
           - **OnePlus** - Kernel source code
           - **Community Contributors** - Testing and feedback
