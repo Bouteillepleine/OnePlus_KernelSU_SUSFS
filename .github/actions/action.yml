@@ -71,7 +71,7 @@ runs:
           google-cloud-sdk imagemagick \
           libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
           mercurial apt-transport-https mono-complete libmysqlclient \
-          unixodbc-dev yarn chrpath libssl-dev libxft-dev \
+          unixodbc-dev yarn chrpath libxft-dev \
           libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
           snmp pollinate libpq-dev postgresql-client powershell ruby-full \
           sphinxsearch subversion mongodb-org microsoft-edge-stable 2>/dev/null || true
@@ -87,10 +87,13 @@ runs:
         echo "=== Disk space after cleanup ==="
         df -h
 
-        # Install dependencies
+        # Install dependencies (including build essentials)
         echo "Installing dependencies..."
         sudo apt-get update
-        sudo apt-get install -y python3 python-is-python3 ccache zip curl git
+        sudo apt-get install -y \
+          python3 python-is-python3 ccache zip curl git \
+          build-essential bc bison flex libssl-dev libelf-dev \
+          libncurses-dev kmod cpio
 
         # Configure ccache
         export CCACHE_DIR=$GITHUB_WORKSPACE/ccache
@@ -127,15 +130,6 @@ runs:
           ccache-${{ inputs.model }}-${{ inputs.soc }}-
           ccache-${{ inputs.model }}-
 
-    - name: Cache Bazel
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/bazel
-        key: bazel-${{ inputs.model }}-${{ inputs.soc }}-${{ hashFiles('**/*.bzl', '**/*.bazel') }}
-        restore-keys: |
-          bazel-${{ inputs.model }}-${{ inputs.soc }}-
-          bazel-${{ inputs.model }}-
-
     - name: Clone AnyKernel3
       shell: bash
       run: |
@@ -165,26 +159,40 @@ runs:
         cd "$CONFIG"
 
         echo "Initializing kernel source repository..."
+        
         if [[ "${{ inputs.manifest }}" == https://* ]]; then
           echo "Using custom manifest URL..."
+          MANIFEST_NAME="temp_manifest.xml"
           mkdir -p .repo/manifests
-          curl -fsSL ${{ inputs.manifest }} -o .repo/manifests/temp_manifest.xml
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-            -b oneplus/sm8850 \
-            -m temp_manifest.xml \
-            --repo-rev=v2.16 \
-            --depth=1 \
-            --no-clone-bundle \
-            --no-tags
+          curl -fsSL ${{ inputs.manifest }} -o .repo/manifests/$MANIFEST_NAME
         else
           echo "Using manifest from repository..."
-          $REPO init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-            -b ${{ inputs.branch }} \
-            -m ${{ inputs.manifest }} \
-            --repo-rev=v2.16 \
-            --depth=1 \
-            --no-clone-bundle \
-            --no-tags
+          MANIFEST_NAME="${{ inputs.manifest }}"
+        fi
+        
+        $REPO init \
+          -u https://github.com/OnePlusOSS/kernel_manifest.git \
+          -b ${{ inputs.branch }} \
+          -m "$MANIFEST_NAME" \
+          --repo-rev=stable \
+          --depth=1 \
+          --no-clone-bundle \
+          --no-tags
+
+        # Filter out CLO repositories
+        echo "Filtering inaccessible repositories..."
+        MANIFEST_PATH=".repo/manifests/$MANIFEST_NAME"
+        
+        if [[ -f "$MANIFEST_PATH" ]]; then
+          cp "$MANIFEST_PATH" "${MANIFEST_PATH}.backup"
+          
+          # Remove CLO entries
+          sed -i '/<remote.*name="clo-la"/,/<\/remote>/d' "$MANIFEST_PATH" || true
+          sed -i '/<remote.*git\.codelinaro\.org/d' "$MANIFEST_PATH" || true
+          sed -i '/<project.*remote="clo-la"/d' "$MANIFEST_PATH" || true
+          sed -i '/git\.codelinaro\.org/d' "$MANIFEST_PATH" || true
+          
+          echo "✓ Manifest filtered"
         fi
 
         echo "Repo version:"
@@ -196,8 +204,12 @@ runs:
           --no-tags \
           --optimized-fetch \
           --prune \
-          -j$(nproc --all) \
-          --fail-fast
+          --force-sync \
+          -j$(nproc --all) 2>&1 | tee sync.log || {
+            echo "⚠️ Some repositories failed (expected for CLO)"
+            echo "Checking what was synced..."
+            $REPO list
+          }
 
         echo "✓ Kernel source synced successfully"
 
@@ -210,11 +222,27 @@ runs:
         cd "$CONFIG/kernel_platform"
 
         echo "Applying LTO configurations..."
-        if ! grep -q "CONFIG_LTO_CLANG_THIN=y" ./common/arch/arm64/configs/gki_defconfig; then
-          echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
+        
+        # Apply to gki_defconfig
+        if [ -f ./common/arch/arm64/configs/gki_defconfig ]; then
+          if ! grep -q "CONFIG_LTO_CLANG_THIN=y" ./common/arch/arm64/configs/gki_defconfig; then
+            echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          fi
+          if ! grep -q "CONFIG_LTO_CLANG=y" ./common/arch/arm64/configs/gki_defconfig; then
+            echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          fi
         fi
-        if ! grep -q "CONFIG_LTO_CLANG=y" ./common/arch/arm64/configs/gki_defconfig; then
-          echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+        
+        # Apply to vendor defconfig if exists
+        VENDOR_DEFCONFIG="./msm-kernel/arch/arm64/configs/vendor/${{ inputs.soc }}_defconfig"
+        if [ -f "$VENDOR_DEFCONFIG" ]; then
+          echo "Applying LTO to vendor defconfig..."
+          if ! grep -q "CONFIG_LTO_CLANG_THIN=y" "$VENDOR_DEFCONFIG"; then
+            echo "CONFIG_LTO_CLANG_THIN=y" >> "$VENDOR_DEFCONFIG"
+          fi
+          if ! grep -q "CONFIG_LTO_CLANG=y" "$VENDOR_DEFCONFIG"; then
+            echo "CONFIG_LTO_CLANG=y" >> "$VENDOR_DEFCONFIG"
+          fi
         fi
         
         echo "✓ LTO configurations applied"
@@ -229,25 +257,18 @@ runs:
 
         echo "Applying build script patches..."
 
-        # LTO configurations
-        sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig" || true
-        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig" || true
-        sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig" || true
+        # LTO configurations in defconfigs
+        find . -name "*defconfig" -type f -exec sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' {} + 2>/dev/null || true
+        find . -name "*defconfig" -type f -exec sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' {} + 2>/dev/null || true
+        find . -name "*defconfig" -type f -exec sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' {} + 2>/dev/null || true
 
         # Remove defconfig check
-        sed -i 's/check_defconfig//' ./common/build.config.gki || true
+        sed -i 's/check_defconfig//' ./common/build.config.gki 2>/dev/null || true
 
         # Remove dirty tags
-        sed -i 's/-dirty//' ./common/scripts/setlocalversion 2>/dev/null || true
-        sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion 2>/dev/null || true
-        sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion 2>/dev/null || true
+        find . -name "setlocalversion" -type f -exec sed -i 's/-dirty//' {} + 2>/dev/null || true
         sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py 2>/dev/null || true
         sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
-
-        # Fix setlocalversion output
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./common/scripts/setlocalversion 2>/dev/null || true
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./msm-kernel/scripts/setlocalversion 2>/dev/null || true
-        sed -i '$s|echo "\$res"|echo "\$res"|' ./external/dtc/scripts/setlocalversion 2>/dev/null || true
 
         # Configure OPLUS build
         if [ -f ./oplus/build/oplus_setup.sh ]; then
@@ -257,8 +278,7 @@ runs:
 
         # Set fixed kernel version string
         FIXED_VERSION='#1 SMP PREEMPT Thu Mar 05 04:20:00 UTC 2025'
-        perl -pi -e "s{UTS_VERSION=\"\\\$\\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\\)\"}{UTS_VERSION=\"$FIXED_VERSION\"}" ./common/scripts/mkcompile_h 2>/dev/null || true
-        perl -pi -e "s{UTS_VERSION=\"\\\$\\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\\)\"}{UTS_VERSION=\"$FIXED_VERSION\"}" ./msm-kernel/scripts/mkcompile_h 2>/dev/null || true
+        find . -name "mkcompile_h" -type f -exec perl -pi -e "s{UTS_VERSION=\"\\\$\\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\\)\"}{UTS_VERSION=\"$FIXED_VERSION\"}" {} + 2>/dev/null || true
 
         # Add parallel make flags
         find . -type f -name "*.sh" -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} + 2>/dev/null || true
@@ -280,8 +300,7 @@ runs:
         sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
 
         # Remove protected exports
-        rm -f ./kernel_platform/common/android/abi_gki_protected_exports_* 2>/dev/null || true
-        rm -f ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* 2>/dev/null || true
+        find . -name "abi_gki_protected_exports_*" -type f -delete 2>/dev/null || true
 
         # Setup ccache
         export PATH="/usr/lib/ccache:$PATH"
@@ -289,19 +308,15 @@ runs:
         echo "Initial ccache stats:"
         ccache -s
 
-        # Determine build type and arguments
+        # Determine build type
         BUILD_TYPE="gki"
-        BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
-        
         if [ "${{ inputs.soc }}" == "sun" ]; then
           BUILD_TYPE="perf"
-          BAZEL_ARGS+=(-g)
         fi
 
         echo "Build configuration:"
         echo "  SOC: ${{ inputs.soc }}"
         echo "  Build Type: $BUILD_TYPE"
-        echo "  Bazel Args: ${BAZEL_ARGS[*]}"
         echo "  CPU Cores: $(nproc --all)"
 
         # Start resource monitoring
@@ -315,27 +330,28 @@ runs:
             echo "Disk:"
             df -h / | tail -n 1
             echo ""
-            echo "Top processes:"
-            ps aux --sort=-%mem | head -n 6
-            echo ""
             sleep 120
           done
         ) &
         MONITOR_PID=$!
         trap "kill $MONITOR_PID 2>/dev/null || true" EXIT
 
-        # Build kernel
-        if [ -f ./kernel_platform/build_with_bazel.py ]; then
-          echo "Building with Bazel..."
-          ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-          ./kernel_platform/build_with_bazel.py \
-            -t ${{ inputs.soc }} \
-            "$BUILD_TYPE" \
-            "${BAZEL_ARGS[@]}" \
-            -o "$(pwd)/out"
+        # Build kernel (prioritize non-Bazel build)
+        cd kernel_platform
+        
+        if [ -f ./oplus/build/oplus_build_kernel.sh ]; then
+          echo "Building with OPLUS build system..."
+          export LTO=thin
+          bash ./oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+        elif [ -f ./build_kernel.sh ]; then
+          echo "Building with standard build script..."
+          export LTO=thin
+          bash ./build_kernel.sh ${{ inputs.soc }}
         else
-          echo "Building with legacy build system..."
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+          echo "Error: No build script found!"
+          echo "Available files:"
+          ls -la
+          exit 1
         fi
 
         # Calculate build time
@@ -351,14 +367,24 @@ runs:
         echo "Final ccache stats:"
         ccache -s
 
-        # Verify kernel image
-        if [ ! -f ./out/dist/Image ]; then
+        # Find and verify kernel image
+        echo "Searching for kernel Image..."
+        KERNEL_IMAGE=$(find . -name "Image" -type f | head -n 1)
+        
+        if [ -z "$KERNEL_IMAGE" ]; then
           echo "Error: Kernel Image not found!"
+          echo "Searching in common locations..."
+          find . -name "Image*" -type f
           exit 1
         fi
         
-        KERNEL_SIZE=$(du -h ./out/dist/Image | cut -f1)
+        echo "Found kernel at: $KERNEL_IMAGE"
+        KERNEL_SIZE=$(du -h "$KERNEL_IMAGE" | cut -f1)
         echo "Kernel Image size: $KERNEL_SIZE"
+        
+        # Create output directory and copy kernel
+        mkdir -p ../out/dist
+        cp -v "$KERNEL_IMAGE" ../out/dist/Image
 
     - name: Package with AnyKernel3
       shell: bash
@@ -380,19 +406,28 @@ runs:
         echo "Copying kernel Image..."
         cp -v ./out/dist/Image ../AnyKernel3/Image
 
+        # Copy dtb/dtbo if they exist
+        if [ -f ./out/dist/dtb ]; then
+          cp -v ./out/dist/dtb ../AnyKernel3/dtb
+        fi
+        if [ -f ./out/dist/dtbo.img ]; then
+          cp -v ./out/dist/dtbo.img ../AnyKernel3/dtbo.img
+        fi
+
         # Navigate to AnyKernel3
         cd ../AnyKernel3
 
         # Update AnyKernel3 properties
         if [ -f anykernel.sh ]; then
           sed -i "s/kernel.string=.*/kernel.string=${{ inputs.model }} by GitHub Actions/" anykernel.sh || true
+          sed -i "s/device.name1=.*/device.name1=${{ inputs.model }}/" anykernel.sh || true
         fi
 
         # Create zip package
-        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_$(date +%Y%m%d).zip"
+        ZIP_NAME="AnyKernel3_${{ inputs.model }}_${{ inputs.android_version }}-${{ inputs.kernel_version }}_$(date +%Y%m%d-%H%M%S).zip"
         echo "Creating zip package: $ZIP_NAME"
         
-        zip -r9 "../$ZIP_NAME" ./* -x .git\* -x .github\*
+        zip -r9 "../$ZIP_NAME" ./* -x .git\* -x .github\* -x README.md
         
         cd ..
         
@@ -409,6 +444,9 @@ runs:
         echo "Calculating checksums..."
         sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
         md5sum "$ZIP_NAME" > "${ZIP_NAME}.md5"
+        
+        cat "${ZIP_NAME}.sha256"
+        cat "${ZIP_NAME}.md5"
         
         echo "✓ Checksums generated"
 
