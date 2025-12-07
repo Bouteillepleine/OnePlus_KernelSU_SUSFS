@@ -215,10 +215,26 @@ runs:
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
           git curl ca-certificates build-essential clang lld flex bison \
           libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
-          libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix
+          libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils
         sudo apt-get clean
         echo "✅ Dependencies installed"
         echo "::endgroup::"
+
+    - name: Setup RUST
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: "1.82.0"
+
+    - name: Show Rust version
+      shell: bash
+      run: rustc -V
+
+    - name: Install bindgen if you ever need it
+      shell: bash
+      run: |
+        rustup toolchain install nightly
+        rustup default nightly
+        cargo +nightly install bindgen-cli --version 0.69.5
 
     - name: Setup Base Environment
       shell: bash
@@ -250,15 +266,15 @@ runs:
         elif [[ "$OP_BRANCH" == wild/* ]]; then
           mkdir -p .repo/manifests
           cp "../manifests/$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')/$OP_MANIFEST" .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags -v
         else
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m "$OP_MANIFEST" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m "$OP_MANIFEST" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags  -v
         fi
         
         "$REPO" --version
         success=false
         for i in 1 2 3; do
-          if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
+          if "$REPO" sync -c --force-sync -v --no-clone-bundle --no-tags --optimized-fetch \
              -j"$(nproc --all)" --fail-fast; then
             success=true
             break
@@ -344,19 +360,30 @@ runs:
         echo "   Host: $BUILD_HOST"
         echo "::endgroup::"
         
-    - name: Detect Clang
+    - name: Detect Clang and Rust
       shell: bash
       run: |
         set -euo pipefail
         echo "::group::Detect Clang"
         KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         CLANG_FOUND=false
+        RUSTC_FOUND=false
         for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
           [ -d "$base/clang/host/linux-x86" ] || continue
-          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 || true)
+          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | head -n1 || true)
           if [ -n "$latest" ] && [ -x "$latest/bin/clang" ]; then
             CLANG_BIN="$latest/bin"
             CLANG_FOUND=true
+            break
+          fi
+        done
+        for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
+          [ -d "$base/rust/linux-x86/" ] || continue
+          ls -la "$base/rust/linux-x86/"
+          latest=$(ls -d "$base/rust/linux-x86/1."* 2>/dev/null | sort -V | head -n1 || true)
+          if [ -n "$latest" ] && [ -x "$latest/bin/rustc" ]; then
+            RUSTC_BIN="$latest/bin"
+            RUSTC_FOUND=true
             break
           fi
         done
@@ -366,7 +393,15 @@ runs:
           echo "Using system clang."
         fi
         $CLANG_FOUND || { echo "::error::No clang toolchain found"; exit 1; }
+        $RUSTC_FOUND || { echo "::warning::No RUST toolchain found! Ignoring";}
         echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
+        if [ "$RUSTC_FOUND" = true ]; then
+          echo "RUSTC_BIN_PATH=$RUSTC_BIN" >> "$GITHUB_ENV"
+          RUSTC_VERSION="$("$RUSTC_BIN/rustc" --version | head -n1)"
+          echo "RUSTC_VERSION=$RUSTC_VERSION" >> "$GITHUB_ENV"
+          echo "✅ Detected RUSTC: $RUSTC_VERSION"
+        fi
+        
         CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
         echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
         echo "✅ Detected Clang: $CLANG_VERSION"
@@ -589,6 +624,7 @@ runs:
         cd "$CONFIG/kernel_platform"
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
+        sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl
         df -h
 
     - name: Add BBG
@@ -626,6 +662,8 @@ runs:
         KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
         sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
         
+        echo "NEED_HOOKS=true" >> $GITHUB_ENV
+        
         cd ..
         KSU_COMMIT_SHA=$(git rev-parse HEAD)
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
@@ -652,7 +690,10 @@ runs:
         cd KernelSU/kernel
         BASE_VERSION=20000
         KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
-        sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" Makefile
+        sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" Kbuild || true
+        sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" Makefile || true
+        
+        echo "NEED_HOOKS=false" >> $GITHUB_ENV
         
         cd ..
         KSU_COMMIT_SHA=$(git rev-parse HEAD)
@@ -891,6 +932,9 @@ runs:
         CONFIG_TCP_CONG_BBR=y
         CONFIG_NET_SCH_FQ=y
         CONFIG_NET_SCH_FQ_CODEL=y
+        CONFIG_TCP_CONG_BIC=n
+        CONFIG_TCP_CONG_WESTWOOD=n
+        CONFIG_TCP_CONG_HTCP=n
         EOF
         echo "::endgroup::"
 
@@ -943,12 +987,13 @@ runs:
         set -euo pipefail
         echo "::group::Add Build based configs"
         cd "$CONFIG/kernel_platform"
+        # CONFIG_LTO_CLANG_THIN=y
+        # CONFIG_LTO_CLANG=y
+        # CONFIG_OPTIMIZE_INLINING=y
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
-        CONFIG_LTO_CLANG_THIN=y
-        CONFIG_LTO_CLANG=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
-        CONFIG_OPTIMIZE_INLINING=y
+        CONFIG_ANDROID_BINDER_IPC_RUST=m
         EOF
         echo "::endgroup::"
 
@@ -977,9 +1022,128 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         cd "$KERNEL_PATH/common"
         mkdir -p out
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-Wild"
+        # CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-Wild"
+        CUSTOM_LOCALVERSION="-OP-Wild"
+        cat >> arch/arm64/configs/gki_defconfig <<EOF
+        CONFIG_LOCALVERSION="-OP-Wild"
+        CONFIG_UAPI_HEADER_TEST=n
+        EOF
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
         echo "::endgroup::"
+
+
+    # - name: Fix ashmem
+      # shell: bash
+      # run: |
+        # set -euo pipefail
+        # echo "::group::Fix ashmem"
+        # KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        # cd "$KERNEL_PATH"
+        # FILE=common/drivers/staging/android/ashmem.c
+        # if [[ -f "$FILE" ]] && ! grep -q 'is_ashmem_file' "$FILE"; then
+          # cat >>"$FILE" <<'EOF'
+        # bool is_ashmem_file(struct file *file) { return false; }
+        # int ashmem_area_name(struct file *file, char *name) { return 0; }
+        # long ashmem_area_size(struct file *file) { return 0; }
+        # struct file *ashmem_area_vmfile(struct file *file) { return NULL; }
+        # EXPORT_SYMBOL_GPL(is_ashmem_file);
+        # EXPORT_SYMBOL_GPL(ashmem_area_name);
+        # EXPORT_SYMBOL_GPL(ashmem_area_size);
+        # EXPORT_SYMBOL_GPL(ashmem_area_vmfile);
+        # EOF
+        # fi
+        
+        # sed -i -E 's/\$\(CONFIG_ANDROID_BINDER_IPC_RUST\)/m/g' common/drivers/android/Makefile
+        # echo "::endgroup::"
+
+    # - name: Revert Symbol Import Protection
+      # shell: bash
+      # run: |
+        # set -euo pipefail
+        # echo "::group::Symbol Import Protection"
+        # KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        # cd "$KERNEL_PATH/common"
+        # curl -Ls https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8850/commit/a3fde76f1ec7dcd9612611a5501efcad21ed81af.patch | patch -p1 -R
+        # curl -Ls https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8850/commit/cf33526ab767b383f7a25c5c29721b4004ec8c49.patch | patch -p1 -R
+        # echo "::endgroup::"
+
+    # - name: Run sed and perl Commands
+      # shell: bash
+      # run: |
+        # echo "Changing to configuration directory: $CONFIG..."
+        # cd "$CONFIG/kernel_platform"
+        
+        # echo "Running sed commands..."
+        
+        # # sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
+        # # sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+        # # sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+        
+        # # Run sed commands for modifications
+        # sed -i 's/check_defconfig//' ./common/build.config.gki
+        
+        # if [[ "$OP_KERNEL_VERSION" == "6.12" ]]; then
+          # sed -i '/check_defconfig = select({/,/}/c\        check_defconfig = "disabled"' ./build/kernel/kleaf/common_kernels.bzl
+        # fi
+        
+        # # sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}-OP-Wild"/' ./common/scripts/setlocalversion
+        # # chmod +x ./common/scripts/setlocalversion
+        # sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
+        # # sed -i 's/-dirty//' ./common/scripts/setlocalversion
+        # sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
+        
+        # # Run perl command to modify UTS_VERSION
+        # DATESTR=$(date -u)
+        # perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
+
+    # - name: Build the Kernel
+      # shell: bash
+      # run: |
+        # echo "Changing to configuration directory: $CONFIG..."
+        # cd "$CONFIG"
+        
+        # echo "Building the kernel..."
+        # # Clear Cache
+        # sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+        
+        # # rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+        
+        # BUILD_TYPE="gki"
+        # BAZEL_ARGS=(--jobs=$(nproc --all))
+        # if [[ "$OP_SOC" == "sun" || "$OP_SOC" == "canoe" ]]; then
+          # BUILD_TYPE="perf"
+          # # BAZEL_ARGS+=(-g)
+        # fi
+        
+        # (stdbuf -oL bash -c '
+          # while true; do
+            # echo "=== $(date) ==="
+            # free -h
+            # echo "======"
+            # df -h
+            # echo "======"
+            # top -b -n 1 | head -n 15
+            # echo ""
+            # sleep 60
+          # done
+        # ') &
+        # MONITOR_PID=$!
+        # trap "kill $MONITOR_PID" EXIT
+        
+        # KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        # BASE_PATH="/usr/lib/ccache:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
+        # export PATH="${BASE_PATH}:${PATH}"
+        
+        # BUILD_START=$(date +%s)
+        # cd kernel_platform
+        # ./tools/bazel build --config=fast --config=stamp --lto=none //common:kernel_aarch64_dist --verbose_failures --sandbox_debug || exit 1
+        
+        # BUILD_END=$(date +%s)
+        # BUILD_TIME=$((BUILD_END - BUILD_START))
+        
+        # echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
+        # echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
+        # echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
 
     - name: Build Kernel
       shell: bash
@@ -992,7 +1156,38 @@ runs:
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         cd "$COMMON"
-        : > "$COMMON/.scmversion"
+        # : > "$COMMON/.scmversion"
+        
+        cat \
+        gki/aarch64/symbols/base \
+        gki/aarch64/symbols/allwinner \
+        gki/aarch64/symbols/amlogic \
+        gki/aarch64/symbols/bcmstb \
+        gki/aarch64/symbols/db845c \
+        gki/aarch64/symbols/desktop \
+        gki/aarch64/symbols/exynos \
+        gki/aarch64/symbols/exynosauto \
+        gki/aarch64/symbols/fips140 \
+        gki/aarch64/symbols/galaxy \
+        gki/aarch64/symbols/honor \
+        gki/aarch64/symbols/imx \
+        gki/aarch64/symbols/mtk \
+        gki/aarch64/symbols/mtktv \
+        gki/aarch64/symbols/oplus \
+        gki/aarch64/symbols/pixel \
+        gki/aarch64/symbols/qcom \
+        gki/aarch64/symbols/rtkstb \
+        gki/aarch64/symbols/rtktv \
+        gki/aarch64/symbols/trusty \
+        gki/aarch64/symbols/tuxera \
+        gki/aarch64/symbols/type_visibility \
+        gki/aarch64/symbols/unisoc \
+        gki/aarch64/symbols/virtual_device \
+        gki/aarch64/symbols/vivo \
+        gki/aarch64/symbols/xiaomi \
+        | ../build/abi/flatten_symbol_list > abi_symbollist.raw
+        
+        touch protected_module_names_list
         
         export PYTHONWARNINGS="${PYTHONWARNINGS}"
         
@@ -1013,15 +1208,6 @@ runs:
         echo "👤 Build user: $KBUILD_BUILD_USER"
         echo "🖥️  Build host: $KBUILD_BUILD_HOST"
         
-        export PATH="/usr/lib/ccache:${CLANG_BIN_PATH}:${PATH}"
-        
-        if [ "${{ inputs.clean }}" = "true" ]; then
-          echo "🧹 Clean build mode - ccache disabled"
-          export CCACHE_DISABLE=1
-        else
-          echo "🚀 ccache-accelerated build"
-        fi
-        
         WORKSPACE="${GITHUB_WORKSPACE}"
         MAP="-fdebug-prefix-map=${WORKSPACE}=."
         MPMAP="-fmacro-prefix-map=${WORKSPACE}=."
@@ -1037,11 +1223,26 @@ runs:
         
         export LLVM=1 LLVM_IAS=1
         export ARCH=arm64 SUBARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export RUSTC="$KERNEL_PATH/prebuilts/rust/linux-x86/1.73.0b/bin/rustc"
+        export CROSS_COMPILE=aarch64-linux-android13-
         export PAHOLE="$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
         export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm 
         export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+        
+        BASE_PATH="/usr/lib/ccache:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/"
+        
+        if [ -n "${RUSTC_BIN_PATH:-}" ]; then
+          export PATH="${BASE_PATH}:${RUSTC_BIN_PATH}:${PATH}"
+          export RUSTC="$RUSTC_BIN_PATH/rustc"
+        else
+          export PATH="${BASE_PATH}:${PATH}"
+        fi
+        
+        if [ "${{ inputs.clean }}" = "true" ]; then
+          echo "🧹 Clean build mode - ccache disabled"
+          export CCACHE_DISABLE=1
+        else
+          echo "🚀 ccache-accelerated build"
+        fi
         
         OUT=out
         mkdir -p "$OUT"
@@ -1070,30 +1271,44 @@ runs:
         fi
         echo "============================================"
         
-        make O="$OUT" gki_defconfig
+        make LTO=none O="$OUT" gki_defconfig
         
         if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
           scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
-          scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
-          sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
+          scripts/config --file "$OUT/.config" -e LOCALVERSION_AUTO || true
+          scripts/config --file "$OUT/.config" -e MODULE_SCMVERSION || true
+          # scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
+          # sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
         fi
         
-        if [ "${{ inputs.optimize_level }}" = "O3" ]; then
+        # if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
-          scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
-          KCFLAGS_EXTRA="-O3"
-        else
+          # scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          # KCFLAGS_EXTRA="-O3"
+        # else
           scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
           KCFLAGS_EXTRA="-O2"
-        fi
+        # fi
         
-        scripts/config --file "$OUT/.config" -e LTO_CLANG_THIN
-        scripts/config --file "$OUT/.config" -e LTO_CLANG
-        make O="$OUT" olddefconfig
+        # Enable GKI ABI/symbol trimming (match Bazel)
+        scripts/config --file "$OUT/.config" -e TRIM_UNUSED_KSYMS
+        scripts/config --file "$OUT/.config" --set-str UNUSED_KSYMS_WHITELIST "abi_symbollist.raw"
         
+        # Enable module protection (match Bazel)
+        scripts/config --file "$OUT/.config" -e MODULE_SIG_PROTECT
+        scripts/config --file "$OUT/.config" --set-str MODULE_SIG_PROTECT_LIST "protected_module_names_list"
+        
+        scripts/config --file "$OUT/.config" -d LTO
+        scripts/config --file "$OUT/.config" -d LTO_CLANG
+        scripts/config --file "$OUT/.config" -d LTO_CLANG_FULL
+        scripts/config --file "$OUT/.config" -d LTO_CLANG_THIN
+        make LTO=none O="$OUT" olddefconfig
+        
+        # ${KCFLAGS_EXTRA}
         KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
-        KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
+        # -DCONFIG_OPTIMIZE_INLINING
+        KCPPFLAGS="$KCPPFLAGS"
         
         echo "============================================"
         echo "🔧 Build Configuration"
@@ -1122,15 +1337,19 @@ runs:
         if [ "${{ inputs.clean }}" != "true" ]; then
           if [ ! -d "$CCACHE_DIR" ] || [ -z "$(find "$CCACHE_DIR" -type f 2>/dev/null | head -n1)" ]; then
             echo "🔥 Priming cache with header preprocessing..."
-            make -C "$COMMON" O="$OUT" headers_install prepare 2>&1 | head -n 20 || true
+            make LTO=none -C "$COMMON" O="$OUT" headers_install prepare 2>&1 | head -n 20 || true
             echo ""
           fi
         fi
         
+        # CRITICAL: Force disable after priming
+        scripts/config --file "$OUT/.config" -e CC_CAN_LINK -e CC_CAN_LINK_STATIC
+        echo "# CONFIG_UAPI_HEADER_TEST is not set" >> "$OUT/.config"
+        
         BUILD_START=$(date +%s)
         set -o pipefail
         
-        make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
+        make LTO=none -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
         
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
@@ -1225,6 +1444,12 @@ runs:
         OUT="$COMMON/out"
         IMG="$OUT/arch/arm64/boot/Image"
         
+        if [ -f "$KERNEL_PATH/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image" ]; then
+          IMG="$KERNEL_PATH/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image"
+        elif [ -f "$KERNEL_PATH/bazel-bin/common/kernel_aarch64/Image" ]; then
+          IMG="$KERNEL_PATH/bazel-bin/common/kernel_aarch64/Image"
+        fi
+        
         if [ -f "$COMMON/build.log" ]; then
           WARNINGS_COUNT="$(grep -ciE '\bwarning:' "$COMMON/build.log" || true)"
           [ -n "$WARNINGS_COUNT" ] || WARNINGS_COUNT="0"
@@ -1274,8 +1499,15 @@ runs:
         set -euo pipefail
         echo "::group::Create kernel ZIP package"
         
+        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
         IMAGE_PATH="$CONFIG_DIR/kernel_platform/common/out/arch/arm64/boot/Image"
+        
+        if [ -f "$KERNEL_PATH/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image" ]; then
+          IMAGE_PATH="$KERNEL_PATH/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image"
+        elif [ -f "$KERNEL_PATH/bazel-bin/common/kernel_aarch64/Image" ]; then
+          IMAGE_PATH="$KERNEL_PATH/bazel-bin/common/kernel_aarch64/Image"
+        fi
         
         if [ ! -f "$IMAGE_PATH" ]; then
           echo "::error::Built Image not found at: $IMAGE_PATH"
@@ -1285,7 +1517,11 @@ runs:
         cp "$IMAGE_PATH" "$GITHUB_WORKSPACE/AnyKernel3/Image"
         cd "$GITHUB_WORKSPACE/AnyKernel3"
         
-        ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER}_${SUSVER}.zip"
+        if [ "${{ env.OP_SUSFS }}" = true ]; then
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_${SUSVER:-unknown}.zip"
+        else
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
+        fi
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         mkdir -p "$ARTIFACTS_DIR"
         
@@ -1336,10 +1572,10 @@ runs:
           echo "Build Host: ${{ env.BUILD_HOST }}"
           if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
             echo "KSUN Version: ${KSUVER:-unknown}"
-            echo "KSUN commit SHA: $KSU_SHA"
+            echo "KSUN commit SHA: ${KSU_SHA:-unknown}"
           else
             echo "KSU Version: ${KSUVER:-unknown}"
-            echo "KSU commit SHA: $KSU_SHA"
+            echo "KSU commit SHA: ${KSU_SHA:-unknown}"
           fi
           if [ "${{ env.OP_SUSFS }}" = true ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
