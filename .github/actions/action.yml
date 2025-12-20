@@ -1064,171 +1064,61 @@ runs:
         EOF
         echo "::endgroup::"
 
-    - name: Force Remove rust_binder.ko from BUILD.bazel
+    - name: Force Remove rust_binder.ko from Kleaf outputs (BUILD.bazel + modules.bzl)
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
         set -euo pipefail
-        echo "::group::Force remove rust_binder.ko from BUILD.bazel"
-        
-        BUILD_FILE="$CONFIG/kernel_platform/common/BUILD.bazel"
-        
-        if [ ! -f "$BUILD_FILE" ]; then
-          echo "::error::BUILD.bazel not found at $BUILD_FILE"
-          exit 1
-        fi
-        
-        echo "============================================"
-        echo "🔍 Checking BUILD.bazel for rust_binder.ko"
-        echo "============================================"
-        
-        # Vérifier si rust_binder.ko est présent
-        if grep -q "rust_binder.ko" "$BUILD_FILE"; then
-          echo "⚠️ rust_binder.ko found in BUILD.bazel"
-          
-          # Sauvegarder l'original
-          cp "$BUILD_FILE" "$BUILD_FILE.backup"
-          
-          # Compter les occurrences
-          OCCURRENCES=$(grep -c "rust_binder.ko" "$BUILD_FILE" || true)
-          echo "   Found $OCCURRENCES occurrence(s)"
-          
-          # Afficher le contexte AVANT suppression
-          echo ""
-          echo "Context (before removal):"
-          grep -B 2 -A 2 "rust_binder.ko" "$BUILD_FILE" | head -n 20
-          echo ""
-          
-          # SUPPRESSION AGRESSIVE avec plusieurs méthodes
-          echo "🔧 Applying multiple removal methods..."
-          
-          # Méthode 1: Suppression simple
-          sed -i '/rust_binder\.ko/d' "$BUILD_FILE"
-          
-          # Méthode 2: Suppression avec contexte (ligne + virgule)
-          sed -i '/"drivers\/android\/rust_binder\.ko",\?/d' "$BUILD_FILE"
-          
-          # Méthode 3: Suppression avec espaces/tabs
-          sed -i '/[[:space:]]*"drivers\/android\/rust_binder\.ko",\?/d' "$BUILD_FILE"
-          
-          # Méthode 4: Perl (plus puissant)
-          perl -i -pe 's/.*rust_binder\.ko.*\n//' "$BUILD_FILE"
-          
-          # Méthode 5: Suppression case-insensitive
-          sed -i '/[Rr][Uu][Ss][Tt]_[Bb][Ii][Nn][Dd][Ee][Rr]/d' "$BUILD_FILE"
-          
-          # Vérification STRICTE
-          if grep -qi "rust_binder" "$BUILD_FILE"; then
-            echo ""
-            echo "::error::❌ rust_binder.ko STILL PRESENT after aggressive removal!"
-            echo ""
-            echo "Remaining occurrences:"
-            grep -ni "rust_binder" "$BUILD_FILE"
-            echo ""
-            echo "Full context:"
-            grep -B 5 -A 5 -i "rust_binder" "$BUILD_FILE"
-            echo ""
-            echo "Attempting manual fix..."
-            
-            # Dernière tentative : réécrire le fichier sans les lignes problématiques
-            grep -v "rust_binder" "$BUILD_FILE" > "$BUILD_FILE.tmp"
-            mv "$BUILD_FILE.tmp" "$BUILD_FILE"
-            
-            # Vérification finale
-            if grep -qi "rust_binder" "$BUILD_FILE"; then
-              echo "::error::Manual fix failed. BUILD.bazel is corrupted."
-              echo "Restoring backup..."
-              mv "$BUILD_FILE.backup" "$BUILD_FILE"
-              exit 1
-            fi
-          fi
-          
-          echo ""
-          echo "✅ rust_binder.ko successfully removed"
-          
-          # Afficher les changements
-          echo ""
-          echo "============================================"
-          echo "📊 Changes made to BUILD.bazel"
-          echo "============================================"
-          
-          if diff -q "$BUILD_FILE.backup" "$BUILD_FILE" >/dev/null 2>&1; then
-            echo "⚠️ WARNING: No changes detected (file identical)"
-          else
-            echo "Changes:"
-            diff -u "$BUILD_FILE.backup" "$BUILD_FILE" | head -n 100 || true
-          fi
-          
-          # Compter les lignes supprimées
-          LINES_REMOVED=$(($(wc -l < "$BUILD_FILE.backup") - $(wc -l < "$BUILD_FILE")))
-          echo ""
-          echo "Lines removed: $LINES_REMOVED"
-          
-        else
-          echo "✅ rust_binder.ko NOT found in BUILD.bazel (already removed or not present)"
-        fi
-        
+        echo "::group::Force remove rust_binder.ko from Kleaf declarations"
+    
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        BUILD_FILE="$KP/common/BUILD.bazel"
+        MODULES_BZL="$KP/common/modules.bzl"
+    
+        [ -f "$BUILD_FILE" ] || { echo "::error::BUILD.bazel not found: $BUILD_FILE"; exit 1; }
+        [ -f "$MODULES_BZL" ] || { echo "::error::modules.bzl not found: $MODULES_BZL"; exit 1; }
+    
+        echo "🔧 Patching:"
+        echo " - $BUILD_FILE"
+        echo " - $MODULES_BZL"
+    
+        cp -f "$BUILD_FILE"  "$BUILD_FILE.backup"
+        cp -f "$MODULES_BZL" "$MODULES_BZL.backup"
+    
+        # Remove any explicit rust_binder module outputs
+        sed -i '/rust_binder\.ko/d' "$BUILD_FILE"
+        sed -i '/rust_binder\.ko/d' "$MODULES_BZL"
+        sed -i '/rust_binder/d' "$MODULES_BZL"
+    
         echo ""
-        echo "============================================"
-        echo "📋 Final verification"
-        echo "============================================"
-        
-        # Vérification finale STRICTE
-        if grep -qi "rust_binder" "$BUILD_FILE"; then
-          echo "::error::CRITICAL: rust_binder still present in BUILD.bazel!"
-          echo ""
-          echo "All occurrences:"
-          grep -ni "rust_binder" "$BUILD_FILE"
-          exit 1
-        fi
-        
-        echo "✅ BUILD.bazel is clean (no rust_binder references)"
-        
+        echo "📊 Diff (BUILD.bazel):"
+        diff -u "$BUILD_FILE.backup" "$BUILD_FILE" | head -n 120 || true
+    
         echo ""
-        echo "Remaining module_outs (first 30 lines):"
-        grep -A 200 'module_outs = \[' "$BUILD_FILE" | grep '\.ko"' | head -n 30 || true
-        
+        echo "📊 Diff (modules.bzl):"
+        diff -u "$MODULES_BZL.backup" "$MODULES_BZL" | head -n 120 || true
+    
+        echo ""
+        echo "✅ rust_binder removal patch applied"
         echo "::endgroup::"
 
-    - name: Verify BUILD.bazel is Clean
+    - name: Verify rust_binder is fully removed (BUILD + .bzl)
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
         set -euo pipefail
-        echo "::group::Final BUILD.bazel verification"
-        
-        BUILD_FILE="$CONFIG/kernel_platform/common/BUILD.bazel"
-        
-        echo "============================================"
-        echo "🔍 Final verification of BUILD.bazel"
-        echo "============================================"
-        
-        # Vérification STRICTE (case-insensitive)
-        if grep -qi "rust_binder" "$BUILD_FILE"; then
-          echo "::error::❌ CRITICAL ERROR: rust_binder still found in BUILD.bazel!"
+        echo "::group::Verify rust_binder is fully removed"
+    
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+    
+        echo "Searching for rust_binder references in common/ and build/ ..."
+        if grep -Rni --exclude-dir=.git "rust_binder" "$KP/common" "$KP/build" ; then
           echo ""
-          echo "All occurrences (case-insensitive):"
-          grep -ni "rust_binder" "$BUILD_FILE"
-          echo ""
-          echo "Full context:"
-          grep -B 10 -A 10 -i "rust_binder" "$BUILD_FILE"
+          echo "::error::rust_binder is still referenced somewhere above (must be removed)."
           exit 1
         fi
-        
-        echo "✅ BUILD.bazel is CLEAN (no rust_binder references)"
-        
-        # Afficher les modules restants
-        echo ""
-        echo "============================================"
-        echo "📋 Remaining module_outs (first 50)"
-        echo "============================================"
-        grep -A 500 'module_outs = \[' "$BUILD_FILE" | grep '\.ko"' | head -n 50 || true
-        
-        # Compter les modules
-        MODULE_COUNT=$(grep -A 500 'module_outs = \[' "$BUILD_FILE" | grep -c '\.ko"' || true)
-        echo ""
-        echo "Total modules declared: $MODULE_COUNT"
-        
+    
+        echo "✅ No rust_binder references found"
         echo "::endgroup::"
 
     - name: Save Build Metadata
@@ -1305,6 +1195,21 @@ runs:
         # Run perl command to modify UTS_VERSION
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
+
+    - name: Clean Kleaf out/cache (avoid stale module_outs)
+      shell: bash
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Clean Kleaf cache"
+    
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+    
+        echo "Removing: $KP/out/cache/*"
+        rm -rf "$KP/out/cache"/* || true
+    
+        echo "✅ Kleaf cache cleaned"
+        echo "::endgroup::"
 
     - name: Build the Kernel (Bazel with ccache)
       shell: bash
