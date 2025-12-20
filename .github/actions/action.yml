@@ -394,6 +394,35 @@ runs:
         echo "✅ Detected Clang: $CLANG_VERSION"
         echo "::endgroup::"
 
+    - name: Check Rust Availability and Module Compatibility
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Rust compatibility check"
+        
+        RUST_AVAILABLE=false
+        if [ -n "${RUSTC_BIN_PATH:-}" ] && [ -x "${RUSTC_BIN_PATH}/rustc" ]; then
+          RUST_AVAILABLE=true
+          echo "✅ Rust toolchain available: ${RUSTC_VERSION:-unknown}"
+        else
+          echo "⚠️ Rust toolchain NOT available"
+        fi
+        
+        # Pour noyaux 6.12, vérifier si rust_binder sera problématique
+        if [ "${{ env.OP_KERNEL_VERSION }}" = "6.12" ]; then
+          if [ "$RUST_AVAILABLE" = "false" ]; then
+            echo ""
+            echo "ℹ️  Kernel 6.12 detected without Rust"
+            echo "   → rust_binder.ko will be removed from BUILD.bazel"
+          else
+            echo ""
+            echo "✅ Kernel 6.12 with Rust support"
+            echo "   → rust_binder.ko can be compiled"
+          fi
+        fi
+        
+        echo "::endgroup::"
+
     - name: Derive Clang Short Version
       shell: bash
       run: |
@@ -1032,6 +1061,93 @@ runs:
         EOF
         echo "::endgroup::"
 
+    - name: Remove Unsupported Modules from Build
+      shell: bash
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Clean up module_outs list"
+        cd "$CONFIG/kernel_platform/common"
+        
+        if [ ! -f "BUILD.bazel" ]; then
+          echo "::error::BUILD.bazel not found"
+          exit 1
+        fi
+        
+        # Sauvegarder l'original
+        cp BUILD.bazel BUILD.bazel.orig
+        
+        # Liste des modules à retirer conditionnellement
+        MODULES_TO_REMOVE=()
+        
+        # Retirer rust_binder.ko si Rust n'est pas disponible
+        if [ -z "${RUSTC_BIN_PATH:-}" ] || [ ! -x "${RUSTC_BIN_PATH:-}/rustc" ]; then
+          MODULES_TO_REMOVE+=("drivers/android/rust_binder.ko")
+          echo "⚠️ Rust not available - will remove rust_binder.ko"
+        else
+          echo "✅ Rust available - keeping rust_binder.ko"
+        fi
+        
+        # Ajouter d'autres modules problématiques si nécessaire
+        # MODULES_TO_REMOVE+=("drivers/other/problematic.ko")
+        
+        if [ ${#MODULES_TO_REMOVE[@]} -eq 0 ]; then
+          echo "✅ No modules to remove"
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        for module in "${MODULES_TO_REMOVE[@]}"; do
+          echo "Removing: $module"
+          sed -i "\|${module}|d" BUILD.bazel
+        done
+        
+        echo ""
+        echo "✅ Cleaned module_outs list"
+        echo ""
+        echo "Modules removed:"
+        for module in "${MODULES_TO_REMOVE[@]}"; do
+          echo "  - $module"
+        done
+        
+        # Vérifier les changements
+        if diff -q BUILD.bazel.orig BUILD.bazel >/dev/null; then
+          echo "⚠️ No changes made (modules not found in BUILD.bazel)"
+        else
+          echo ""
+          echo "Changes preview:"
+          diff -u BUILD.bazel.orig BUILD.bazel | head -n 30 || true
+        fi
+        
+        echo "::endgroup::"
+
+    - name: Verify BUILD.bazel Modifications
+      shell: bash
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Verify BUILD.bazel"
+        cd "$CONFIG/kernel_platform/common"
+        
+        # Vérifier que rust_binder.ko n'est plus présent
+        if grep -q "rust_binder.ko" BUILD.bazel; then
+          if [ -z "${RUSTC_BIN_PATH:-}" ]; then
+            echo "::error::rust_binder.ko still present in BUILD.bazel but Rust is unavailable"
+            exit 1
+          else
+            echo "✅ rust_binder.ko present but Rust is available"
+          fi
+        else
+          echo "✅ rust_binder.ko successfully removed from BUILD.bazel"
+        fi
+        
+        # Afficher les modules restants
+        echo ""
+        echo "Remaining module_outs:"
+        grep -A 200 'module_outs = \[' BUILD.bazel | grep '\.ko"' | head -n 20 || true
+        
+        echo "::endgroup::"
+
     - name: Save Build Metadata
       id: save_metadata
       shell: bash
@@ -1077,8 +1193,7 @@ runs:
         CONFIG_TCP_CONG_BIC=n
         CONFIG_TCP_CONG_WESTWOOD=n
         CONFIG_TCP_CONG_HTCP=n
-        CONFIG_LOCALVERSION="-OP-Wild"
-        CONFIG_ANDROID_BINDER_IPC_RUST=m
+        CONFIG_LOCALVERSION="-OP-Wild"        
         EOF
         
         # sed -i '/_ARM64_GKI_MODULES_LIST = \[/,/\]/ {
