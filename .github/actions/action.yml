@@ -1192,8 +1192,8 @@ runs:
         sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
         
         # Run perl command to modify UTS_VERSION
-        DATESTR="$(date -u)"
-        perl -pi -e "s{UTS_VERSION=\"\\$\\(echo \\$UTS_VERSION \\$CONFIG_FLAGS \\$TIMESTAMP \\| cut -b -\\$UTS_LEN\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT ${DATESTR}\"}" ./common/scripts/mkcompile_h
+        DATESTR=$(date -u)
+        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
 
     - name: Clean Kleaf out/cache (avoid stale module_outs)
       shell: bash
