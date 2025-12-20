@@ -400,7 +400,6 @@ runs:
         set -euo pipefail
         echo "::group::Derive Clang fingerprint"
         
-        # Extract from path: /path/to/clang-r547379/bin -> 547379
         CLANG_DIR=$(basename "$(dirname "${CLANG_BIN_PATH}")")
         echo "Clang directory: $CLANG_DIR"
         
@@ -408,7 +407,6 @@ runs:
           short="${BASH_REMATCH[1]}"
           echo "✅ Extracted version from directory: r$short"
         else
-          # Fallback: extract from --version output
           version_output="$("${CLANG_BIN_PATH}/clang" --version | head -n1)"
           echo "Clang version output: $version_output"
           
@@ -416,14 +414,12 @@ runs:
             short="${BASH_REMATCH[1]}"
             echo "✅ Extracted version from output: r$short"
           else
-            # Last resort: use stable hash of directory name
             short=$(echo "$CLANG_DIR" | md5sum | cut -c1-8)
             echo "⚠️ Using stable directory hash: $short"
           fi
         fi
         
         echo "CLANG_VERSION_SHORT=$short" >> "$GITHUB_ENV"
-        
         CLANG_FULL_VERSION="$("${CLANG_BIN_PATH}/clang" --version | head -n1)"
         echo "CLANG_FULL_VERSION=$CLANG_FULL_VERSION" >> "$GITHUB_ENV"
         
@@ -443,6 +439,7 @@ runs:
         echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
         
         mkdir -p "$CACHE_DIR"
+        mkdir -p "$HOME/.bazel_cache"
         
         echo "Cache configuration:"
         echo "  Directory: $CACHE_DIR"
@@ -453,17 +450,25 @@ runs:
         echo "  Clang: ${CLANG_VERSION_SHORT:-unknown}"
         echo "  Device: ${OP_MODEL:-unknown}"
         echo "::endgroup::"
-       
+        
     - name: Cache ccache
       uses: actions/cache@v4
       with:
-        path: |
-          ${{ env.CCACHE_DIR }}
-          ~/.bazel_cache        
-        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ccache-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+        
+    - name: Cache Bazel
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      uses: actions/cache@v4
+      with:
+        path: ~/.bazel_cache
+        key: bazel-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        restore-keys: |
+          bazel-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          bazel-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-        
    
     - name: Configure ccache
       shell: bash
@@ -878,6 +883,7 @@ runs:
         echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
+
     - name: Apply Other Patches
       shell: bash
       run: |
@@ -1055,67 +1061,59 @@ runs:
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
         echo "::endgroup::"
 
-    - name: Configure Kernel with LTO Thin
+    - name: Run sed and perl Commands
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
-        set -euo pipefail
-        echo "::group::Configure kernel with LTO Thin"
+        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         
-        # ========== ENABLE LTO ==========
-        echo "Enabling LTO Thin..."
+        echo "Running sed commands..."
+        
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
-        
-        # Remove any conflicting LTO_NONE settings
-        sed -i '/CONFIG_LTO_CLANG_NONE/d' "./common/arch/arm64/configs/gki_defconfig"
-        
-        # ========== ADD KERNEL CONFIGS ==========
-        echo "Adding kernel configurations..."
+        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_NONE=y/' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_CLANG_NONE=y/' "./common/arch/arm64/configs/gki_defconfig"
         cat >> ./common/arch/arm64/configs/gki_defconfig <<EOF
-        # TCP Congestion Control
         CONFIG_TCP_CONG_BIC=n
         CONFIG_TCP_CONG_WESTWOOD=n
         CONFIG_TCP_CONG_HTCP=n
-        
-        # Kernel Branding
         CONFIG_LOCALVERSION="-OP-Wild"
-        
-        # Rust Binder
         CONFIG_ANDROID_BINDER_IPC_RUST=m
-        
-        # LTO Configuration (ensure it's set)
-        CONFIG_LTO_CLANG_THIN=y
-        CONFIG_LTO_CLANG=y
-        
-        # Optimization Settings
-        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
-        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
-        CONFIG_OPTIMIZE_INLINING=y
         EOF
         
-        # ========== DISABLE DEFCONFIG CHECKS ==========
+        # sed -i '/_ARM64_GKI_MODULES_LIST = \[/,/\]/ {
+            # /\]/i\
+            # "net/ipv4/tcp_bic.ko",\
+            # "net/ipv4/tcp_htcp.ko",\
+            # "net/ipv4/tcp_westwood.ko",
+        # }' ./common/modules.bzl
+        
+        # sed -i "s/$(printf '\044'){{kernelrelease}}/\"$(printf '\044'){{kernelrelease}}\"/g" ./build/kernel/kleaf/impl/kernel_modules_install.bzl
+        # sed -i -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ s/"modules",\?//g' -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ {/^[[:space:]]*$/d}' -e 's/module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64")/module_implicit_outs = []/' common/BUILD.bazel
+        # sed -i -e 's/":tests_zip_arm64",//' -e '/extra_dist/,/]/ {/^[[:space:]]*$/d}' -e 's/kmi_enforced = True,/kmi_enforced = False,/' -e 's/kmi_symbol_list_strict_mode = True,/kmi_symbol_list_strict_mode = False,/' -e 's/trim_nonlisted_kmi = True,/trim_nonlisted_kmi = False,/' common/BUILD.bazel
+        
+        # Run sed commands for modifications
         sed -i 's/check_defconfig//' ./common/build.config.gki
-        sed -i '/check_defconfig = select({/,/}/c\        check_defconfig = "disabled"' ./build/kernel/kleaf/common_kernels.bzl
         
-        # ========== CLEAN VERSION STRINGS ==========
-        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || true
-        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || true
+        if [[ "$OP_KERNEL_VERSION" == "6.12" ]]; then
+          sed -i '/check_defconfig = select({/,/}/c\        check_defconfig = "disabled"' ./build/kernel/kleaf/common_kernels.bzl
+        fi
         
-        # ========== SET BUILD TIMESTAMP ==========
+        # sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNEL_FULL_VER}${config_localversion}"/' ./common/scripts/setlocalversion
+        # chmod +x ./common/scripts/setlocalversion
+        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
+        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
+        
+        # Run perl command to modify UTS_VERSION
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
-        
-        echo "✅ Kernel configured with LTO Thin"
-        echo "::endgroup::"
 
     - name: Build the Kernel (Bazel with ccache)
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
         set -euo pipefail
-        echo "::group::Build kernel with Bazel + ccache + LTO Thin"
+        echo "::group::Build kernel with Bazel + ccache"
         
         cd "$CONFIG/kernel_platform"
         
@@ -1153,15 +1151,16 @@ runs:
         export PATH="${BASE_PATH}:${PATH}"
         
         # ========== DETERMINE OPTIMIZATION LEVEL ==========
+        # 🎯 NOUVELLE CONFIGURATION : LTO Thin activé par défaut
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           OPT_FLAG="-O3"
           OPT_LEVEL="O3"
+          LTO_MODE="thin"  # O3 + LTO Thin
         else
           OPT_FLAG="-O2"
           OPT_LEVEL="O2"
+          LTO_MODE="thin"  # ✅ O2 + LTO Thin (RECOMMANDÉ)
         fi
-        
-        echo "🎯 Optimization level: $OPT_LEVEL"
         
         # ========== PRE-BUILD STATS ==========
         BUILD_START=$(date +%s)
@@ -1186,32 +1185,40 @@ runs:
           echo "============================================"
           echo ""
           
+          # Zero ccache stats for accurate measurement
           ccache -z
         else
           echo "⚠️ Clean build mode - caches will be bypassed"
           export CCACHE_DISABLE=1
         fi
         
-        # ========== BAZEL BUILD WITH CCACHE + LTO THIN ==========
-        echo "🔨 Starting Bazel build with:"
-        echo "   - ccache integration"
-        echo "   - LTO Thin"
-        echo "   - Optimization: $OPT_LEVEL"
+        # ========== BAZEL BUILD ARGUMENTS ==========
+        echo "🎯 Build configuration:"
+        echo "   Optimization: $OPT_LEVEL"
+        echo "   LTO: $LTO_MODE"
+        echo "   CPUs: $(nproc --all)"
+        echo "   RAM limit: 80%"
         echo ""
         
         BAZEL_ARGS=(
+          # Build configs
           "--config=fast"
           "--config=stamp"
-          "--lto=thin"
-          "--compilation_mode=opt"
+          "--lto=$LTO_MODE"
+          
+          # Optimization flags
           "--copt=$OPT_FLAG"
           "--copt=-pipe"
           "--copt=-fno-stack-protector"
           "--copt=-Wno-error"
           "--copt=-Wno-unused-command-line-argument"
+          
+          # Cache configuration
           "--disk_cache=$BAZEL_CACHE_DIR"
           "--repository_cache=$BAZEL_CACHE_DIR/repo"
           "--experimental_repository_cache_hardlinks"
+          
+          # ccache environment
           "--action_env=PATH=$PATH"
           "--action_env=CCACHE_DIR=$CCACHE_DIR"
           "--action_env=CCACHE_MAXSIZE=$CCACHE_MAXSIZE"
@@ -1220,9 +1227,23 @@ runs:
           "--action_env=CCACHE_NOHASHDIR=$CCACHE_NOHASHDIR"
           "--action_env=CCACHE_SLOPPINESS=$CCACHE_SLOPPINESS"
           "--action_env=CLANG_BIN_PATH=$CLANG_BIN_PATH"
+          
+          # Sandbox configuration
           "--sandbox_writable_path=$CCACHE_DIR"
           "--sandbox_writable_path=$BAZEL_CACHE_DIR"
+          
+          # Performance optimizations
+          "--jobs=$(nproc --all)"
+          "--local_ram_resources=HOST_RAM*.8"
+          "--local_cpu_resources=HOST_CPUS"
+          
+          # Cache optimizations
+          "--experimental_guard_against_concurrent_changes"
+          "--experimental_reuse_sandbox_directories"
+          
+          # Debug
           "--verbose_failures"
+          "--show_progress_rate_limit=5"
         )
         
         if [ "${{ inputs.clean }}" = "true" ]; then
@@ -1230,7 +1251,20 @@ runs:
           echo "🧹 Clean build - ccache disabled"
         fi
         
-        # Monitor system resources during build
+        # ========== DISPLAY CONFIGURATION ==========
+        echo "============================================"
+        echo "🔨 Bazel Build Configuration"
+        echo "============================================"
+        echo "Optimization: $OPT_LEVEL"
+        echo "LTO: $LTO_MODE"
+        echo "Jobs: $(nproc --all)"
+        echo "RAM limit: 80% of available"
+        echo "ccache: $([ "${{ inputs.clean }}" = "true" ] && echo "DISABLED" || echo "ENABLED")"
+        echo "Bazel cache: $BAZEL_CACHE_DIR"
+        echo "============================================"
+        echo ""
+        
+        # ========== MONITOR SYSTEM RESOURCES ==========
         (stdbuf -oL bash -c '
           while true; do
             echo "=== $(date +%H:%M:%S) ==="
@@ -1243,7 +1277,10 @@ runs:
         MONITOR_PID=$!
         trap "kill $MONITOR_PID 2>/dev/null || true" EXIT
         
-        # Execute build
+        # ========== EXECUTE BUILD ==========
+        echo "🔨 Starting Bazel build..."
+        echo ""
+        
         if ! ./tools/bazel build "${BAZEL_ARGS[@]}" //common:kernel_aarch64_dist; then
           echo "::error::Bazel build failed"
           kill $MONITOR_PID 2>/dev/null || true
@@ -1281,10 +1318,36 @@ runs:
         fi
         
         echo ""
-        echo "✅ Bazel build completed successfully!"
-        echo "   Optimization: $OPT_LEVEL"
-        echo "   LTO: Thin"
-        echo "   Duration: ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
+        echo "✅ Bazel build completed in ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
+        echo "::endgroup::"
+
+    - name: 🔍 Verify Cache Before Save
+      if: always()
+      shell: bash
+      run: |
+        echo "::group::Verify cache directories"
+        
+        echo "=== ccache directory ==="
+        if [ -d "$CCACHE_DIR" ]; then
+          CCACHE_SIZE=$(du -sh "$CCACHE_DIR" 2>/dev/null | cut -f1)
+          CCACHE_FILES=$(find "$CCACHE_DIR" -type f 2>/dev/null | wc -l)
+          echo "Size: $CCACHE_SIZE"
+          echo "Files: $CCACHE_FILES"
+        else
+          echo "Directory not found!"
+        fi
+        
+        echo ""
+        echo "=== Bazel cache directory ==="
+        if [ -d ~/.bazel_cache ]; then
+          BAZEL_SIZE=$(du -sh ~/.bazel_cache 2>/dev/null | cut -f1)
+          BAZEL_FILES=$(find ~/.bazel_cache -type f 2>/dev/null | wc -l)
+          echo "Size: $BAZEL_SIZE"
+          echo "Files: $BAZEL_FILES"
+        else
+          echo "Directory not found!"
+        fi
+        
         echo "::endgroup::"
 
     - name: Build Kernel
