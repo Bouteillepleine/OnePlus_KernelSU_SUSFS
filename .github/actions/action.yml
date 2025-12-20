@@ -400,13 +400,26 @@ runs:
         set -euo pipefail
         echo "::group::Derive Clang fingerprint"
         
-        short="$("${CLANG_BIN_PATH}/clang" --version | sed -n '1s/.*clang-r\([0-9.]\+\).*/\1/p')"
+        # Extract from path: /path/to/clang-r547379/bin -> 547379
+        CLANG_DIR=$(basename "$(dirname "${CLANG_BIN_PATH}")")
+        echo "Clang directory: $CLANG_DIR"
         
-        if [ -z "$short" ]; then
-          short="$("${CLANG_BIN_PATH}/clang" --version | sha256sum | cut -c1-8)"
-          echo "⚠️ Could not extract clang-r version, using hash: $short"
+        if [[ "$CLANG_DIR" =~ clang-r([0-9]+) ]]; then
+          short="${BASH_REMATCH[1]}"
+          echo "✅ Extracted version from directory: r$short"
         else
-          echo "✅ Clang version fingerprint: $short"
+          # Fallback: extract from --version output
+          version_output="$("${CLANG_BIN_PATH}/clang" --version | head -n1)"
+          echo "Clang version output: $version_output"
+          
+          if [[ "$version_output" =~ based[[:space:]]+on[[:space:]]+r([0-9]+) ]]; then
+            short="${BASH_REMATCH[1]}"
+            echo "✅ Extracted version from output: r$short"
+          else
+            # Last resort: use stable hash of directory name
+            short=$(echo "$CLANG_DIR" | md5sum | cut -c1-8)
+            echo "⚠️ Using stable directory hash: $short"
+          fi
         fi
         
         echo "CLANG_VERSION_SHORT=$short" >> "$GITHUB_ENV"
@@ -414,7 +427,9 @@ runs:
         CLANG_FULL_VERSION="$("${CLANG_BIN_PATH}/clang" --version | head -n1)"
         echo "CLANG_FULL_VERSION=$CLANG_FULL_VERSION" >> "$GITHUB_ENV"
         
-        echo "Full Clang version: $CLANG_FULL_VERSION"
+        echo ""
+        echo "📌 Clang fingerprint: $short"
+        echo "📌 Full version: $CLANG_FULL_VERSION"
         echo "::endgroup::"
 
     - name: Set Cache Environment
@@ -438,17 +453,17 @@ runs:
         echo "  Clang: ${CLANG_VERSION_SHORT:-unknown}"
         echo "  Device: ${OP_MODEL:-unknown}"
         echo "::endgroup::"
-    
-    - name: Cache ccache and Bazel
+       
+    - name: Cache ccache
       uses: actions/cache@v4
       with:
         path: |
           ${{ env.CCACHE_DIR }}
-          ~/.bazel_cache
-        key: build-cache-ksun-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+          ~/.bazel_cache        
+        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          build-cache-ksun-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          build-cache-ksun-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
    
     - name: Configure ccache
       shell: bash
@@ -491,7 +506,7 @@ runs:
         echo "✅ ccache configured for production"
         echo ""
         echo "Configuration applied:"
-        echo "  Max size: 12G (persisted)"
+        echo "  Max size: 1G (persisted)"
         echo "  Base dir: ${GITHUB_WORKSPACE}"
         echo "  Compression: zstd level 3"
         echo "  Direct mode: enabled"
@@ -995,8 +1010,9 @@ runs:
         EOF
         echo "::endgroup::"
 
-    - name: Add Build based configs
+    - name: Add Build based configs (for non-6.12 kernels)
       shell: bash
+      if: ${{ env.OP_KERNEL_VERSION != '6.12' }}
       run: |
         set -euo pipefail
         echo "::group::Add Build based configs"
@@ -1039,52 +1055,60 @@ runs:
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
         echo "::endgroup::"
 
-    - name: Run sed and perl Commands
+    - name: Configure Kernel with LTO Thin
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
+        set -euo pipefail
+        echo "::group::Configure kernel with LTO Thin"
         cd "$CONFIG/kernel_platform"
         
-        echo "Running sed commands..."
-        
+        # ========== ENABLE LTO ==========
+        echo "Enabling LTO Thin..."
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_NONE=y/' "./common/arch/arm64/configs/gki_defconfig"
-        sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_CLANG_NONE=y/' "./common/arch/arm64/configs/gki_defconfig"
+        sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+        
+        # Remove any conflicting LTO_NONE settings
+        sed -i '/CONFIG_LTO_CLANG_NONE/d' "./common/arch/arm64/configs/gki_defconfig"
+        
+        # ========== ADD KERNEL CONFIGS ==========
+        echo "Adding kernel configurations..."
         cat >> ./common/arch/arm64/configs/gki_defconfig <<EOF
+        # TCP Congestion Control
         CONFIG_TCP_CONG_BIC=n
         CONFIG_TCP_CONG_WESTWOOD=n
         CONFIG_TCP_CONG_HTCP=n
+        
+        # Kernel Branding
         CONFIG_LOCALVERSION="-OP-Wild"
+        
+        # Rust Binder
         CONFIG_ANDROID_BINDER_IPC_RUST=m
+        
+        # LTO Configuration (ensure it's set)
+        CONFIG_LTO_CLANG_THIN=y
+        CONFIG_LTO_CLANG=y
+        
+        # Optimization Settings
+        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
+        CONFIG_OPTIMIZE_INLINING=y
         EOF
         
-        # sed -i '/_ARM64_GKI_MODULES_LIST = \[/,/\]/ {
-            # /\]/i\
-            # "net/ipv4/tcp_bic.ko",\
-            # "net/ipv4/tcp_htcp.ko",\
-            # "net/ipv4/tcp_westwood.ko",
-        # }' ./common/modules.bzl
-        
-        # sed -i "s/$(printf '\044'){{kernelrelease}}/\"$(printf '\044'){{kernelrelease}}\"/g" ./build/kernel/kleaf/impl/kernel_modules_install.bzl
-        # sed -i -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ s/"modules",\?//g' -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ {/^[[:space:]]*$/d}' -e 's/module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64")/module_implicit_outs = []/' common/BUILD.bazel
-        # sed -i -e 's/":tests_zip_arm64",//' -e '/extra_dist/,/]/ {/^[[:space:]]*$/d}' -e 's/kmi_enforced = True,/kmi_enforced = False,/' -e 's/kmi_symbol_list_strict_mode = True,/kmi_symbol_list_strict_mode = False,/' -e 's/trim_nonlisted_kmi = True,/trim_nonlisted_kmi = False,/' common/BUILD.bazel
-        
-        # Run sed commands for modifications
+        # ========== DISABLE DEFCONFIG CHECKS ==========
         sed -i 's/check_defconfig//' ./common/build.config.gki
+        sed -i '/check_defconfig = select({/,/}/c\        check_defconfig = "disabled"' ./build/kernel/kleaf/common_kernels.bzl
         
-        if [[ "$OP_KERNEL_VERSION" == "6.12" ]]; then
-          sed -i '/check_defconfig = select({/,/}/c\        check_defconfig = "disabled"' ./build/kernel/kleaf/common_kernels.bzl
-        fi
+        # ========== CLEAN VERSION STRINGS ==========
+        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || true
+        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || true
         
-        # sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNEL_FULL_VER}${config_localversion}"/' ./common/scripts/setlocalversion
-        # chmod +x ./common/scripts/setlocalversion
-        sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
-        sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
-        
-        # Run perl command to modify UTS_VERSION
+        # ========== SET BUILD TIMESTAMP ==========
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
+        
+        echo "✅ Kernel configured with LTO Thin"
+        echo "::endgroup::"
 
     - name: Build the Kernel (Bazel with ccache)
       shell: bash
