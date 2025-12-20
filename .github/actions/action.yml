@@ -1066,7 +1066,7 @@ runs:
 
     - name: Force Remove rust_binder.ko from Kleaf outputs (BUILD.bazel + modules.bzl)
       shell: bash
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' && env.RUSTC_BIN_PATH == '' }}
       run: |
         set -euo pipefail
         echo "::group::Force remove rust_binder.ko from Kleaf declarations"
@@ -1085,7 +1085,6 @@ runs:
         cp -f "$BUILD_FILE"  "$BUILD_FILE.backup"
         cp -f "$MODULES_BZL" "$MODULES_BZL.backup"
     
-        # Remove any explicit rust_binder module outputs
         sed -i '/rust_binder\.ko/d' "$BUILD_FILE"
         sed -i '/rust_binder\.ko/d' "$MODULES_BZL"
         sed -i '/rust_binder/d' "$MODULES_BZL"
@@ -1104,7 +1103,7 @@ runs:
 
     - name: Verify rust_binder is fully removed (BUILD + .bzl)
       shell: bash
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' && env.RUSTC_BIN_PATH == '' }}
       run: |
         set -euo pipefail
         echo "::group::Verify rust_binder is fully removed"
@@ -1117,7 +1116,7 @@ runs:
           echo "::error::rust_binder is still referenced somewhere above (must be removed)."
           exit 1
         fi
-    
+
         echo "✅ No rust_binder references found"
         echo "::endgroup::"
 
@@ -1154,7 +1153,7 @@ runs:
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
+        set -euo pipefail
         cd "$CONFIG/kernel_platform"
         
         echo "Running sed commands..."
@@ -1193,8 +1192,8 @@ runs:
         sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
         
         # Run perl command to modify UTS_VERSION
-        DATESTR=$(date -u)
-        perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
+        DATESTR="$(date -u)"
+        perl -pi -e "s{UTS_VERSION=\"\\$\\(echo \\$UTS_VERSION \\$CONFIG_FLAGS \\$TIMESTAMP \\| cut -b -\\$UTS_LEN\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT ${DATESTR}\"}" ./common/scripts/mkcompile_h
 
     - name: Clean Kleaf out/cache (avoid stale module_outs)
       shell: bash
@@ -1224,44 +1223,43 @@ runs:
     
         cp -f "$BUILD_FILE" "$BUILD_FILE.kmi.backup"
     
-        python3 - <<'PY'
+        python3 - "$BUILD_FILE" <<'PY'
         import re, pathlib, sys
+        
         p = pathlib.Path(sys.argv[1])
         s = p.read_text(encoding="utf-8", errors="ignore").splitlines(True)
-    
+        
         keys = ["kmi_symbol_list_strict_mode", "kmi_enforced", "trim_nonlisted_kmi"]
+        assign_re = re.compile(r'^(\s*)(' + "|".join(map(re.escape, keys)) + r')\s*=\s*.*?(,?\s*)$')
+        
         out = []
         changed = False
-    
-        # Remplace TOUTE affectation de ces clés par False (même si c'est un select(), "true", True, etc.)
-        assign_re = re.compile(r'^(\s*)(' + "|".join(map(re.escape, keys)) + r')\s*=\s*.*?(,?\s*)$')
         
         for line in s:
             m = assign_re.match(line)
             if m:
-            indent, key, trail = m.group(1), m.group(2), m.group(3)
-            # garde la virgule si elle existe, sinon n'en ajoute pas
-            comma = "," if "," in trail else ""
-            new_line = f"{indent}{key} = False{comma}\n"
-            if new_line != line:
-                changed = True
-            out.append(new_line)
+                indent, key, trail = m.group(1), m.group(2), m.group(3)
+                comma = "," if "," in trail else ""
+                new_line = f"{indent}{key} = False{comma}\n"
+                if new_line != line:
+                    changed = True
+                out.append(new_line)
             else:
-            out.append(line)
-    
+                out.append(line)
+        
         p.write_text("".join(out), encoding="utf-8")
         print("patched:", changed)
-        PY "$BUILD_FILE"
+        PY
     
         echo ""
         echo "📌 Post-patch snapshot (grep):"
-        grep -nE 'kmi_symbol_list_strict_mode|kmi_enforced|trim_nonlisted_kmi' "$BUILD_FILE" | head -n 80 || true
+        grep -nE 'kmi_symbol_list_strict_mode|kmi_enforced|trim_nonlisted_kmi' "$BUILD_FILE" | head -n 120 || true
     
         echo ""
         echo "📊 Diff (BUILD.bazel):"
         diff -u "$BUILD_FILE.kmi.backup" "$BUILD_FILE" | head -n 220 || true
     
-        echo "✅ KMI strict/enforced flags forcibly set to False (wherever they were)"
+        echo "✅ KMI strict/enforced flags forcibly set to False"
         echo "::endgroup::"
 
     - name: Build the Kernel (Bazel with ccache)
