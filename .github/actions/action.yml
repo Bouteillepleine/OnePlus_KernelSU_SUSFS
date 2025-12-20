@@ -61,6 +61,9 @@ outputs:
   ccache_direct_rate:
     description: 'ccache direct hit rate percentage'
     value: ${{ steps.ccache_stats.outputs.direct_rate }}
+  bazel_cache_size:
+    description: 'Bazel cache size'
+    value: ${{ steps.ccache_stats.outputs.bazel_cache_size }}
   zip_name:
     description: 'Name of the generated flashable ZIP'
     value: ${{ steps.create_zip.outputs.zip_name }}
@@ -436,14 +439,16 @@ runs:
         echo "  Device: ${OP_MODEL:-unknown}"
         echo "::endgroup::"
     
-    - name: Cache ccache
+    - name: Cache ccache and Bazel
       uses: actions/cache@v4
       with:
-        path: ${{ env.CCACHE_DIR }}
-        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        path: |
+          ${{ env.CCACHE_DIR }}
+          ~/.bazel_cache
+        key: build-cache-ksun-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          build-cache-ksun-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          build-cache-ksun-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
    
     - name: Configure ccache
       shell: bash
@@ -1082,39 +1087,128 @@ runs:
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
 
-    - name: Build the Kernel
+    - name: Build the Kernel (Bazel with ccache)
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
-        echo "Changing to configuration directory: $CONFIG..."
-        cd "$CONFIG"
+        set -euo pipefail
+        echo "::group::Build kernel with Bazel + ccache"
         
-        echo "Building the kernel..."
-        # Clear Cache
-        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+        cd "$CONFIG/kernel_platform"
         
+        # ========== CCACHE CONFIGURATION ==========
+        export CCACHE_DIR="${HOME}/.ccache"
+        export CCACHE_MAXSIZE="1G"
+        export CCACHE_COMPILERCHECK="content"
+        export CCACHE_BASEDIR="${GITHUB_WORKSPACE}"
+        export CCACHE_NOHASHDIR="true"
+        export CCACHE_SLOPPINESS="file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale"
+        
+        # ========== BAZEL CACHE CONFIGURATION ==========
+        BAZEL_CACHE_DIR="${HOME}/.bazel_cache"
+        mkdir -p "$BAZEL_CACHE_DIR"
+        
+        # ========== CREATE CCACHE WRAPPERS ==========
+        WRAPPER_DIR="$PWD/ccache_wrappers"
+        mkdir -p "$WRAPPER_DIR"
+        
+        cat > "$WRAPPER_DIR/clang" << 'WRAPPER_EOF'
+        #!/bin/bash
+        exec ccache "${CLANG_BIN_PATH}/clang" "$@"
+        WRAPPER_EOF
+        
+        cat > "$WRAPPER_DIR/clang++" << 'WRAPPER_EOF'
+        #!/bin/bash
+        exec ccache "${CLANG_BIN_PATH}/clang++" "$@"
+        WRAPPER_EOF
+        
+        chmod +x "$WRAPPER_DIR/clang" "$WRAPPER_DIR/clang++"
+        
+        # ========== UPDATE PATH ==========
+        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        BASE_PATH="$WRAPPER_DIR:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
+        export PATH="${BASE_PATH}:${PATH}"
+        
+        # ========== PRE-BUILD STATS ==========
+        BUILD_START=$(date +%s)
+        
+        if [ "${{ inputs.clean }}" != "true" ]; then
+          echo "============================================"
+          echo "📊 Pre-build Cache Statistics"
+          echo "============================================"
+          echo ""
+          echo "=== ccache ==="
+          ccache -s | head -n 15
+          echo ""
+          echo "=== Bazel cache ==="
+          if [ -d "$BAZEL_CACHE_DIR" ]; then
+            BAZEL_SIZE=$(du -sh "$BAZEL_CACHE_DIR" 2>/dev/null | cut -f1)
+            BAZEL_FILES=$(find "$BAZEL_CACHE_DIR" -type f 2>/dev/null | wc -l)
+            echo "Size: $BAZEL_SIZE"
+            echo "Files: $BAZEL_FILES"
+          else
+            echo "Empty (first build)"
+          fi
+          echo "============================================"
+          echo ""
+          
+          # Zero ccache stats for accurate measurement
+          ccache -z
+        else
+          echo "⚠️ Clean build mode - caches will be bypassed"
+          export CCACHE_DISABLE=1
+        fi
+        
+        # ========== BAZEL BUILD WITH CCACHE ==========
+        echo "🔨 Starting Bazel build with ccache integration..."
+        echo ""
+        
+        BAZEL_ARGS=(
+          "--config=fast"
+          "--config=stamp"
+          "--lto=none"
+          "--disk_cache=$BAZEL_CACHE_DIR"
+          "--repository_cache=$BAZEL_CACHE_DIR/repo"
+          "--experimental_repository_cache_hardlinks"
+          "--action_env=PATH=$PATH"
+          "--action_env=CCACHE_DIR=$CCACHE_DIR"
+          "--action_env=CCACHE_MAXSIZE=$CCACHE_MAXSIZE"
+          "--action_env=CCACHE_COMPILERCHECK=$CCACHE_COMPILERCHECK"
+          "--action_env=CCACHE_BASEDIR=$CCACHE_BASEDIR"
+          "--action_env=CCACHE_NOHASHDIR=$CCACHE_NOHASHDIR"
+          "--action_env=CCACHE_SLOPPINESS=$CCACHE_SLOPPINESS"
+          "--action_env=CLANG_BIN_PATH=$CLANG_BIN_PATH"
+          "--sandbox_writable_path=$CCACHE_DIR"
+          "--sandbox_writable_path=$BAZEL_CACHE_DIR"
+          "--verbose_failures"
+        )
+        
+        if [ "${{ inputs.clean }}" = "true" ]; then
+          BAZEL_ARGS+=("--action_env=CCACHE_DISABLE=1")
+          echo "🧹 Clean build - ccache disabled"
+        fi
+        
+        # Monitor system resources during build
         (stdbuf -oL bash -c '
           while true; do
-            echo "=== $(date) ==="
-            free -h
-            echo "======"
-            df -h
-            echo "======"
-            top -b -n 1 | head -n 15
+            echo "=== $(date +%H:%M:%S) ==="
+            free -h | grep -E "Mem:|Swap:"
+            df -h / | tail -n1
             echo ""
-            sleep 60
+            sleep 120
           done
         ') &
         MONITOR_PID=$!
-        trap "kill $MONITOR_PID" EXIT
+        trap "kill $MONITOR_PID 2>/dev/null || true" EXIT
         
-        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        BASE_PATH="/usr/lib/ccache:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
-        export PATH="${BASE_PATH}:${PATH}"
+        # Execute build
+        if ! ./tools/bazel build "${BAZEL_ARGS[@]}" //common:kernel_aarch64_dist; then
+          echo "::error::Bazel build failed"
+          kill $MONITOR_PID 2>/dev/null || true
+          exit 1
+        fi
         
-        BUILD_START=$(date +%s)
-        cd kernel_platform
-        ./tools/bazel build --config=fast --config=stamp --lto=none //common:kernel_aarch64_dist --disk_cache="$CCACHE_DIR" --sandbox_writable_path="$CCACHE_DIR" --verbose_failures --sandbox_debug || exit 1
+        kill $MONITOR_PID 2>/dev/null || true
         
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
@@ -1122,6 +1216,31 @@ runs:
         echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
         echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
         echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
+        
+        # ========== POST-BUILD STATS ==========
+        if [ "${{ inputs.clean }}" != "true" ]; then
+          echo ""
+          echo "============================================"
+          echo "📊 Post-build Cache Statistics"
+          echo "============================================"
+          echo ""
+          echo "=== ccache ==="
+          ccache -s | head -n 25
+          echo ""
+          echo "=== Bazel cache ==="
+          if [ -d "$BAZEL_CACHE_DIR" ]; then
+            BAZEL_SIZE=$(du -sh "$BAZEL_CACHE_DIR" 2>/dev/null | cut -f1)
+            BAZEL_FILES=$(find "$BAZEL_CACHE_DIR" -type f 2>/dev/null | wc -l)
+            echo "Size: $BAZEL_SIZE"
+            echo "Files: $BAZEL_FILES"
+            echo "BAZEL_CACHE_SIZE=$BAZEL_SIZE" >> "$GITHUB_ENV"
+          fi
+          echo "============================================"
+        fi
+        
+        echo ""
+        echo "✅ Bazel build completed in ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
+        echo "::endgroup::"
 
     - name: Build Kernel
       shell: bash
@@ -1320,15 +1439,20 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::ccache final statistics"
+        echo "::group::Cache final statistics"
         
         export CCACHE_DIR="${{ env.CCACHE_DIR }}"
         
-        echo "ccache Statistics"
+        echo "============================================"
+        echo "📊 Final Cache Statistics"
+        echo "============================================"
+        echo ""
+        echo "=== ccache ==="
         ccache -s
         
         STATS="$(ccache -s)"
         
+        # Extract ccache metrics
         CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {
           match($0, /[0-9]+/); 
           print substr($0, RSTART, RLENGTH)
@@ -1345,8 +1469,7 @@ runs:
         }' | head -n1)
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0
-        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
+          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
           DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
         else
           HIT_RATE="0.0"
@@ -1356,13 +1479,39 @@ runs:
         echo "hit_rate=${HIT_RATE}%" >> "$GITHUB_OUTPUT"
         echo "direct_rate=${DIRECT_RATE}%" >> "$GITHUB_OUTPUT"
         
+        # Bazel cache info (if exists)
+        BAZEL_CACHE_DIR="${HOME}/.bazel_cache"
+        if [ -d "$BAZEL_CACHE_DIR" ]; then
+          echo ""
+          echo "=== Bazel cache ==="
+          BAZEL_SIZE=$(du -sh "$BAZEL_CACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
+          BAZEL_FILES=$(find "$BAZEL_CACHE_DIR" -type f 2>/dev/null | wc -l || echo "0")
+          echo "Size: $BAZEL_SIZE"
+          echo "Files: $BAZEL_FILES"
+          echo "bazel_cache_size=$BAZEL_SIZE" >> "$GITHUB_OUTPUT"
+        else
+          echo "bazel_cache_size=N/A" >> "$GITHUB_OUTPUT"
+        fi
+        
+        echo "============================================"
         echo "::endgroup::"
         
-        echo "## 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        ccache -s >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        # Add to step summary
+        {
+          echo "## 📊 Cache Statistics"
+          echo ""
+          echo "### ccache"
+          echo '```'
+          ccache -s
+          echo '```'
+          
+          if [ -d "$BAZEL_CACHE_DIR" ]; then
+            echo ""
+            echo "### Bazel Cache"
+            echo "- **Size:** $BAZEL_SIZE"
+            echo "- **Files:** $BAZEL_FILES"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Collect Build Stats / Validate Image
       id: collect_stats
@@ -1529,6 +1678,9 @@ runs:
           if [ "${{ inputs.clean }}" != "true" ]; then
             echo "ccache Hit Rate: ${{ steps.ccache_stats.outputs.hit_rate }}"
             echo "ccache Direct Rate: ${{ steps.ccache_stats.outputs.direct_rate }}"
+            if [ "${{ env.OP_KERNEL_VERSION }}" = "6.12" ]; then
+              echo "Bazel Cache Size: ${{ steps.ccache_stats.outputs.bazel_cache_size }}"
+            fi
           else
             echo "ccache: Disabled (clean build)"
           fi
@@ -1590,11 +1742,14 @@ runs:
           echo "|--------|-------|"
           echo "| **Optimization** | ${{ inputs.optimize_level }} |"
           echo "| **Clean Build** | ${{ inputs.clean }} |"
-          echo "| **Build Time** | ${{ steps.collect_stats.outputs.build_time }}s |"
+          echo "| **Build Time** | ${{ steps.collect_stats.outputs.build_time }}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s) |"
           
           if [ "${{ inputs.clean }}" != "true" ]; then
             echo "| **ccache Hit Rate** | ${{ steps.ccache_stats.outputs.hit_rate }} |"
             echo "| **ccache Direct Rate** | ${{ steps.ccache_stats.outputs.direct_rate }} |"
+            if [ "${{ env.OP_KERNEL_VERSION }}" = "6.12" ]; then
+              echo "| **Bazel Cache Size** | ${{ steps.ccache_stats.outputs.bazel_cache_size }} |"
+            fi
           fi
           
           echo "| **Image SHA256** | \`${{ steps.collect_stats.outputs.image_sha256 }}\` |"
