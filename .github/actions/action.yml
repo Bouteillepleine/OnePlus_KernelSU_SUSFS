@@ -1269,15 +1269,14 @@ runs:
         export PATH="${BASE_PATH}:${PATH}"
         
         # ========== DETERMINE OPTIMIZATION LEVEL ==========
-        # 🎯 NOUVELLE CONFIGURATION : LTO Thin activé par défaut
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           OPT_FLAG="-O3"
           OPT_LEVEL="O3"
-          LTO_MODE="thin"  # O3 + LTO Thin
+          LTO_MODE="thin"
         else
           OPT_FLAG="-O2"
           OPT_LEVEL="O2"
-          LTO_MODE="thin"  # ✅ O2 + LTO Thin (RECOMMANDÉ)
+          LTO_MODE="thin"
         fi
         
         # ========== PRE-BUILD STATS ==========
@@ -1303,7 +1302,6 @@ runs:
           echo "============================================"
           echo ""
           
-          # Zero ccache stats for accurate measurement
           ccache -z
         else
           echo "⚠️ Clean build mode - caches will be bypassed"
@@ -1319,24 +1317,20 @@ runs:
         echo ""
         
         BAZEL_ARGS=(
-          # Build configs
           "--config=fast"
           "--config=stamp"
           "--lto=$LTO_MODE"
           
-          # Optimization flags
           "--copt=$OPT_FLAG"
           "--copt=-pipe"
           "--copt=-fno-stack-protector"
           "--copt=-Wno-error"
           "--copt=-Wno-unused-command-line-argument"
           
-          # Cache configuration
           "--disk_cache=$BAZEL_CACHE_DIR"
           "--repository_cache=$BAZEL_CACHE_DIR/repo"
           "--experimental_repository_cache_hardlinks"
           
-          # ccache environment
           "--action_env=PATH=$PATH"
           "--action_env=CCACHE_DIR=$CCACHE_DIR"
           "--action_env=CCACHE_MAXSIZE=$CCACHE_MAXSIZE"
@@ -1346,20 +1340,16 @@ runs:
           "--action_env=CCACHE_SLOPPINESS=$CCACHE_SLOPPINESS"
           "--action_env=CLANG_BIN_PATH=$CLANG_BIN_PATH"
           
-          # Sandbox configuration
           "--sandbox_writable_path=$CCACHE_DIR"
           "--sandbox_writable_path=$BAZEL_CACHE_DIR"
           
-          # Performance optimizations
           "--jobs=$(nproc --all)"
-          "--local_ram_resources=HOST_RAM*.8"
-          "--local_cpu_resources=HOST_CPUS"
+          "--local_resources=memory=HOST_RAM*.8"
+          "--local_resources=cpu=HOST_CPUS"
           
-          # Cache optimizations
           "--experimental_guard_against_concurrent_changes"
           "--experimental_reuse_sandbox_directories"
           
-          # Debug
           "--verbose_failures"
           "--show_progress_rate_limit=5"
         )
@@ -1438,7 +1428,7 @@ runs:
         echo ""
         echo "✅ Bazel build completed in ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
         echo "::endgroup::"
-
+        
     - name: 🔍 Verify Cache Before Save
       if: always()
       shell: bash
@@ -1467,7 +1457,7 @@ runs:
         fi
         
         echo "::endgroup::"
-
+        
     - name: Build Kernel
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION != '6.12' }}
