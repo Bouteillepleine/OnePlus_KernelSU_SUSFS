@@ -1211,6 +1211,59 @@ runs:
         echo "✅ Kleaf cache cleaned"
         echo "::endgroup::"
 
+    - name: Disable Kleaf KMI strict checks (6.12) [robust]
+      shell: bash
+      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Disable Kleaf KMI strict checks (robust)"
+    
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        BUILD_FILE="$KP/common/BUILD.bazel"
+        [ -f "$BUILD_FILE" ] || { echo "::error::BUILD.bazel not found: $BUILD_FILE"; exit 1; }
+    
+        cp -f "$BUILD_FILE" "$BUILD_FILE.kmi.backup"
+    
+        python3 - <<'PY'
+        import re, pathlib, sys
+        p = pathlib.Path(sys.argv[1])
+        s = p.read_text(encoding="utf-8", errors="ignore").splitlines(True)
+    
+        keys = ["kmi_symbol_list_strict_mode", "kmi_enforced", "trim_nonlisted_kmi"]
+        out = []
+        changed = False
+    
+        # Remplace TOUTE affectation de ces clés par False (même si c'est un select(), "true", True, etc.)
+        assign_re = re.compile(r'^(\s*)(' + "|".join(map(re.escape, keys)) + r')\s*=\s*.*?(,?\s*)$')
+        
+        for line in s:
+            m = assign_re.match(line)
+            if m:
+            indent, key, trail = m.group(1), m.group(2), m.group(3)
+            # garde la virgule si elle existe, sinon n'en ajoute pas
+            comma = "," if "," in trail else ""
+            new_line = f"{indent}{key} = False{comma}\n"
+            if new_line != line:
+                changed = True
+            out.append(new_line)
+            else:
+            out.append(line)
+    
+        p.write_text("".join(out), encoding="utf-8")
+        print("patched:", changed)
+        PY "$BUILD_FILE"
+    
+        echo ""
+        echo "📌 Post-patch snapshot (grep):"
+        grep -nE 'kmi_symbol_list_strict_mode|kmi_enforced|trim_nonlisted_kmi' "$BUILD_FILE" | head -n 80 || true
+    
+        echo ""
+        echo "📊 Diff (BUILD.bazel):"
+        diff -u "$BUILD_FILE.kmi.backup" "$BUILD_FILE" | head -n 220 || true
+    
+        echo "✅ KMI strict/enforced flags forcibly set to False (wherever they were)"
+        echo "::endgroup::"
+
     - name: Build the Kernel (Bazel with ccache)
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
