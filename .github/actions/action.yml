@@ -863,7 +863,6 @@ runs:
         echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
-
     - name: Apply Other Patches
       shell: bash
       run: |
@@ -1092,7 +1091,7 @@ runs:
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
         set -euo pipefail
-        echo "::group::Build kernel with Bazel + ccache"
+        echo "::group::Build kernel with Bazel + ccache + LTO Thin"
         
         cd "$CONFIG/kernel_platform"
         
@@ -1129,6 +1128,17 @@ runs:
         BASE_PATH="$WRAPPER_DIR:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
         export PATH="${BASE_PATH}:${PATH}"
         
+        # ========== DETERMINE OPTIMIZATION LEVEL ==========
+        if [ "${{ inputs.optimize_level }}" = "O3" ]; then
+          OPT_FLAG="-O3"
+          OPT_LEVEL="O3"
+        else
+          OPT_FLAG="-O2"
+          OPT_LEVEL="O2"
+        fi
+        
+        echo "🎯 Optimization level: $OPT_LEVEL"
+        
         # ========== PRE-BUILD STATS ==========
         BUILD_START=$(date +%s)
         
@@ -1152,21 +1162,29 @@ runs:
           echo "============================================"
           echo ""
           
-          # Zero ccache stats for accurate measurement
           ccache -z
         else
           echo "⚠️ Clean build mode - caches will be bypassed"
           export CCACHE_DISABLE=1
         fi
         
-        # ========== BAZEL BUILD WITH CCACHE ==========
-        echo "🔨 Starting Bazel build with ccache integration..."
+        # ========== BAZEL BUILD WITH CCACHE + LTO THIN ==========
+        echo "🔨 Starting Bazel build with:"
+        echo "   - ccache integration"
+        echo "   - LTO Thin"
+        echo "   - Optimization: $OPT_LEVEL"
         echo ""
         
         BAZEL_ARGS=(
           "--config=fast"
           "--config=stamp"
-          "--lto=none"
+          "--lto=thin"
+          "--compilation_mode=opt"
+          "--copt=$OPT_FLAG"
+          "--copt=-pipe"
+          "--copt=-fno-stack-protector"
+          "--copt=-Wno-error"
+          "--copt=-Wno-unused-command-line-argument"
           "--disk_cache=$BAZEL_CACHE_DIR"
           "--repository_cache=$BAZEL_CACHE_DIR/repo"
           "--experimental_repository_cache_hardlinks"
@@ -1239,7 +1257,10 @@ runs:
         fi
         
         echo ""
-        echo "✅ Bazel build completed in ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
+        echo "✅ Bazel build completed successfully!"
+        echo "   Optimization: $OPT_LEVEL"
+        echo "   LTO: Thin"
+        echo "   Duration: ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
         echo "::endgroup::"
 
     - name: Build Kernel
