@@ -1,4 +1,4 @@
-name: 'Build OnePlus Kernel with KernelSU Next'
+name: 'Build OnePlus Kernel with KernelSu Next'
 
 inputs:
   op_config_json:
