@@ -12,54 +12,98 @@ on:
         required: true
         type: boolean
         default: false
+
       op_model:
-        description: 'Select the OnePlus kernels to build'
+        description: 'Select what to build (group, kernel version, or single device model)'
         required: true
         type: choice
         options:
+          # ========== GROUP SELECTIONS ==========
           - OOS14+15+16
           - OOS15+16
           - OOS14+15
           - OOS16
           - OOS15
           - OOS14
+
+          # ========== KERNEL VERSION SELECTIONS ==========
           - android16-6.12
           - android15-6.6
           - android14-6.1
           - android13-5.15
           - android12-5.10
-        default: OOS16
+
+          # ========== DEVICE MODELS (Alphabetical) ==========
+          - OP-ACE-2
+          - OP-ACE-2-PRO
+          - OP-ACE-3
+          - OP-ACE-3-PRO
+          - OP-ACE-3V
+          - OP-ACE-5
+          - OP-ACE-5-PRO
+          - OP-ACE-6
+          - OP-NORD-4
+          - OP-NORD-4-CE
+          - OP-NORD-5
+          - OP-NORD-CE4-LITE
+          - OP-OPEN
+          - OP-PAD-2
+          - OP-PAD-2-PRO
+          - OP-PAD-3
+          - OP-PAD-PRO
+          - OP10PRO
+          - OP10T
+          - OP11
+          - OP11R
+          - OP12
+          - OP12R
+          - OP13
+          - OP13-CPH
+          - OP13-PJZ
+          - OP13R
+          - OP13S
+          - OP13T
+          - OP15
+        default: OOS15
+
       ksu_options:
         description: 'Enter KernelSU build json'
         required: true
         type: string
         default: '[{"type":"ksun","hash":"dev"}]'
+
       optimize_level:
         description: "Compiler optimization level"
         required: true
         type: choice
         options: [O2, O3]
         default: O2
+
       clean_build:
         description: 'Clean build (no ccache)'
         type: boolean
         default: false
+
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
-        default: ''      
+        default: ''
+
       android13-5_15_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android13-5.15'
         type: string
-        default: ''      
+        default: ''
+
       android14-6_1_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android14-6.1'
         type: string
         default: ''
+
       android15-6_6_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android15-6.6'
         type: string
         default: ''
+
       android16-6_12_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android16-6.12'
         type: string
@@ -85,14 +129,29 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Matrix generation"
-          
+      
           input="${{ github.event.inputs.op_model }}"
           ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
+      
+          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c '
+            map(
+              if .type then
+                .type |= ascii_upcase
+                | if .hash == null then
+                    if .type == "KSUN" then .hash = "dev"
+                    elif .type == "KSU" then .hash = "main"
+                    else .hash end
+                  else .
+                  end
+              else
+                error("No type found")
+              end
+            )
+          ' 2>&1); then
             echo "::error::ksu_options validation failed: $ksu_options_normalized"
             exit 1
           fi
-          
+      
           echo "[" > matrix.json
           mapfile -t all_json_files < <(find configs/ -name "*.json" -print0 | xargs -0 -n1)
           for i in "${!all_json_files[@]}"; do
@@ -105,69 +164,105 @@ jobs:
             fi
           done
           echo "]" >> matrix.json
-          
+      
           jq_filter="."
-          
+      
           case "$input" in
             OOS14+15+16)
               ;;
             OOS15+16)
-              jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\"))"
+              jq_filter='map(select(.os_version == "OOS15" or .os_version == "OOS16"))'
               ;;
             OOS14+15)
-              jq_filter="map(select(.os_version == \"OOS14\" or .os_version == \"OOS15\"))"
+              jq_filter='map(select(.os_version == "OOS14" or .os_version == "OOS15"))'
               ;;
             OOS16)
-              jq_filter="map(select(.os_version == \"OOS16\"))"
+              jq_filter='map(select(.os_version == "OOS16"))'
               ;;
             OOS15)
-              jq_filter="map(select(.os_version == \"OOS15\"))"
+              jq_filter='map(select(.os_version == "OOS15"))'
               ;;
             OOS14)
-              jq_filter="map(select(.os_version == \"OOS14\"))"
+              jq_filter='map(select(.os_version == "OOS14"))'
               ;;
+      
             android*-*.*)
-              # Extract android version and kernel version
               IFS='-' read -r av kv <<< "$input"
-              
-              # Build android*-* only for OOS15 and OOS16
               jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
-              
               echo "ℹ️  Android-Kernel filter applied: $av-$kv"
               echo "   Restricted to: OOS15 and OOS16 only"
               ;;
+      
+            OP-*|OP[0-9]*|OPPO*)
+              # Model-specific filter (case-insensitive) - build all OS versions for this model
+              jq_filter='map(select((.model // "") | ascii_downcase == ($m | ascii_downcase)))'
+              echo "ℹ️  Model filter applied (case-insensitive): $input"
+              echo "   Will build ALL OS versions available for this model"
+              ;;
+      
             *)
               echo "::warning::Unknown input '$input'. Using empty filter."
-              jq_filter="map(select(false))"
+              jq_filter='map(select(false))'
               ;;
           esac
-          
-          filtered=$(jq -c "$jq_filter" matrix.json)
+      
+          # IMPORTANT: pass $m so jq_filter can use it when model filter is selected
+          filtered=$(jq -c --arg m "$input" "$jq_filter" matrix.json)
           count=$(jq 'length' <<<"$filtered")
-          
+      
           if [ "$count" -eq 0 ]; then
             echo "::error::No config files found for input '$input' after applying filters!"
             echo ""
-            echo "Available configurations:"
-            jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json
+            echo "📋 Available configurations by OS version:"
+            echo ""
+            echo "OOS14 devices ($(jq -r '.[] | select(.os_version == "OOS14") | .model' matrix.json | sort -u | wc -l) unique models):"
+            jq -r '.[] | select(.os_version == "OOS14") | "  - \(.model) (\(.android_version)-\(.kernel_version))"' matrix.json | sort -u
+            echo ""
+            echo "OOS15 devices ($(jq -r '.[] | select(.os_version == "OOS15") | .model' matrix.json | sort -u | wc -l) unique models):"
+            jq -r '.[] | select(.os_version == "OOS15") | "  - \(.model) (\(.android_version)-\(.kernel_version))"' matrix.json | sort -u
+            echo ""
+            echo "OOS16 devices ($(jq -r '.[] | select(.os_version == "OOS16") | .model' matrix.json | sort -u | wc -l) unique models):"
+            jq -r '.[] | select(.os_version == "OOS16") | "  - \(.model) (\(.android_version)-\(.kernel_version))"' matrix.json | sort -u
+            echo ""
+            echo "📱 All available models ($(jq -r '.[].model' matrix.json | sort -u | wc -l) unique, alphabetically):"
+            jq -r '.[].model' matrix.json | sort -u | sed 's/^/  - /'
+            echo ""
+            echo "🔎 Similar models (case-insensitive contains):"
+            jq -r --arg m "$input" '
+              [.[].model] | unique | map(select((ascii_downcase | contains($m|ascii_downcase)))) | .[]
+            ' matrix.json | sed 's/^/  - /' || true
+            echo ""
+            echo "📊 Total configurations: $(jq 'length' matrix.json)"
             exit 1
           fi
-          
+      
           # For each device + each ksu option → one combined entry
-          merged_matrix=$(jq -n --argjson devices "$filtered" --argjson ksu_list "$ksu_options_normalized" '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
-          
-          final_count=$(echo "$merged_matrix" | jq -s length)
-          
+          merged_matrix=$(jq -n --argjson devices "$filtered" --argjson ksu_list "$ksu_options_normalized" '
+            [ $devices[] as $dev
+              | $ksu_list[] as $ksu
+              | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash})
+            ]
+          ')
+      
+          final_count=$(echo "$merged_matrix" | jq length)
+          unique_devices=$(echo "$merged_matrix" | jq -r '.[].model' | sort -u | wc -l)
+      
           wrapped=$(jq -n --argjson items "$merged_matrix" '{ include: $items }')
-          
-          echo "✅ Found $final_count device(s) to build"
+      
+          echo "✅ Found $final_count build configuration(s) for $unique_devices unique device(s)"
           echo ""
-          echo "Selected devices:"
-          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' <<<"$merged_matrix"
-          
+          echo "📱 Selected devices (grouped by model):"
+      
+          for model in $(echo "$merged_matrix" | jq -r '.[].model' | sort -u); do
+            echo "  📦 $model:"
+            echo "$merged_matrix" | jq -r --arg MODEL "$model" \
+              '.[] | select(.model == $MODEL) | "    - \(.os_version) (\(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' | sort -u
+          done
+      
           echo "matrix=$(jq -c . <<< "$wrapped")" >> "$GITHUB_OUTPUT"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          
+          echo "count=$unique_devices" >> "$GITHUB_OUTPUT"
+          echo "total_builds=$final_count" >> "$GITHUB_OUTPUT"
+      
           echo "::endgroup::"
 
       - name: Upload build matrix
