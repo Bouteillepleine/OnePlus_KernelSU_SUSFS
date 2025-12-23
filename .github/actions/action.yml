@@ -2,7 +2,7 @@ name: 'Build OnePlus Kernel with KernelSU Next'
 
 inputs:
   op_config_json:
-    description: 'JSON string containing full device config'
+    description: 'JSON string containing full device configs'
     required: true
     type: string
   ksu_type:
