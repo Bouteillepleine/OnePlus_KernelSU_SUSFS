@@ -61,9 +61,6 @@ outputs:
   ccache_direct_rate:
     description: 'ccache direct hit rate percentage'
     value: ${{ steps.ccache_stats.outputs.direct_rate }}
-  bazel_cache_size:
-    description: 'Bazel cache size'
-    value: ${{ steps.ccache_stats.outputs.bazel_cache_size }}
   zip_name:
     description: 'Name of the generated flashable ZIP'
     value: ${{ steps.create_zip.outputs.zip_name }}
@@ -357,7 +354,7 @@ runs:
         RUSTC_FOUND=false
         for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
           [ -d "$base/clang/host/linux-x86" ] || continue
-          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 || true)
+          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | head -n1 || true)
           if [ -n "$latest" ] && [ -x "$latest/bin/clang" ]; then
             CLANG_BIN="$latest/bin"
             CLANG_FOUND=true
@@ -394,67 +391,27 @@ runs:
         echo "✅ Detected Clang: $CLANG_VERSION"
         echo "::endgroup::"
 
-    - name: Check Rust Availability and Module Compatibility
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Rust compatibility check"
-        
-        RUST_AVAILABLE=false
-        if [ -n "${RUSTC_BIN_PATH:-}" ] && [ -x "${RUSTC_BIN_PATH}/rustc" ]; then
-          RUST_AVAILABLE=true
-          echo "✅ Rust toolchain available: ${RUSTC_VERSION:-unknown}"
-        else
-          echo "⚠️ Rust toolchain NOT available"
-        fi
-        
-        # Pour noyaux 6.12, vérifier si rust_binder sera problématique
-        if [ "${{ env.OP_KERNEL_VERSION }}" = "6.12" ]; then
-          if [ "$RUST_AVAILABLE" = "false" ]; then
-            echo ""
-            echo "ℹ️  Kernel 6.12 detected without Rust"
-            echo "   → rust_binder.ko will be removed from BUILD.bazel"
-          else
-            echo ""
-            echo "✅ Kernel 6.12 with Rust support"
-            echo "   → rust_binder.ko can be compiled"
-          fi
-        fi
-        
-        echo "::endgroup::"
-
     - name: Derive Clang Short Version
       shell: bash
       run: |
         set -euo pipefail
         echo "::group::Derive Clang fingerprint"
         
-        CLANG_DIR=$(basename "$(dirname "${CLANG_BIN_PATH}")")
-        echo "Clang directory: $CLANG_DIR"
+        short="$("${CLANG_BIN_PATH}/clang" --version | sed -n '1s/.*clang-r\([0-9.]\+\).*/\1/p')"
         
-        if [[ "$CLANG_DIR" =~ clang-r([0-9]+) ]]; then
-          short="${BASH_REMATCH[1]}"
-          echo "✅ Extracted version from directory: r$short"
+        if [ -z "$short" ]; then
+          short="$("${CLANG_BIN_PATH}/clang" --version | sha256sum | cut -c1-8)"
+          echo "⚠️ Could not extract clang-r version, using hash: $short"
         else
-          version_output="$("${CLANG_BIN_PATH}/clang" --version | head -n1)"
-          echo "Clang version output: $version_output"
-          
-          if [[ "$version_output" =~ based[[:space:]]+on[[:space:]]+r([0-9]+) ]]; then
-            short="${BASH_REMATCH[1]}"
-            echo "✅ Extracted version from output: r$short"
-          else
-            short=$(echo "$CLANG_DIR" | md5sum | cut -c1-8)
-            echo "⚠️ Using stable directory hash: $short"
-          fi
+          echo "✅ Clang version fingerprint: $short"
         fi
         
         echo "CLANG_VERSION_SHORT=$short" >> "$GITHUB_ENV"
+        
         CLANG_FULL_VERSION="$("${CLANG_BIN_PATH}/clang" --version | head -n1)"
         echo "CLANG_FULL_VERSION=$CLANG_FULL_VERSION" >> "$GITHUB_ENV"
         
-        echo ""
-        echo "📌 Clang fingerprint: $short"
-        echo "📌 Full version: $CLANG_FULL_VERSION"
+        echo "Full Clang version: $CLANG_FULL_VERSION"
         echo "::endgroup::"
 
     - name: Set Cache Environment
@@ -468,7 +425,6 @@ runs:
         echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
         
         mkdir -p "$CACHE_DIR"
-        mkdir -p "$HOME/.bazel_cache"
         
         echo "Cache configuration:"
         echo "  Directory: $CACHE_DIR"
@@ -479,25 +435,15 @@ runs:
         echo "  Clang: ${CLANG_VERSION_SHORT:-unknown}"
         echo "  Device: ${OP_MODEL:-unknown}"
         echo "::endgroup::"
-        
+    
     - name: Cache ccache
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
-        
-    - name: Cache Bazel
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
-      uses: actions/cache@v4
-      with:
-        path: ~/.bazel_cache
-        key: bazel-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
-        restore-keys: |
-          bazel-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          bazel-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-        
+          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
    
     - name: Configure ccache
       shell: bash
@@ -540,7 +486,7 @@ runs:
         echo "✅ ccache configured for production"
         echo ""
         echo "Configuration applied:"
-        echo "  Max size: 1G (persisted)"
+        echo "  Max size: 12G (persisted)"
         echo "  Base dir: ${GITHUB_WORKSPACE}"
         echo "  Compression: zstd level 3"
         echo "  Direct mode: enabled"
@@ -662,7 +608,6 @@ runs:
         cd "$CONFIG/kernel_platform"
         rm -f common/android/abi_gki_protected_exports_* || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
-        sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
 
     - name: Add BBG
@@ -829,11 +774,23 @@ runs:
             cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               patch -p1 --forward < 10_enable_susfs_for_ksu.patch  || true
+              
+              # if ! grep -qF 'static void ksu_install_manager_fd_tw_func(struct callback_head *cb)' ./kernel/setuid_hook.c; then
+                # sed -i '/static inline bool is_allow_su()/istatic void ksu_install_manager_fd_tw_func(struct callback_head *cb){ ksu_install_fd(); kfree(cb);}' ./kernel/setuid_hook.c
+              # fi
+              
+              # if ! grep -qxF 'if (ksu_get_manager_appid() == new_uid % PER_USER_RANGE)' ./kernel/setuid_hook.c; then
+                # sed -i 's/if (ksu_get_manager_appid() == new_uid % PER_USER_RANGE)/if (ksu_get_manager_uid() == new_uid % PER_USER_RANGE)/' ./kernel/setuid_hook.c
+              # fi
+              
+              # if ! grep -qF 'define KERNEL_SU_DOMAIN "su"' ./kernel/selinux/selinux.h; then
+                # sed -i '/void setup_selinux/i#define KERNEL_SU_DOMAIN "su"\n#define KERNEL_SU_FILE "ksu_file"\n\n#define KERNEL_SU_CONTEXT "u:r:" KERNEL_SU_DOMAIN ":s0"\n#define KSU_FILE_CONTEXT "u:object_r:" KERNEL_SU_FILE ":s0"\n' ./kernel/selinux/selinux.h
+              # fi
+              
               for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
                 echo "Patching file: $file with fix_$file.patch"
                 patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.patch"
               done
-              patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch"
             else
               patch -p1 --forward < 10_enable_susfs_for_ksu.patch
             fi
@@ -912,6 +869,7 @@ runs:
         echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
+
     - name: Apply Other Patches
       shell: bash
       run: |
@@ -932,17 +890,13 @@ runs:
           echo "Hmbird not enabled, skipping fengchi patch"
         fi
         
-        patch -p1 --forward < "../../../kernel_patches/common/optimized_mem_operations.patch"
-        patch -p1 --forward < "../../../kernel_patches/common/file_struct_8bytes_align.patch"
-        patch -p1 --forward < "../../../kernel_patches/common/reduce_cache_pressure.patch"
+        patch -p1 --forward "../../../kernel_patches/common/optimized_mem_operations.patch"
+        patch -p1 --forward "../../../kernel_patches/common/file_struct_8bytes_align.patch"
+        patch -p1 --forward "../../../kernel_patches/common/reduce_cache_pressure.patch"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-          patch -p1 --forward < "../../../kernel_patches/common/clear_page_16bytes_align.patch"
-          echo "Patching unicode!"
-          patch -p1 --forward < "../../../kernel_patches/common/unicode_bypass_fix_6.1-.patch"
+          patch -p1 --forward "../../../kernel_patches/common/clear_page_16bytes_align.patch"
         else
           cat "../../../kernel_patches/common/clear_page_16bytes_align.patch" | sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | patch -p1 -F3 --forward
-          echo "Patching unicode!"
-          patch -p1 --forward < "../../../kernel_patches/common/unicode_bypass_fix_6.1+.patch"
         fi
         
         echo "✅ Other patches applied"
@@ -1048,9 +1002,8 @@ runs:
         EOF
         echo "::endgroup::"
 
-    - name: Add Build based configs (for non-6.12 kernels)
+    - name: Add Build based configs
       shell: bash
-      if: ${{ env.OP_KERNEL_VERSION != '6.12' }}
       run: |
         set -euo pipefail
         echo "::group::Add Build based configs"
@@ -1062,62 +1015,6 @@ runs:
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
         CONFIG_OPTIMIZE_INLINING=y
         EOF
-        echo "::endgroup::"
-
-    - name: Force Remove rust_binder.ko from Kleaf outputs (BUILD.bazel + modules.bzl)
-      shell: bash
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' && env.RUSTC_BIN_PATH == '' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Force remove rust_binder.ko from Kleaf declarations"
-    
-        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        BUILD_FILE="$KP/common/BUILD.bazel"
-        MODULES_BZL="$KP/common/modules.bzl"
-    
-        [ -f "$BUILD_FILE" ] || { echo "::error::BUILD.bazel not found: $BUILD_FILE"; exit 1; }
-        [ -f "$MODULES_BZL" ] || { echo "::error::modules.bzl not found: $MODULES_BZL"; exit 1; }
-    
-        echo "🔧 Patching:"
-        echo " - $BUILD_FILE"
-        echo " - $MODULES_BZL"
-    
-        cp -f "$BUILD_FILE"  "$BUILD_FILE.backup"
-        cp -f "$MODULES_BZL" "$MODULES_BZL.backup"
-    
-        sed -i '/rust_binder\.ko/d' "$BUILD_FILE"
-        sed -i '/rust_binder\.ko/d' "$MODULES_BZL"
-        sed -i '/rust_binder/d' "$MODULES_BZL"
-    
-        echo ""
-        echo "📊 Diff (BUILD.bazel):"
-        diff -u "$BUILD_FILE.backup" "$BUILD_FILE" | head -n 120 || true
-    
-        echo ""
-        echo "📊 Diff (modules.bzl):"
-        diff -u "$MODULES_BZL.backup" "$MODULES_BZL" | head -n 120 || true
-    
-        echo ""
-        echo "✅ rust_binder removal patch applied"
-        echo "::endgroup::"
-
-    - name: Verify rust_binder is fully removed (BUILD + .bzl)
-      shell: bash
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' && env.RUSTC_BIN_PATH == '' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Verify rust_binder is fully removed"
-    
-        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-    
-        echo "Searching for rust_binder references in common/ and build/ ..."
-        if grep -Rni --exclude-dir=.git "rust_binder" "$KP/common" "$KP/build" ; then
-          echo ""
-          echo "::error::rust_binder is still referenced somewhere above (must be removed)."
-          exit 1
-        fi
-
-        echo "✅ No rust_binder references found"
         echo "::endgroup::"
 
     - name: Save Build Metadata
@@ -1153,7 +1050,7 @@ runs:
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
-        set -euo pipefail
+        echo "Changing to configuration directory: $CONFIG..."
         cd "$CONFIG/kernel_platform"
         
         echo "Running sed commands..."
@@ -1161,23 +1058,19 @@ runs:
         sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_NONE=y/' "./common/arch/arm64/configs/gki_defconfig"
         sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_CLANG_NONE=y/' "./common/arch/arm64/configs/gki_defconfig"
-        cat >> ./common/arch/arm64/configs/gki_defconfig <<EOF
-        CONFIG_TCP_CONG_BIC=n
-        CONFIG_TCP_CONG_WESTWOOD=n
-        CONFIG_TCP_CONG_HTCP=n
-        CONFIG_LOCALVERSION="-OP-Wild"        
-        EOF
+        echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> ./common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_LOCALVERSION=\"-OP-Wild\"" >> ./common/arch/arm64/configs/gki_defconfig
         
-        # sed -i '/_ARM64_GKI_MODULES_LIST = \[/,/\]/ {
-            # /\]/i\
-            # "net/ipv4/tcp_bic.ko",\
-            # "net/ipv4/tcp_htcp.ko",\
-            # "net/ipv4/tcp_westwood.ko",
-        # }' ./common/modules.bzl
+        sed -i '/_ARM64_GKI_MODULES_LIST = \[/,/\]/ {
+            /\]/i\
+            "net/ipv4/tcp_bic.ko",\
+            "net/ipv4/tcp_htcp.ko",\
+            "net/ipv4/tcp_westwood.ko",
+        }' ./common/modules.bzl
         
-        # sed -i "s/$(printf '\044'){{kernelrelease}}/\"$(printf '\044'){{kernelrelease}}\"/g" ./build/kernel/kleaf/impl/kernel_modules_install.bzl
-        # sed -i -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ s/"modules",\?//g' -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ {/^[[:space:]]*$/d}' -e 's/module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64")/module_implicit_outs = []/' common/BUILD.bazel
-        # sed -i -e 's/":tests_zip_arm64",//' -e '/extra_dist/,/]/ {/^[[:space:]]*$/d}' -e 's/kmi_enforced = True,/kmi_enforced = False,/' -e 's/kmi_symbol_list_strict_mode = True,/kmi_symbol_list_strict_mode = False,/' -e 's/trim_nonlisted_kmi = True,/trim_nonlisted_kmi = False,/' common/BUILD.bazel
+        sed -i "s/$(printf '\044'){{kernelrelease}}/\"$(printf '\044'){{kernelrelease}}\"/g" ./build/kernel/kleaf/impl/kernel_modules_install.bzl
+        sed -i -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ s/"modules",\?//g' -e '/_GKI_AARCH64_MAKE_GOALS/,/]/ {/^[[:space:]]*$/d}' -e 's/module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64")/module_implicit_outs = []/' common/BUILD.bazel
+        sed -i -e 's/":tests_zip_arm64",//' -e '/extra_dist/,/]/ {/^[[:space:]]*$/d}' -e 's/kmi_enforced = True,/kmi_enforced = False,/' -e 's/kmi_symbol_list_strict_mode = True,/kmi_symbol_list_strict_mode = False,/' -e 's/trim_nonlisted_kmi = True,/trim_nonlisted_kmi = False,/' common/BUILD.bazel
         
         # Run sed commands for modifications
         sed -i 's/check_defconfig//' ./common/build.config.gki
@@ -1195,243 +1088,41 @@ runs:
         DATESTR=$(date -u)
         perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
 
-    - name: Clean Kleaf out/cache (avoid stale module_outs)
+    - name: Build the Kernel
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
       run: |
-        set -euo pipefail
-        echo "::group::Clean Kleaf cache"
-    
-        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-    
-        echo "Removing: $KP/out/cache/*"
-        rm -rf "$KP/out/cache"/* || true
-    
-        echo "✅ Kleaf cache cleaned"
-        echo "::endgroup::"
-
-    - name: Disable Kleaf KMI strict checks (6.12) [robust]
-      shell: bash
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Disable Kleaf KMI strict checks (robust)"
-    
-        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        BUILD_FILE="$KP/common/BUILD.bazel"
-        [ -f "$BUILD_FILE" ] || { echo "::error::BUILD.bazel not found: $BUILD_FILE"; exit 1; }
-    
-        cp -f "$BUILD_FILE" "$BUILD_FILE.kmi.backup"
-    
-        python3 - "$BUILD_FILE" <<'PY'
-        import re, pathlib, sys
+        echo "Changing to configuration directory: $CONFIG..."
+        cd "$CONFIG"
         
-        p = pathlib.Path(sys.argv[1])
-        s = p.read_text(encoding="utf-8", errors="ignore").splitlines(True)
+        echo "Building the kernel..."
+        # Clear Cache
+        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
         
-        keys = ["kmi_symbol_list_strict_mode", "kmi_enforced", "trim_nonlisted_kmi"]
-        assign_re = re.compile(r'^(\s*)(' + "|".join(map(re.escape, keys)) + r')\s*=\s*.*?(,?\s*)$')
+        rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
         
-        out = []
-        changed = False
-        
-        for line in s:
-            m = assign_re.match(line)
-            if m:
-                indent, key, trail = m.group(1), m.group(2), m.group(3)
-                comma = "," if "," in trail else ""
-                new_line = f"{indent}{key} = False{comma}\n"
-                if new_line != line:
-                    changed = True
-                out.append(new_line)
-            else:
-                out.append(line)
-        
-        p.write_text("".join(out), encoding="utf-8")
-        print("patched:", changed)
-        PY
-    
-        echo ""
-        echo "📌 Post-patch snapshot (grep):"
-        grep -nE 'kmi_symbol_list_strict_mode|kmi_enforced|trim_nonlisted_kmi' "$BUILD_FILE" | head -n 120 || true
-    
-        echo ""
-        echo "📊 Diff (BUILD.bazel):"
-        diff -u "$BUILD_FILE.kmi.backup" "$BUILD_FILE" | head -n 220 || true
-    
-        echo "✅ KMI strict/enforced flags forcibly set to False"
-        echo "::endgroup::"
-
-    - name: Build the Kernel (Bazel with ccache)
-      shell: bash
-      if: ${{ env.OP_KERNEL_VERSION == '6.12' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Build kernel with Bazel + ccache"
-        
-        cd "$CONFIG/kernel_platform"
-        
-        # ========== CCACHE CONFIGURATION ==========
-        export CCACHE_DIR="${HOME}/.ccache"
-        export CCACHE_MAXSIZE="1G"
-        export CCACHE_COMPILERCHECK="content"
-        export CCACHE_BASEDIR="${GITHUB_WORKSPACE}"
-        export CCACHE_NOHASHDIR="true"
-        export CCACHE_SLOPPINESS="file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale"
-        
-        # ========== BAZEL CACHE CONFIGURATION ==========
-        BAZEL_CACHE_DIR="${HOME}/.bazel_cache"
-        mkdir -p "$BAZEL_CACHE_DIR"
-        
-        # ========== CREATE CCACHE WRAPPERS ==========
-        WRAPPER_DIR="$PWD/ccache_wrappers"
-        mkdir -p "$WRAPPER_DIR"
-        
-        cat > "$WRAPPER_DIR/clang" << 'WRAPPER_EOF'
-        #!/bin/bash
-        exec ccache "${CLANG_BIN_PATH}/clang" "$@"
-        WRAPPER_EOF
-        
-        cat > "$WRAPPER_DIR/clang++" << 'WRAPPER_EOF'
-        #!/bin/bash
-        exec ccache "${CLANG_BIN_PATH}/clang++" "$@"
-        WRAPPER_EOF
-        
-        chmod +x "$WRAPPER_DIR/clang" "$WRAPPER_DIR/clang++"
-        
-        # ========== UPDATE PATH ==========
-        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        BASE_PATH="$WRAPPER_DIR:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
-        export PATH="${BASE_PATH}:${PATH}"
-        
-        # ========== DETERMINE OPTIMIZATION LEVEL ==========
-        if [ "${{ inputs.optimize_level }}" = "O3" ]; then
-          OPT_FLAG="-O3"
-          OPT_LEVEL="O3"
-          LTO_MODE="thin"
-        else
-          OPT_FLAG="-O2"
-          OPT_LEVEL="O2"
-          LTO_MODE="thin"
-        fi
-        
-        # ========== PRE-BUILD STATS ==========
-        BUILD_START=$(date +%s)
-        
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          echo "============================================"
-          echo "📊 Pre-build Cache Statistics"
-          echo "============================================"
-          echo ""
-          echo "=== ccache ==="
-          ccache -s | head -n 15
-          echo ""
-          echo "=== Bazel cache ==="
-          if [ -d "$BAZEL_CACHE_DIR" ]; then
-            BAZEL_SIZE=$(du -sh "$BAZEL_CACHE_DIR" 2>/dev/null | cut -f1)
-            BAZEL_FILES=$(find "$BAZEL_CACHE_DIR" -type f 2>/dev/null | wc -l)
-            echo "Size: $BAZEL_SIZE"
-            echo "Files: $BAZEL_FILES"
-          else
-            echo "Empty (first build)"
-          fi
-          echo "============================================"
-          echo ""
-          
-          ccache -z
-        else
-          echo "⚠️ Clean build mode - caches will be bypassed"
-          export CCACHE_DISABLE=1
-        fi
-        
-        # ========== BAZEL BUILD ARGUMENTS ==========
-        echo "🎯 Build configuration:"
-        echo "   Optimization: $OPT_LEVEL"
-        echo "   LTO: $LTO_MODE"
-        echo "   CPUs: $(nproc --all)"
-        echo "   RAM limit: 80%"
-        echo ""
-        
-        BAZEL_ARGS=(
-          "--config=fast"
-          "--config=stamp"
-          "--lto=$LTO_MODE"
-          
-          "--copt=$OPT_FLAG"
-          "--copt=-pipe"
-          "--copt=-fno-stack-protector"
-          "--copt=-Wno-error"
-          "--copt=-Wno-unused-command-line-argument"
-          
-          "--disk_cache=$BAZEL_CACHE_DIR"
-          "--repository_cache=$BAZEL_CACHE_DIR/repo"
-          "--experimental_repository_cache_hardlinks"
-          
-          "--action_env=PATH=$PATH"
-          "--action_env=CCACHE_DIR=$CCACHE_DIR"
-          "--action_env=CCACHE_MAXSIZE=$CCACHE_MAXSIZE"
-          "--action_env=CCACHE_COMPILERCHECK=$CCACHE_COMPILERCHECK"
-          "--action_env=CCACHE_BASEDIR=$CCACHE_BASEDIR"
-          "--action_env=CCACHE_NOHASHDIR=$CCACHE_NOHASHDIR"
-          "--action_env=CCACHE_SLOPPINESS=$CCACHE_SLOPPINESS"
-          "--action_env=CLANG_BIN_PATH=$CLANG_BIN_PATH"
-          
-          "--sandbox_writable_path=$CCACHE_DIR"
-          "--sandbox_writable_path=$BAZEL_CACHE_DIR"
-          
-          "--jobs=$(nproc --all)"
-          "--local_resources=memory=HOST_RAM*.8"
-          "--local_resources=cpu=HOST_CPUS"
-          
-          "--experimental_guard_against_concurrent_changes"
-          "--experimental_reuse_sandbox_directories"
-          
-          "--verbose_failures"
-          "--show_progress_rate_limit=5"
-        )
-        
-        if [ "${{ inputs.clean }}" = "true" ]; then
-          BAZEL_ARGS+=("--action_env=CCACHE_DISABLE=1")
-          echo "🧹 Clean build - ccache disabled"
-        fi
-        
-        # ========== DISPLAY CONFIGURATION ==========
-        echo "============================================"
-        echo "🔨 Bazel Build Configuration"
-        echo "============================================"
-        echo "Optimization: $OPT_LEVEL"
-        echo "LTO: $LTO_MODE"
-        echo "Jobs: $(nproc --all)"
-        echo "RAM limit: 80% of available"
-        echo "ccache: $([ "${{ inputs.clean }}" = "true" ] && echo "DISABLED" || echo "ENABLED")"
-        echo "Bazel cache: $BAZEL_CACHE_DIR"
-        echo "============================================"
-        echo ""
-        
-        # ========== MONITOR SYSTEM RESOURCES ==========
         (stdbuf -oL bash -c '
           while true; do
-            echo "=== $(date +%H:%M:%S) ==="
-            free -h | grep -E "Mem:|Swap:"
-            df -h / | tail -n1
+            echo "=== $(date) ==="
+            free -h
+            echo "======"
+            df -h
+            echo "======"
+            top -b -n 1 | head -n 15
             echo ""
-            sleep 120
+            sleep 60
           done
         ') &
         MONITOR_PID=$!
-        trap "kill $MONITOR_PID 2>/dev/null || true" EXIT
+        trap "kill $MONITOR_PID" EXIT
         
-        # ========== EXECUTE BUILD ==========
-        echo "🔨 Starting Bazel build..."
-        echo ""
+        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        BASE_PATH="/usr/lib/ccache:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
+        export PATH="${BASE_PATH}:${PATH}"
         
-        if ! ./tools/bazel build "${BAZEL_ARGS[@]}" //common:kernel_aarch64_dist; then
-          echo "::error::Bazel build failed"
-          kill $MONITOR_PID 2>/dev/null || true
-          exit 1
-        fi
-        
-        kill $MONITOR_PID 2>/dev/null || true
+        BUILD_START=$(date +%s)
+        cd kernel_platform
+        ./tools/bazel build --config=fast --config=stamp --lto=none //common:kernel_aarch64_dist --disk_cache="$CCACHE_DIR" --sandbox_writable_path="$CCACHE_DIR" --verbose_failures --sandbox_debug || exit 1
         
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
@@ -1439,61 +1130,7 @@ runs:
         echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
         echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
         echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
-        
-        # ========== POST-BUILD STATS ==========
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          echo ""
-          echo "============================================"
-          echo "📊 Post-build Cache Statistics"
-          echo "============================================"
-          echo ""
-          echo "=== ccache ==="
-          ccache -s | head -n 25
-          echo ""
-          echo "=== Bazel cache ==="
-          if [ -d "$BAZEL_CACHE_DIR" ]; then
-            BAZEL_SIZE=$(du -sh "$BAZEL_CACHE_DIR" 2>/dev/null | cut -f1)
-            BAZEL_FILES=$(find "$BAZEL_CACHE_DIR" -type f 2>/dev/null | wc -l)
-            echo "Size: $BAZEL_SIZE"
-            echo "Files: $BAZEL_FILES"
-            echo "BAZEL_CACHE_SIZE=$BAZEL_SIZE" >> "$GITHUB_ENV"
-          fi
-          echo "============================================"
-        fi
-        
-        echo ""
-        echo "✅ Bazel build completed in ${BUILD_TIME}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s)"
-        echo "::endgroup::"
-        
-    - name: 🔍 Verify Cache Before Save
-      if: always()
-      shell: bash
-      run: |
-        echo "::group::Verify cache directories"
-        
-        echo "=== ccache directory ==="
-        if [ -d "$CCACHE_DIR" ]; then
-          CCACHE_SIZE=$(du -sh "$CCACHE_DIR" 2>/dev/null | cut -f1)
-          CCACHE_FILES=$(find "$CCACHE_DIR" -type f 2>/dev/null | wc -l)
-          echo "Size: $CCACHE_SIZE"
-          echo "Files: $CCACHE_FILES"
-        else
-          echo "Directory not found!"
-        fi
-        
-        echo ""
-        echo "=== Bazel cache directory ==="
-        if [ -d ~/.bazel_cache ]; then
-          BAZEL_SIZE=$(du -sh ~/.bazel_cache 2>/dev/null | cut -f1)
-          BAZEL_FILES=$(find ~/.bazel_cache -type f 2>/dev/null | wc -l)
-          echo "Size: $BAZEL_SIZE"
-          echo "Files: $BAZEL_FILES"
-        else
-          echo "Directory not found!"
-        fi
-        
-        echo "::endgroup::"
-        
+
     - name: Build Kernel
       shell: bash
       if: ${{ env.OP_KERNEL_VERSION != '6.12' }}
@@ -1691,20 +1328,15 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Cache final statistics"
+        echo "::group::ccache final statistics"
         
         export CCACHE_DIR="${{ env.CCACHE_DIR }}"
         
-        echo "============================================"
-        echo "📊 Final Cache Statistics"
-        echo "============================================"
-        echo ""
-        echo "=== ccache ==="
+        echo "ccache Statistics"
         ccache -s
         
         STATS="$(ccache -s)"
         
-        # Extract ccache metrics
         CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {
           match($0, /[0-9]+/); 
           print substr($0, RSTART, RLENGTH)
@@ -1721,7 +1353,8 @@ runs:
         }' | head -n1)
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
+          HIT_RATE=$(awk -v h="${HITS:-0
+        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
           DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
         else
           HIT_RATE="0.0"
@@ -1731,39 +1364,13 @@ runs:
         echo "hit_rate=${HIT_RATE}%" >> "$GITHUB_OUTPUT"
         echo "direct_rate=${DIRECT_RATE}%" >> "$GITHUB_OUTPUT"
         
-        # Bazel cache info (if exists)
-        BAZEL_CACHE_DIR="${HOME}/.bazel_cache"
-        if [ -d "$BAZEL_CACHE_DIR" ]; then
-          echo ""
-          echo "=== Bazel cache ==="
-          BAZEL_SIZE=$(du -sh "$BAZEL_CACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
-          BAZEL_FILES=$(find "$BAZEL_CACHE_DIR" -type f 2>/dev/null | wc -l || echo "0")
-          echo "Size: $BAZEL_SIZE"
-          echo "Files: $BAZEL_FILES"
-          echo "bazel_cache_size=$BAZEL_SIZE" >> "$GITHUB_OUTPUT"
-        else
-          echo "bazel_cache_size=N/A" >> "$GITHUB_OUTPUT"
-        fi
-        
-        echo "============================================"
         echo "::endgroup::"
         
-        # Add to step summary
-        {
-          echo "## 📊 Cache Statistics"
-          echo ""
-          echo "### ccache"
-          echo '```'
-          ccache -s
-          echo '```'
-          
-          if [ -d "$BAZEL_CACHE_DIR" ]; then
-            echo ""
-            echo "### Bazel Cache"
-            echo "- **Size:** $BAZEL_SIZE"
-            echo "- **Files:** $BAZEL_FILES"
-          fi
-        } >> "$GITHUB_STEP_SUMMARY"
+        echo "## 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        ccache -s >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
 
     - name: Collect Build Stats / Validate Image
       id: collect_stats
@@ -1930,9 +1537,6 @@ runs:
           if [ "${{ inputs.clean }}" != "true" ]; then
             echo "ccache Hit Rate: ${{ steps.ccache_stats.outputs.hit_rate }}"
             echo "ccache Direct Rate: ${{ steps.ccache_stats.outputs.direct_rate }}"
-            if [ "${{ env.OP_KERNEL_VERSION }}" = "6.12" ]; then
-              echo "Bazel Cache Size: ${{ steps.ccache_stats.outputs.bazel_cache_size }}"
-            fi
           else
             echo "ccache: Disabled (clean build)"
           fi
@@ -1994,14 +1598,11 @@ runs:
           echo "|--------|-------|"
           echo "| **Optimization** | ${{ inputs.optimize_level }} |"
           echo "| **Clean Build** | ${{ inputs.clean }} |"
-          echo "| **Build Time** | ${{ steps.collect_stats.outputs.build_time }}s ($((BUILD_TIME / 60))m $((BUILD_TIME % 60))s) |"
+          echo "| **Build Time** | ${{ steps.collect_stats.outputs.build_time }}s |"
           
           if [ "${{ inputs.clean }}" != "true" ]; then
             echo "| **ccache Hit Rate** | ${{ steps.ccache_stats.outputs.hit_rate }} |"
             echo "| **ccache Direct Rate** | ${{ steps.ccache_stats.outputs.direct_rate }} |"
-            if [ "${{ env.OP_KERNEL_VERSION }}" = "6.12" ]; then
-              echo "| **Bazel Cache Size** | ${{ steps.ccache_stats.outputs.bazel_cache_size }} |"
-            fi
           fi
           
           echo "| **Image SHA256** | \`${{ steps.collect_stats.outputs.image_sha256 }}\` |"
