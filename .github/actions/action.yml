@@ -596,7 +596,7 @@ runs:
         fi
         
         git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git -b test-branch
+        git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
         
         if [ "${{ env.OP_SUSFS }}" = true ]; then
           git clone https://gitlab.com/simonpunk/susfs4ksu.git
@@ -653,7 +653,7 @@ runs:
         echo "::group::Add BBG LSM"
         cd "$CONFIG/kernel_platform"
         echo "Adding BBG..."
-        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/dev/setup.sh | bash -s -- "dev"; then
+        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash; then
           echo "::warning::BBG setup script failed, continuing anyway"
         fi
         echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
@@ -937,7 +937,7 @@ runs:
         set -euo pipefail
         echo "::group::Apply KSU hooks"
         cd "$CONFIG/kernel_platform/common"
-        patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.6_kprobes.patch
+        patch -p1 < ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch
         echo "✅ KSU hooks applied"
         echo "::endgroup::"
 
@@ -1044,24 +1044,6 @@ runs:
         CONFIG_TRACEPOINTS=y
         EOF
         echo "::endgroup::"
-
-    - name: Disable Debug Options
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
-        # Disable Kernel Debugging
-        CONFIG_DEBUG_KERNEL=n
-        CONFIG_DEBUG_INFO=n
-        CONFIG_DEBUG_INFO_DWARF4=n       
-        # Disable Lock Debugging
-        CONFIG_LOCK_DEBUGGING=n
-        CONFIG_DEBUG_MUTEXES=n
-        CONFIG_DEBUG_SPINLOCK=n
-        CONFIG_DEBUG_ATOMIC_SLEEP=n    
-        CONFIG_GDB_SCRIPTS=n        
-        EOF
 
     - name: Add RUST build configs
       shell: bash
