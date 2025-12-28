@@ -97,6 +97,7 @@ runs:
         ip_set="$OP_IP_SET"
         rust_build="$OP_RUST_BUILD"
         lto="$OP_LTO"
+        uname="$OP_UNAME"
         optimize='${{ inputs.optimize_level }}'
         
         errors=()
@@ -201,6 +202,12 @@ runs:
           errors+=("Input 'lto' cannot be empty")
         elif [[ "$lto" != "none" && "$lto" != "thin" && "$lto" != "full" ]]; then
           errors+=("Input 'lto' contains invalid characters. Allowed: 'thin', 'full' or 'none'. Got: '$lto'")
+        fi
+        
+        if [[ -z "$uname" ]]; then
+          errors+=("Input 'uname' cannot be empty")
+        elif [[ ${#uname} -gt 44 ]]; then
+          errors+=("Input 'uname' too long. Maximum length: 44. Got: '$uname'")
         fi
         
         case "$optimize" in
@@ -645,22 +652,6 @@ runs:
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
 
-    - name: Add BBG
-      if: ${{ env.OP_BBG == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Add BBG LSM"
-        cd "$CONFIG/kernel_platform"
-        echo "Adding BBG..."
-        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash; then
-          echo "::warning::BBG setup script failed, continuing anyway"
-        fi
-        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
-        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
-        echo "✅ BBG LSM added"
-        echo "::endgroup::"
-
     - name: Add KernelSU Next
       shell: bash
       if: ${{ inputs.ksu_type == 'KSUN' }}
@@ -897,6 +888,8 @@ runs:
     - name: Apply Other Patches
       shell: bash
       run: |
+        set -euo pipefail
+        echo "::group::Apply Other patches"
         cd "$CONFIG/kernel_platform/common"
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         MIN_VERSION="5.16"
@@ -930,6 +923,29 @@ runs:
         echo "✅ Other patches applied"
         echo "::endgroup::"
 
+    - name: Add BBG
+      if: ${{ env.OP_BBG == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Add BBG LSM"
+        cd "$CONFIG/kernel_platform"
+        echo "Adding BBG..."
+        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash; then
+          echo "::warning::BBG setup script failed, continuing anyway"
+        fi
+        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          sed -i '/commit_creds(cred)\;/ibbg_cred(cred)\;' KernelSU-Next/kernel/app_profile.c
+          sed -i '/#include <linux\/cred.h>/a #include <security\/baseband-guard\/tracing\/tracing.h>' KernelSU-Next/kernel/app_profile.c
+        else
+          sed -i '/commit_creds(cred)\;/ibbg_cred(cred)\;' KernelSU/kernel/app_profile.c
+          sed -i '/#include <linux\/cred.h>/a #include <security\/baseband-guard\/tracing\/tracing.h>' KernelSU/kernel/app_profile.c
+        fi
+        echo "✅ BBG LSM added"
+        echo "::endgroup::"
+
     - name: Apply KSU Hooks
       shell: bash
       if: ${{ env.NEED_HOOKS == 'true' }}
@@ -945,7 +961,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add KSU / KSUN and SUSFS Configuration Settings"
+        echo "Add KSU / KSUN and SUSFS Configuration Settings"
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_KSU=y
@@ -970,14 +986,13 @@ runs:
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
         EOF
-        echo "::endgroup::"
 
     - name: Add BBR
       if: ${{ env.OP_BBR == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add BBR"
+        echo "Add BBR"
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_TCP_CONG_ADVANCED=y
@@ -985,28 +1000,26 @@ runs:
         CONFIG_NET_SCH_FQ=y
         CONFIG_NET_SCH_FQ_CODEL=y
         EOF
-        echo "::endgroup::"
 
     - name: Add TTL Target Support
       if: ${{ env.OP_TTL == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add TTL Target Support"
+        echo "Add TTL Target Support"
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
         EOF
-        echo "::endgroup::"
 
     - name: Add IP SET Support
       if: ${{ env.OP_IP_SET == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add IP SET Support"
+        echo "Add IP SET Support"
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_IP_SET=y
@@ -1028,13 +1041,12 @@ runs:
         CONFIG_IP_SET_HASH_NETIFACE=y
         CONFIG_IP_SET_LIST_SET=y
         EOF
-        echo "::endgroup::"
 
     - name: Add Build based configs
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add Build based configs"
+        echo "Add Build based configs"
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
@@ -1043,7 +1055,6 @@ runs:
         CONFIG_FRAME_WARN=0
         CONFIG_TRACEPOINTS=y
         EOF
-        echo "::endgroup::"
 
     - name: Disable Debug Options
       shell: bash
@@ -1067,20 +1078,19 @@ runs:
       if: ${{ env.OP_RUST_BUILD == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Add Build based configs"
+        echo "Add Build based configs"
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<EOF
         CONFIG_ANDROID_BINDER_IPC_RUST=m
         CONFIG_RUST=y
         EOF
-        echo "::endgroup::"
 
     - name: Save Build Metadata
       id: save_metadata
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Save Build Metadata"
+        echo "Save Build Metadata"
         CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
         ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
         cd "$ARTIFACTS_DIR"
@@ -1090,19 +1100,17 @@ runs:
         if [ "${{ env.OP_SUSFS }}" = true ]; then
           echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
         fi
-        echo "::endgroup::"
 
     - name: Customize Kernel Branding
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Customize Kernel Branding"
+        echo "Customize Kernel Branding"
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         cd "$KERNEL_PATH/common"
         mkdir -p out
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-OP-Wild"
+        CUSTOM_LOCALVERSION="-${ANDROID_VER}-${OP_UNAME}"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
-        echo "::endgroup::"
 
     - name: Build Kernel
       shell: bash
@@ -1209,8 +1217,9 @@ runs:
         
         make O="$OUT" gki_defconfig
         
-        if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
-          scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+        LOCAL_LOCALVERSION="${CUSTOM_LOCALVERSION:--OP-WILD}"
+        if [ -n "${LOCAL_LOCALVERSION:-}" ]; then
+          scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${LOCAL_LOCALVERSION}"
           scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
           sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
         fi
@@ -1399,6 +1408,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Collect Build stats"
         KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
         COMMON="$KERNEL_PATH/common"
         OUT="$COMMON/out"
@@ -1451,6 +1461,7 @@ runs:
         echo "   - Image size: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
         echo "   - SHA256: $IMG_SHA256"
         echo "   - Build time: ${BUILD_TIME}s"
+        echo "::endgroup::"
 
     - name: Create Kernel ZIP
       id: create_zip
