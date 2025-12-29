@@ -10,7 +10,7 @@
   "hmbird": false,
   "susfs": true,
   "bbg": true,
-  "bbr": true,
+  "bbr": false,
   "ttl": true,
   "ip_set": true
 }
