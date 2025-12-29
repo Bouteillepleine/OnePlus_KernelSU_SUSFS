@@ -9,7 +9,7 @@
   "disk_cleanup": false,
   "hmbird": false,
   "susfs": true,
-  "bbg": true,
+  "bbg": false,
   "bbr": true,
   "ttl": true,
   "ip_set": true
