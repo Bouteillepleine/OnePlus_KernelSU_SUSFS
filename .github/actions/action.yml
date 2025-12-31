@@ -948,29 +948,6 @@ runs:
         echo "✅ Other patches applied"
         echo "::endgroup::"
 
-    - name: Add BBG
-      if: ${{ env.OP_BBG == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Add BBG LSM"
-        cd "$CONFIG/kernel_platform"
-        echo "Adding BBG..."
-        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash; then
-          echo "::warning::BBG setup script failed, continuing anyway"
-        fi
-        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
-        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
-        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-          sed -i '/commit_creds(cred)\;/ibbg_cred(cred)\;' KernelSU-Next/kernel/app_profile.c
-          sed -i '/#include <linux\/cred.h>/a #include <security\/baseband-guard\/tracing\/tracing.h>' KernelSU-Next/kernel/app_profile.c
-        else
-          sed -i '/commit_creds(cred)\;/ibbg_cred(cred)\;' KernelSU/kernel/app_profile.c
-          sed -i '/#include <linux\/cred.h>/a #include <security\/baseband-guard\/tracing\/tracing.h>' KernelSU/kernel/app_profile.c
-        fi
-        echo "✅ BBG LSM added"
-        echo "::endgroup::"
-
     - name: Apply KSU Hooks
       shell: bash
       if: ${{ env.NEED_HOOKS == 'true' }}
@@ -1081,23 +1058,6 @@ runs:
         CONFIG_TRACEPOINTS=y
         EOF
 
-    - name: Disable Debug Options
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
-        # Disable Kernel Debugging
-        CONFIG_DEBUG_KERNEL=n
-        CONFIG_DEBUG_INFO=n
-        CONFIG_DEBUG_INFO_DWARF4=n       
-        # Disable Lock Debugging
-        CONFIG_LOCK_DEBUGGING=n
-        CONFIG_DEBUG_MUTEXES=n
-        CONFIG_DEBUG_SPINLOCK=n
-        CONFIG_DEBUG_ATOMIC_SLEEP=n    
-        CONFIG_GDB_SCRIPTS=n        
-        EOF
     - name: Add RUST build configs
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
@@ -1258,24 +1218,6 @@ runs:
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
           KCFLAGS_EXTRA="-O2"
         fi
-
-        # Disable KUnit and related test configs
-        disable_list=(
-          CONFIG_REGMAP_KUNIT
-          CONFIG_INPUT_KUNIT_TEST
-          CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST
-          CONFIG_SND_SOC_UTILS_KUNIT_TEST
-          CONFIG_HID_KUNIT_TEST
-          CONFIG_RTC_LIB_KUNIT_TEST
-          CONFIG_CLK_KUNIT_TEST
-          CONFIG_CLK_GATE_KUNIT_TEST
-          CONFIG_IIO_FORMAT_KUNIT_TEST
-          CONFIG_EXT4_KUNIT_TESTS
-          CONFIG_FAT_KUNIT_TEST
-        )
-        for sym in "${disable_list[@]}"; do
-          scripts/config --file "$OUT/.config" -d "$sym" || true
-        done
         
         case "${{ env.OP_LTO}}" in
           "none")
