@@ -225,20 +225,6 @@ runs:
         else
           echo "✅ Input validation passed"
         fi
-        echo "::endgroup::"    
-
-    - name: Install Minimal Dependencies
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Install dependencies"
-        sudo apt-get -o Acquire::Retries=3 update -qq
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          git curl ca-certificates build-essential clang lld flex bison \
-          libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
-          libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils
-        sudo apt-get clean
-        echo "✅ Dependencies installed"
         echo "::endgroup::"
 
     - name: Install bindgen only (no rustc)
@@ -273,6 +259,14 @@ runs:
           chmod +x "$REPO"
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
+
+    - name: Optimize Global Git for Repo Tool
+      shell: bash
+      run: |
+        set -euo pipefail
+        git config --global feature.manyFiles true
+        git config --global core.fsmonitor true
+        git config --global pack.sparse true
 
     - name: Initialize and Sync Kernel Source
       shell: bash
@@ -804,7 +798,9 @@ runs:
                 echo "Patching file: $file with fix_$file.patch"
                 patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/fix_$file.patch"
               done
+              echo "Patching Hook Mode!"
               patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch"
+              echo "Patching KSU_TOOLKIT Support for SusFS kernel!"
               patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/ksu_toolkit.patch"
             else
               patch -p1 --forward < 10_enable_susfs_for_ksu.patch
@@ -884,6 +880,30 @@ runs:
         echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
+    - name: Add BBG
+      if: ${{ env.OP_BBG == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Add BBG LSM"
+        cd "$CONFIG/kernel_platform"
+        echo "Adding BBG..."
+        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s fix_blkdev_rename; then
+          echo "::warning::BBG setup script failed, continuing anyway"
+        fi
+        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+        
+        # if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          # cd ./KernelSU-Next
+        # else
+          # cd ./KernelSU
+        # fi
+        
+        # echo "Patching BBG Enhanced Security!"
+        # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
+        echo "✅ BBG LSM added"
+        echo "::endgroup::"
 
     - name: Apply Other Patches
       shell: bash
@@ -903,6 +923,11 @@ runs:
           echo "Patching hmbird!"
           dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
           patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
+          dos2unix "../../../kernel_patches/oneplus/hmbird/overwriter.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/overwriter.patch"
+          chmod +x ./drivers/of/overwriter/overwrite_configs/convert_configs.sh
+          dos2unix "../../../kernel_patches/oneplus/hmbird/hmbird_config.patch"
+          patch -p1 -F 3 < "../../../kernel_patches/oneplus/hmbird/hmbird_config.patch"
         else
           echo "Hmbird not enabled, skipping fengchi patch"
         fi
