@@ -596,7 +596,7 @@ runs:
           echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
         fi
         
-        git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
+        git clone --depth=1 https://github.com/Bouteillepleine/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
         git clone --depth=1 https://github.com/TheWildJames/kernel_patches.git
         
         if [ "${{ env.OP_SUSFS }}" = true ]; then
