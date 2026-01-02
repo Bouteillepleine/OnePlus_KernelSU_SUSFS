@@ -300,19 +300,41 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
 
-        echo "Initializing and syncing kernel source..."
+        MANIFEST_REPO="https://github.com/OnePlusOSS/kernel_manifest.git"
 
-        if [[ "$OP_MANIFEST" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl --fail --show-error --location --proto '=https' "$OP_MANIFEST" -o .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        elif [[ "$OP_BRANCH" == wild/* ]]; then
-          mkdir -p .repo/manifests
-          cp "../manifests/$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')/$OP_MANIFEST" .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m "$OP_MANIFEST" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        # Choose a REAL branch in OnePlusOSS/kernel_manifest.git
+        # Your OP_BRANCH can be "wild/..." but that's not a manifest-repo branch.
+        MANIFEST_BRANCH="main"
+        if ! git ls-remote --exit-code --heads "$MANIFEST_REPO" "$MANIFEST_BRANCH" >/dev/null 2>&1; then
+          MANIFEST_BRANCH="master"
         fi
+
+        echo "Using manifest repo: $MANIFEST_REPO"
+        echo "Using manifest branch: $MANIFEST_BRANCH"
+        echo "Using local manifest: manifests/<oosXX>/$OP_MANIFEST"
+
+        # Map OP_OS_VERSION (OOS14/15/16) -> manifests folder name (oos14/15/16)
+        oos_dir="$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')"
+
+        SRC_MANIFEST="$GITHUB_WORKSPACE/manifests/${oos_dir}/${OP_MANIFEST}"
+        if [ ! -f "$SRC_MANIFEST" ]; then
+          echo "::error::Local manifest not found: $SRC_MANIFEST"
+          echo "Available manifests under $GITHUB_WORKSPACE/manifests:"
+          find "$GITHUB_WORKSPACE/manifests" -maxdepth 3 -type f -name '*.xml' | sed 's#^# - #' | head -n 200
+          exit 1
+        fi
+
+        mkdir -p .repo/manifests
+        cp "$SRC_MANIFEST" .repo/manifests/temp_manifest.xml
+
+        "$REPO" init \
+          -u "$MANIFEST_REPO" \
+          -b "$MANIFEST_BRANCH" \
+          -m temp_manifest.xml \
+          --repo-rev=v2.16 \
+          --depth=1 \
+          --no-clone-bundle \
+          --no-tags
 
         "$REPO" --version
 
@@ -329,6 +351,7 @@ runs:
           echo "⚠️ repo sync attempt $i failed; retrying in 15s..."
           sleep 15
         done
+
         $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
 
         echo "✅ Kernel source synced"
