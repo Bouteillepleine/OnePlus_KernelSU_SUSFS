@@ -711,7 +711,7 @@ runs:
         else
           curl --fail --location --proto '=https' -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "${{ inputs.ksu_branch_or_hash }}"
         fi
-        git submodule update --init --recursive
+        git submodule update --init --recursive --depth=1
         cd KernelSU/kernel
         BASE_VERSION=20000
         KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
@@ -1141,7 +1141,7 @@ runs:
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-${OP_UNAME}"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
-        - name: Build Kernel
+    - name: Build Kernel
       shell: bash
       env:
         PYTHONWARNINGS: "ignore:invalid escape sequence"
@@ -1536,8 +1536,9 @@ runs:
         if ! zip -r1 "$ZIP_NAME" ./* \
              -x "*.git*" \
              -x "$ZIP_NAME" \
-             -x "README.md" > /tmp/zip.log 2>&1
+             -x "README.md" > /tmp/zip.log 2>&1; then
           echo "::error::Failed to create ZIP package"
+          tail -n 80 /tmp/zip.log || true
           exit 1
         fi
         
