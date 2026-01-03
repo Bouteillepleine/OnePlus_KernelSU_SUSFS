@@ -1117,13 +1117,10 @@ runs:
         CONFIG_LOCK_DEBUGGING=n
         CONFIG_DEBUG_MUTEXES=n
         CONFIG_DEBUG_SPINLOCK=n
-        CONFIG_DEBUG_ATOMIC_SLEEP=n
-        # --- KASAN ---       
-        CONFIG_KASAN_VMALLOC=n
+        CONFIG_DEBUG_ATOMIC_SLEEP=n        
         # --- Scheduler/RCU tracing off ---
         CONFIG_SCHED_DEBUG=n
-        CONFIG_SCHEDSTATS=n
-        CONFIG_RCU_TRACE=n
+        CONFIG_SCHEDSTATS=n        
         # --- Optional release hygiene ---
         CONFIG_DEBUG_MISC=n
         CONFIG_DEBUG_BUGVERBOSE=n
