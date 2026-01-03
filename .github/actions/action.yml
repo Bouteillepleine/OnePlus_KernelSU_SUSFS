@@ -1052,6 +1052,8 @@ runs:
         CONFIG_IP_NF_TARGET_TTL=y
         CONFIG_IP6_NF_TARGET_HL=y
         CONFIG_IP6_NF_MATCH_HL=y
+        CONFIG_CFG80211=y
+        CONFIG_MAC80211=y
         EOF
 
     - name: Add IP SET Support
@@ -1111,6 +1113,7 @@ runs:
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DEBUG_INFO=n
         CONFIG_GDB_SCRIPTS=n
+        CONFIG_DEBUG_FS_ALLOW_ALL=n
         
         # Disable Lock Debugging (OK)
         CONFIG_LOCK_DEBUGGING=n
@@ -1120,6 +1123,7 @@ runs:
         
         # Sanitizers off (OK for release)        
         CONFIG_KFENCE=n
+        CONFIG_KASAN_VMALLOC=n
                 
         # Alloc/debug tooling off
         CONFIG_SLUB_DEBUG=n
@@ -1145,6 +1149,7 @@ runs:
         CONFIG_DEBUG_BUGVERBOSE=n
         CONFIG_PRINTK_CALLER=n
         CONFIG_PRINTK_TIME=n
+        CONFIG_DEVTMPFS=y
         EOF
 
     - name: Add RUST build configs
