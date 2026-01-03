@@ -300,26 +300,22 @@ runs:
         mkdir -p "$CONFIG"
         cd "$CONFIG"
 
-        MANIFEST_REPO="https://github.com/OnePlusOSS/kernel_manifest.git"
-
-        # Choose a REAL branch in OnePlusOSS/kernel_manifest.git
-        # Your OP_BRANCH can be "wild/..." but that's not a manifest-repo branch.
+        # Use WildKernels as the manifest repo (stable branch: main)
+        MANIFEST_REPO="https://github.com/WildKernels/OnePlus_KernelSU_SUSFS.git"
         MANIFEST_BRANCH="main"
-        if ! git ls-remote --exit-code --heads "$MANIFEST_REPO" "$MANIFEST_BRANCH" >/dev/null 2>&1; then
-          MANIFEST_BRANCH="master"
-        fi
 
         echo "Using manifest repo: $MANIFEST_REPO"
         echo "Using manifest branch: $MANIFEST_BRANCH"
-        echo "Using local manifest: manifests/<oosXX>/$OP_MANIFEST"
 
-        # Map OP_OS_VERSION (OOS14/15/16) -> manifests folder name (oos14/15/16)
-        oos_dir="$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')"
+        # Map OOS14/15/16 -> oos14/15/16
+        oos_dir="$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')"   # e.g. OOS16 -> oos16
 
         SRC_MANIFEST="$GITHUB_WORKSPACE/manifests/${oos_dir}/${OP_MANIFEST}"
+        echo "Using local manifest: $SRC_MANIFEST"
+
         if [ ! -f "$SRC_MANIFEST" ]; then
           echo "::error::Local manifest not found: $SRC_MANIFEST"
-          echo "Available manifests under $GITHUB_WORKSPACE/manifests:"
+          echo "Available manifests:"
           find "$GITHUB_WORKSPACE/manifests" -maxdepth 3 -type f -name '*.xml' | sed 's#^# - #' | head -n 200
           exit 1
         fi
@@ -335,8 +331,6 @@ runs:
           --depth=1 \
           --no-clone-bundle \
           --no-tags
-
-        "$REPO" --version
 
         J=$(( $(nproc --all) - 1 ))
         [ "$J" -lt 1 ] && J=1
