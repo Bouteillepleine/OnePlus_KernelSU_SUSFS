@@ -1109,46 +1109,25 @@ runs:
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
-        # Release daily - disable heavy debug
+        # --- Core debug off ---
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DEBUG_INFO=n
-        CONFIG_GDB_SCRIPTS=n
-        CONFIG_DEBUG_FS_ALLOW_ALL=n
-        
-        # Disable Lock Debugging (OK)
+        CONFIG_GDB_SCRIPTS=n              
+        # --- Lock debugging off ---
         CONFIG_LOCK_DEBUGGING=n
         CONFIG_DEBUG_MUTEXES=n
         CONFIG_DEBUG_SPINLOCK=n
         CONFIG_DEBUG_ATOMIC_SLEEP=n
-        
-        # Sanitizers off (OK for release)        
-        CONFIG_KFENCE=n
+        # --- KASAN ---       
         CONFIG_KASAN_VMALLOC=n
-                
-        # Alloc/debug tooling off
-        CONFIG_SLUB_DEBUG=n
-        CONFIG_PAGE_OWNER=n
-        CONFIG_MEM_ALLOC_PROFILING=n
-        
-        # Scheduler/RCU tracing off
+        # --- Scheduler/RCU tracing off ---
         CONFIG_SCHED_DEBUG=n
         CONFIG_SCHEDSTATS=n
         CONFIG_RCU_TRACE=n
-                        
-        # KUnit off
-        CONFIG_KUNIT=n
-        CONFIG_KUNIT_DEBUGFS=n
-        CONFIG_KUNIT_FAULT_TEST=n
-        
-        # Optional debugfs features off (usually fine)
-        CONFIG_PTDUMP_STAGE2_DEBUGFS=n
-        CONFIG_BT_DEBUGFS=n
-        
-        # Optional release hygiene (generally safe)
+        # --- Optional release hygiene ---
         CONFIG_DEBUG_MISC=n
         CONFIG_DEBUG_BUGVERBOSE=n
-        CONFIG_PRINTK_CALLER=n
-        CONFIG_PRINTK_TIME=n
+        # --- Device nodes support 
         CONFIG_DEVTMPFS=y
         EOF
 
