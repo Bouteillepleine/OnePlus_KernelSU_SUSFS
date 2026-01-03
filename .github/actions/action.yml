@@ -1107,16 +1107,46 @@ runs:
         set -euo pipefail
         cd "$CONFIG/kernel_platform"
         cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
-        # Disable Kernel Debugging
+        # Release daily - disable heavy debug
         CONFIG_DEBUG_KERNEL=n
         CONFIG_DEBUG_INFO=n
-        CONFIG_DEBUG_INFO_DWARF4=n       
-        # Disable Lock Debugging
-        CONFIG_LOCK_DEBUGGING=n
-        CONFIG_DEBUG_MUTEXES=n
-        CONFIG_DEBUG_SPINLOCK=n
-        CONFIG_DEBUG_ATOMIC_SLEEP=n    
-        CONFIG_GDB_SCRIPTS=n        
+        CONFIG_DEBUG_INFO_BTF=n
+        CONFIG_DEBUG_INFO_BTF_MODULES=n
+        CONFIG_GDB_SCRIPTS=n
+        
+        CONFIG_DEBUG_FS=n
+        CONFIG_DEBUG_FS_ALLOW_ALL=n
+        
+        CONFIG_KASAN=n
+        CONFIG_KFENCE=n
+        CONFIG_UBSAN=n
+        
+        CONFIG_SLUB_DEBUG=n
+        CONFIG_PAGE_OWNER=n
+        CONFIG_MEM_ALLOC_PROFILING=n
+        
+        CONFIG_SCHED_DEBUG=n
+        CONFIG_SCHEDSTATS=n
+        CONFIG_RCU_TRACE=n
+        
+        CONFIG_LOCKUP_DETECTOR=n
+        CONFIG_SOFTLOCKUP_DETECTOR=n
+        CONFIG_DETECT_HUNG_TASK=n
+        
+        CONFIG_KUNIT=n
+        CONFIG_KUNIT_DEBUGFS=n
+        CONFIG_KUNIT_FAULT_TEST=n
+        
+        CONFIG_PTDUMP_STAGE2_DEBUGFS=n
+        CONFIG_ANDROID_DEBUG_KINFO=n
+        CONFIG_BT_DEBUGFS=n
+        
+        # Optional release hygiene
+        CONFIG_DEBUG_MISC=n
+        CONFIG_DEBUG_BUGVERBOSE=n
+        CONFIG_PRINTK_CALLER=n
+        CONFIG_PRINTK_TIME=n
+        CONFIG_MAGIC_SYSRQ=n
         EOF
 
     - name: Add RUST build configs
