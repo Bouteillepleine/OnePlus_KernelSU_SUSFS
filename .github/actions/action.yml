@@ -458,8 +458,7 @@ runs:
 
         echo "Full Clang version: $CLANG_FULL_VERSION"
         echo "::endgroup::"
-
-    # ✅ Update 1: CCACHE_MAXSIZE cohérent (12G) + export env propre
+   
     - name: Set Cache Environment
       shell: bash
       run: |
@@ -467,7 +466,7 @@ runs:
         echo "::group::Configure ccache environment"
 
         CACHE_DIR="$HOME/.ccache"
-        CCACHE_MAXSIZE="12G"
+        CCACHE_MAXSIZE="2G"
 
         echo "CCACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
         echo "CCACHE_MAXSIZE=$CCACHE_MAXSIZE" >> "$GITHUB_ENV"
@@ -493,7 +492,6 @@ runs:
           ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
           ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
 
-    # ✅ Update 1: ne pas hardcoder 1G ici
     - name: Configure ccache
       shell: bash
       run: |
@@ -649,8 +647,7 @@ runs:
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
-
-    # ✅ Update 2: export KSU_TOPDIR
+    
     - name: Add KernelSU Next
       shell: bash
       if: ${{ inputs.ksu_type == 'KSUN' }}
@@ -695,8 +692,7 @@ runs:
         echo "KernelSU Next Version: $KSU_VERSION"
         echo "✅ KernelSU Next added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
-
-    # ✅ Update 2: export KSU_TOPDIR
+    
     - name: Add KernelSU
       shell: bash
       if: ${{ inputs.ksu_type == 'KSU' }}
@@ -729,8 +725,7 @@ runs:
         echo "KernelSU Version: $KSU_VERSION"
         echo "✅ KernelSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
-
-    # ✅ KOWX712: ta version, + KSU_TOPDIR
+    
     - name: Add KernelSU KOWX712
       shell: bash
       if: ${{ inputs.ksu_type == 'KSU KOWX712' }}
@@ -763,8 +758,7 @@ runs:
         echo "KernelSU Version: $KSU_VERSION"
         echo "✅ KernelSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
-
-    # ✅ Update 2: centraliser KSU_TOPDIR + exceptions KOWX712
+    
     - name: Apply SUSFS Patches
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
@@ -847,7 +841,7 @@ runs:
               echo "Patching Multi-manager Support for SusFS kernel!"
               patch -p1 --forward < "../../../kernel_patches/next/susfs_fix_patches/$susfs_version/multi_manager.patch"
             elif [ "${{ inputs.ksu_type }}" = "KSU KOWX712" ]; then
-              curl -Ls https://raw.githubusercontent.com/cooldroid/kernel_patches/main/kowksu/10_enable_susfs_for_ksu.patch | patch -p1 --forward
+              curl -Ls https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/kowksu/10_enable_susfs_for_ksu.patch | patch -p1 --forward
             else
               patch -p1 --forward < 10_enable_susfs_for_ksu.patch
             fi
@@ -899,7 +893,7 @@ runs:
 
         # KOWX712 extra patch: revert avc spoofing
         if [ "${{ inputs.ksu_type }}" = "KSU KOWX712" ]; then
-          curl -Ls https://raw.githubusercontent.com/cooldroid/kernel_patches/main/kowksu/50_susfs4ksu_revert_avc_spoofing.patch | patch -p1 --forward
+          curl -Ls https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/kowksu/50_susfs4ksu_revert_avc_spoofing.patch | patch -p1 --forward
         fi
 
         # Revert Fake kernel patch
