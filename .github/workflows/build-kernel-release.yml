@@ -39,7 +39,12 @@ on:
         required: true
         type: choice
         options: [O2, O3]
-        default: O2
+        default: O2     
+      apply perf patches:
+        description: "apply_common_perf_patches"        
+        type: boolean
+        default: false
+
       clean_build:
         description: 'Clean build (no ccache)'
         type: boolean
@@ -413,7 +418,9 @@ jobs:
           ksu_branch_or_hash: ${{ matrix.ksu_hash }}
           susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
           optimize_level: ${{ inputs.optimize_level }}
-          clean: ${{ inputs.clean_build }}
+          apply_common_perf_patches: ${{ inputs.apply_common_perf_patches && 'true' || 'false' }}
+          clean: ${{ inputs.clean_build && 'true' || 'false' }}
+
 
       - name: 📊 Build statistics
         id: build-stat
