@@ -477,9 +477,9 @@ runs:
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
-          restore-keys: |
-            ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-            ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+        restore-keys: |
+          ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
    
     - name: Configure ccache
       shell: bash
