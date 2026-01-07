@@ -1074,29 +1074,6 @@ runs:
         CONFIG_TRACEPOINTS=y
         EOF
 
-    - name: Disable Debug Options
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "$CONFIG/kernel_platform"
-        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
-        # --- Core debug off ---
-        CONFIG_DEBUG_KERNEL=n
-        CONFIG_DEBUG_INFO=n
-        CONFIG_GDB_SCRIPTS=n              
-        # --- Lock debugging off ---
-        CONFIG_LOCK_DEBUGGING=n
-        CONFIG_DEBUG_MUTEXES=n
-        CONFIG_DEBUG_SPINLOCK=n
-        CONFIG_DEBUG_ATOMIC_SLEEP=n        
-        # --- Scheduler/RCU tracing off ---
-        CONFIG_SCHED_DEBUG=n
-        CONFIG_SCHEDSTATS=n        
-        # --- Optional release hygiene ---
-        CONFIG_DEBUG_MISC=n
-        CONFIG_DEBUG_BUGVERBOSE=n        
-        EOF
-
     - name: Add RUST build configs
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
