@@ -6,7 +6,7 @@
   "android_version": "android16",
   "kernel_version": "6.12",
   "os_version": "OOS16",
-  "lto": "none",
+  "lto": "thin",
   "rust_build": true,
   "disk_cleanup": true,
   "hmbird": false,
@@ -15,5 +15,5 @@
   "bbr": true,
   "ttl": true,
   "ip_set": true,
-  "uname": "5-g188c695beb6d-ab14367805-4k"
+  "uname": "OP-WILD"
 }
