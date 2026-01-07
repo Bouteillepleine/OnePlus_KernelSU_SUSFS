@@ -399,7 +399,7 @@ runs:
         for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
           [ -d "$base/rust/linux-x86/" ] || continue
           ls -la "$base/rust/linux-x86/"
-          latest=$(ls -d "$base/rust/linux-x86/1."* 2>/dev/null | sort -V | head -n1 || true)
+          latest=$(ls -d "$base/rust/linux-x86/1."* 2>/dev/null | sort -V | tail -n1 || true)
           if [ -n "$latest" ] && [ -x "$latest/bin/rustc" ]; then
             RUSTC_BIN="$latest/bin"
             RUSTC_FOUND=true
