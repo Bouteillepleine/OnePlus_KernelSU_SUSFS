@@ -227,14 +227,13 @@ runs:
         fi
         echo "::endgroup::"
 
-    - name: Install bindgen (minimal rust toolchain)
+    - name: Install bindgen (with minimal rust toolchain)
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
       run: |
         set -euo pipefail
         echo "::group::Install bindgen (rust toolchain)"
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-          | sh -s -- -y --profile minimal --default-toolchain stable
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
         source "$HOME/.cargo/env"
         rustc --version
         cargo --version
