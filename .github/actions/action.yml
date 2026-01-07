@@ -227,20 +227,21 @@ runs:
         fi
         echo "::endgroup::"
 
-    - name: Install bindgen only (no rustc)
+    - name: Install bindgen (minimal rust toolchain)
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
       run: |
-        # Install bindgen via cargo (no full rustc needed)
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-        source $HOME/.cargo/env
-        
-        # Install bindgen CLI only (~50-100MB total)
+        set -euo pipefail
+        echo "::group::Install bindgen (rust toolchain)"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+          | sh -s -- -y --profile minimal --default-toolchain stable
+        source "$HOME/.cargo/env"
+        rustc --version
+        cargo --version
         cargo install bindgen-cli --version 0.69.5
-        
-        # Verify
         bindgen --version
         which bindgen
+        echo "::endgroup::"
 
     - name: Show bindgen version
       shell: bash
@@ -475,10 +476,10 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
-        restore-keys: |
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-ksun-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+        key: ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+          restore-keys: |
+            ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+            ccache-v3-${{ inputs.ksu_type }}-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
    
     - name: Configure ccache
       shell: bash
@@ -521,7 +522,7 @@ runs:
         echo "✅ ccache configured for production"
         echo ""
         echo "Configuration applied:"
-        echo "  Max size: 12G (persisted)"
+        echo "  Max size: 1G (persisted)"
         echo "  Base dir: ${GITHUB_WORKSPACE}"
         echo "  Compression: zstd level 3"
         echo "  Direct mode: enabled"
@@ -1343,43 +1344,30 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::ccache final statistics"
-        
+
         export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-        
+
         echo "ccache Statistics"
         ccache -s
-        
+
         STATS="$(ccache -s)"
-        
-        CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        HITS=$(echo "$STATS" | awk '/^[[:space:]]*Hits:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        DIRECT=$(echo "$STATS" | awk '/Direct:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0
-        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
-          DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
-        else
-          HIT_RATE="0.0"
-          DIRECT_RATE="0.0"
-        fi
-        
+
+        CACHEABLE="$(echo "$STATS" | awk -F': *' '/Cacheable calls:/ {gsub(/[^0-9]/,"",$2); print $2; exit}')"
+        HITS="$(echo "$STATS" | awk -F': *' '/^[[:space:]]*Hits:/ {gsub(/[^0-9]/,"",$2); print $2; exit}')"
+        DIRECT="$(echo "$STATS" | awk -F': *' '/Direct:/ {gsub(/[^0-9]/,"",$2); print $2; exit}')"
+
+        CACHEABLE="${CACHEABLE:-0}"
+        HITS="${HITS:-0}"
+        DIRECT="${DIRECT:-0}"
+
+        HIT_RATE="$(awk -v h="$HITS" -v c="$CACHEABLE" 'BEGIN{ if(c>0) printf "%.1f", (h/c)*100; else printf "0.0"}')"
+        DIRECT_RATE="$(awk -v d="$DIRECT" -v c="$CACHEABLE" 'BEGIN{ if(c>0) printf "%.1f", (d/c)*100; else printf "0.0"}')"
+
         echo "hit_rate=${HIT_RATE}%" >> "$GITHUB_OUTPUT"
         echo "direct_rate=${DIRECT_RATE}%" >> "$GITHUB_OUTPUT"
-        
+
         echo "::endgroup::"
-        
+
         echo "## 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
