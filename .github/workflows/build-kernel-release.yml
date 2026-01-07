@@ -535,7 +535,7 @@ jobs:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS v1.5.12 *TEST BUILD*'
+      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS v2.0.0 *TEST BUILD*'
       SUSFS_BASE_VERSION: 'v2.0.0'
     steps:
       - name: 📥 Checkout code
@@ -663,13 +663,12 @@ jobs:
           | Component | Version/Setting |
           |-----------|----------------|
           EOF
-          if [ -n ${{ needs.build.outputs.ksun_ver }}]; then
+          if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
             cat << EOF >> release_notes.md
           | **KernelSU Next Branch** | \`$KSUN_BRANCH\` |
-          | **KernelSU Next Version** | \`${{ needs.build.outputs.ksun_ver }}\` |
+          | **KernelSU Next Version** | \`${{ needs.build.outputs.ksu_ver }}\` |
           EOF
-          fi
-          if [ -n ${{ needs.build.outputs.ksu_ver }}]; then
+          else
             cat << EOF >> release_notes.md
           | **KernelSU Branch** | \`$KSU_BRANCH\` |
           | **KernelSU Version** | \`${{ needs.build.outputs.ksu_ver }}\` |
@@ -697,12 +696,11 @@ jobs:
           
           ### 🔐 Root Management
           EOF
-          if [ -n ${{ needs.build.outputs.ksun_ver }}]; then
+          if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU Next** - Next-generation kernel-level root solution
           EOF
-          fi
-          if [ -n ${{ needs.build.outputs.ksu_ver }}]; then
+          else
             cat << EOF >> release_notes.md
           - **KernelSU** - Kernel-level root solution
           EOF
@@ -716,13 +714,13 @@ jobs:
           - **Baseband Guard (BBG)** - LSM-based baseband security
           - **SUSFS Hide Features**:
             - ✅ SUS_PATH - Hide suspicious paths
-            - ✅ SUS_MOUNT - Hide mount points
+            - ✅ SUS_MOUNT - Hide mount points (No Cli Support)
             - ✅ SUS_KSTAT - Spoof kernel statistics
-            - ✅ TRY_UMOUNT - Auto-unmount detection
             - ✅ SPOOF_UNAME - Kernel version spoofing
             - ✅ SPOOF_CMDLINE - Boot parameters spoofing
             - ✅ OPEN_REDIRECT - File access redirection
             - ✅ SUS_MAP - Memory mapping protection
+            - ✅ AVC_SPOOF - Spoof Procfs avc denial logs
           - **Ptrace Leak Fix** - For kernels < 5.16
           
           ### 🚀 Performance & Networking
@@ -732,6 +730,7 @@ jobs:
           - **TTL Target Support** - Network packet manipulation
           - **LTO (Link Time Optimization)** - Optimized binary size and performance
           - **ccache-accelerated builds** - Faster compilation times
+          - **Optimisation Patches** - General Optimisation Patches for overall improvement
           
           ### 🔧 System Features
           - **TMPFS_XATTR** - Extended attributes for tmpfs (Mountify support)
@@ -744,13 +743,12 @@ jobs:
           
           ### Official Manager
           EOF
-          if [ -n ${{ needs.build.outputs.ksun_ver }}]; then
+          if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU Next Manager**  
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
           EOF
-          fi
-          if [ -n ${{ needs.build.outputs.ksu_ver }}]; then
+          else
             cat << EOF >> release_notes.md
           - **KernelSU Next Manager**  
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
@@ -798,6 +796,7 @@ jobs:
           - Added TMPFS_XATTR and TMPFS_POSIX_ACL support for Mountify
           - Added Ptrace leak fix for kernels < 5.16
           - Compiler optimizations (${{ inputs.optimize_level }})
+          - Additional General Optimisations
           
           ### Previous Releases
           See [Releases Page](${{ github.server_url }}/${{ github.repository }}/releases)
