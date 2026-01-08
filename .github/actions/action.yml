@@ -227,20 +227,20 @@ runs:
         fi
         echo "::endgroup::"
 
-    - name: Install bindgen (with minimal rust toolchain)
-      shell: bash
+    - name: Install bindgen with correct version
       if: ${{ env.OP_RUST_BUILD == 'true' }}
+      shell: bash
       run: |
-        set -euo pipefail
-        echo "::group::Install bindgen (rust toolchain)"
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-        source "$HOME/.cargo/env"
-        rustc --version
-        cargo --version
-        cargo install bindgen-cli --version 0.69.5
+        # Installer Rust 1.78+ pour kernel 6.12
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+          sh -s -- -y --default-toolchain 1.78.0
+        source $HOME/.cargo/env
+        
+        # Installer bindgen 0.70+ pour Android 16
+        cargo install bindgen-cli --version 0.70.1
+        
         bindgen --version
-        which bindgen
-        echo "::endgroup::"
+        rustc --version
 
     - name: Show bindgen version
       shell: bash
