@@ -33,6 +33,23 @@ inputs:
     type: string
     default: 'false'
 
+  # --- Added: debug toggles for LTO thin vs none analysis ---
+  debug_artifacts:
+    description: 'Upload extra debug artifacts (vmlinux/System.map/config/toolchain dump)'
+    required: false
+    type: string
+    default: "true"
+  disable_cfi_for_debug:
+    description: 'Temporarily disable (K)CFI to isolate ThinLTO boot issues'
+    required: false
+    type: string
+    default: "false"
+  lto_o_level:
+    description: 'LTO optimization level for ld.lld (0..3). Empty = default'
+    required: false
+    type: string
+    default: ""
+
 outputs:
   kernel_version:
     description: 'Full kernel version string'
@@ -226,207 +243,7 @@ runs:
           echo "✅ Input validation passed"
         fi
         echo "::endgroup::"
-
-    - name: Install bindgen only (no rustc)
-      shell: bash
-      if: ${{ env.OP_RUST_BUILD == 'true' }}
-      run: |
-        # Install bindgen via cargo (no full rustc needed)
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-        source $HOME/.cargo/env
-        
-        # Install bindgen CLI only (~50-100MB total)
-        cargo install bindgen-cli --version 0.69.5
-        
-        # Verify
-        bindgen --version
-        which bindgen
-
-    - name: Show bindgen version
-      shell: bash
-      if: ${{ env.OP_RUST_BUILD == 'true' }}
-      run: bindgen --version
-
-    - name: Setup Base Environment
-      shell: bash
-      run: |
-        set -euo pipefail
-        CONFIG="$OP_MODEL"
-        echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
-        REPO="/usr/local/bin/repo"
-        if [ ! -x "$REPO" ]; then
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
-          chmod +x "$REPO"
-        fi
-        echo "REPO=$REPO" >> "$GITHUB_ENV"
-
-    - name: Optimize Global Git for Repo Tool
-      shell: bash
-      run: |
-        set -euo pipefail
-        git config --global feature.manyFiles true
-        git config --global core.fsmonitor true
-        git config --global pack.sparse true
-
-    - name: Initialize and Sync Kernel Source
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Initialize kernel source"
-        echo "Creating folder for configuration: $CONFIG"
-        mkdir -p "$CONFIG"
-        cd "$CONFIG"
-        echo "Initializing and syncing kernel source..."
-        
-        if [[ "$OP_MANIFEST" == https://* ]]; then
-          mkdir -p .repo/manifests
-          curl --fail --show-error --location --proto '=https' "$OP_MANIFEST" -o .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        elif [[ "$OP_BRANCH" == wild/* ]]; then
-          mkdir -p .repo/manifests
-          cp "../manifests/$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')/$OP_MANIFEST" .repo/manifests/temp_manifest.xml
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        else
-          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m "$OP_MANIFEST" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-        fi
-        
-        "$REPO" --version
-        success=false
-        for i in 1 2 3; do
-          if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
-             -j"$(nproc --all)" --fail-fast; then
-            success=true
-            break
-          fi
-          echo "⚠️ repo sync attempt $i failed; retrying..."
-          sleep 30
-        done
-        $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
-        echo "✅ Kernel source synced"
-        echo "::endgroup::"
-
-    - name: Get Kernel Version Info
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Get kernel version"
-        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
-        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
-        mkdir -p "$ARTIFACTS_DIR"
-        cd "$CONFIG_DIR/kernel_platform/common"
-        
-        CONFIG_FILES=("build.config.common" "build.config.constants")
-        BRANCH_LINE=""
-        for f in "${CONFIG_FILES[@]}"; do
-          if [ -f "$f" ]; then
-            l=$(grep '^[[:space:]]*BRANCH=' "$f" || true)
-            if [ -n "$l" ]; then BRANCH_LINE="$l"; break; fi
-          fi
-        done
-        
-        if [ -z "$BRANCH_LINE" ]; then
-          echo "::error::No BRANCH= found in config files"; exit 1
-        fi
-        
-        BRANCH_VALUE="${BRANCH_LINE#*=}"
-        ANDROID_VERSION="${BRANCH_VALUE%-*}"
-        
-        if [ -z "$ANDROID_VERSION" ]; then
-          echo "::error::Could not parse android version from BRANCH=$BRANCH_VALUE"
-          exit 1
-        fi
-        
-        VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
-        PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
-        FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
-        
-        cd "$ARTIFACTS_DIR"
-        echo "$ANDROID_VERSION-$FULL_VERSION" > "${OP_MODEL}_${OP_OS_VERSION}.txt"
-        echo "$OP_OS_VERSION" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
-        
-        {
-          echo "ANDROID_VER=$ANDROID_VERSION"
-          echo "KERNEL_VER=$VERSION.$PATCHLEVEL"
-          echo "TKERNEL_VER=$FULL_VERSION"
-          echo "KERNEL_FULL_VER=$ANDROID_VERSION-$FULL_VERSION"
-          if [ "${{ env.OP_SUSFS }}" = true ]; then
-            echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
-          fi
-        } >> "$GITHUB_ENV"
-        
-        echo "✅ Detected: $ANDROID_VERSION-$FULL_VERSION"
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
-          echo "   SUSFS Branch: gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
-        fi
-        echo "::endgroup::"
-
-    - name: 🏷️ Set Build Identity (Hardcoded)
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Set build user/host"
-                
-        BUILD_USER="OnePlus"
-        BUILD_HOST="ubuntu-build"
-        
-        echo "BUILD_USER=$BUILD_USER" >> "$GITHUB_ENV"
-        echo "BUILD_HOST=$BUILD_HOST" >> "$GITHUB_ENV"
-        
-        echo ""
-        echo "✅ Build identity configured:"
-        echo "   User: $BUILD_USER"
-        echo "   Host: $BUILD_HOST"
-        echo "::endgroup::"
-
-    - name: Detect Clang and Rust
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Detect Clang"
-        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
-        CLANG_FOUND=false
-        RUSTC_FOUND=false
-        for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
-          [ -d "$base/clang/host/linux-x86" ] || continue
-          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 || true)
-          if [ -n "$latest" ] && [ -x "$latest/bin/clang" ]; then
-            CLANG_BIN="$latest/bin"
-            CLANG_FOUND=true
-            break
-          fi
-        done
-        for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
-          [ -d "$base/rust/linux-x86/" ] || continue
-          ls -la "$base/rust/linux-x86/"
-          latest=$(ls -d "$base/rust/linux-x86/1."* 2>/dev/null | sort -V | head -n1 || true)
-          if [ -n "$latest" ] && [ -x "$latest/bin/rustc" ]; then
-            RUSTC_BIN="$latest/bin"
-            RUSTC_FOUND=true
-            break
-          fi
-        done
-        if ! $CLANG_FOUND && command -v clang >/dev/null 2>&1; then
-          CLANG_BIN="$(dirname "$(command -v clang)")"
-          CLANG_FOUND=true
-          echo "Using system clang."
-        fi
-        $CLANG_FOUND || { echo "::error::No clang toolchain found"; exit 1; }
-        $RUSTC_FOUND || { echo "::warning::No RUST toolchain found! Ignoring";}
-        echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
-        if [ "$RUSTC_FOUND" = true ]; then
-          echo "RUSTC_BIN_PATH=$RUSTC_BIN" >> "$GITHUB_ENV"
-          RUSTC_VERSION="$("$RUSTC_BIN/rustc" --version | head -n1)"
-          echo "RUSTC_VERSION=$RUSTC_VERSION" >> "$GITHUB_ENV"
-          echo "✅ Detected RUSTC: $RUSTC_VERSION"
-        fi
-        
-        CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
-        echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
-        echo "✅ Detected Clang: $CLANG_VERSION"
-        echo "::endgroup::"
-
-    - name: Derive Clang Short Version
+            - name: Derive Clang Short Version
       shell: bash
       run: |
         set -euo pipefail
@@ -645,7 +462,6 @@ runs:
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
-
     - name: Add KernelSU Next
       shell: bash
       if: ${{ inputs.ksu_type == 'KSUN' }}
@@ -895,15 +711,6 @@ runs:
         fi
         echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
         sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
-        
-        # if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-          # cd ./KernelSU-Next
-        # else
-          # cd ./KernelSU
-        # fi
-        
-        # echo "Patching BBG Enhanced Security!"
-        # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
         echo "✅ BBG LSM added"
         echo "::endgroup::"
 
@@ -985,6 +792,7 @@ runs:
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
         CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
         CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
         CONFIG_KSU_SUSFS_SUS_PATH=y
         CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -1113,6 +921,28 @@ runs:
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-${OP_UNAME}"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
+    # NEW: Pre-build toolchain dump (ensures we can compare thin vs none)
+    - name: 🔎 Dump toolchain paths & versions (pre-build)
+      shell: bash
+      run: |
+        set -euo pipefail
+        KERNEL_PATH="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        COMMON="$KERNEL_PATH/common"
+        cd "$COMMON"
+        echo "::group::PATH & toolchain (pre-build)"
+        echo "OP_LTO=$OP_LTO"
+        echo "OP_RUST_BUILD=$OP_RUST_BUILD"
+        echo "CLANG_BIN_PATH=$CLANG_BIN_PATH"
+        echo "RUSTC_BIN_PATH=${RUSTC_BIN_PATH:-}"
+        echo "PATH=$PATH"
+        for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-strip pahole rustc bindgen; do
+          echo ""
+          echo "== $t =="
+          command -v "$t" || true
+          "$t" --version 2>/dev/null | head -n 2 || true
+        done
+        echo "::endgroup::"
+
     - name: Build Kernel
       shell: bash
       env:
@@ -1145,8 +975,15 @@ runs:
         export ARCH=arm64 SUBARCH=arm64
         export CROSS_COMPILE=aarch64-linux-gnu-
         export PAHOLE="$KERNEL_PATH/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
-        export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm 
-        export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+
+        # UPDATED: force absolute LLVM tool paths from CLANG_BIN_PATH to avoid system tool leakage
+        export LD="${CLANG_BIN_PATH}/ld.lld"
+        export HOSTLD="${CLANG_BIN_PATH}/ld.lld"
+        export AR="${CLANG_BIN_PATH}/llvm-ar"
+        export NM="${CLANG_BIN_PATH}/llvm-nm"
+        export OBJCOPY="${CLANG_BIN_PATH}/llvm-objcopy"
+        export OBJDUMP="${CLANG_BIN_PATH}/llvm-objdump"
+        export STRIP="${CLANG_BIN_PATH}/llvm-strip"
         
         set +u
         source "$KERNEL_PATH/build/kernel/_setup_env.sh" 2>/dev/null || true
@@ -1164,10 +1001,11 @@ runs:
         echo "👤 Build user: $KBUILD_BUILD_USER"
         echo "🖥️  Build host: $KBUILD_BUILD_HOST"
         
-        export CC="ccache clang"
-        export CXX="ccache clang++"
-        export HOSTCC="ccache clang"
-        export HOSTCXX="ccache clang++"
+        # UPDATED: force absolute clang binaries too
+        export CC="ccache ${CLANG_BIN_PATH}/clang"
+        export CXX="ccache ${CLANG_BIN_PATH}/clang++"
+        export HOSTCC="ccache ${CLANG_BIN_PATH}/clang"
+        export HOSTCXX="ccache ${CLANG_BIN_PATH}/clang++"
         
         BASE_PATH="/usr/lib/ccache:${CLANG_BIN_PATH}:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux-x86/bin/:${KERNEL_PATH}/prebuilts/kernel-build-tools/linux_musl-x86/bin/"
         
@@ -1181,6 +1019,32 @@ runs:
         else
           export PATH="${BASE_PATH}:${PATH}"
         fi
+
+        # NEW: LTO optimizer level hook (helps isolate thin issues)
+        LTO_O_LEVEL='${{ inputs.lto_o_level }}'
+        LTO_LDFLAGS=""
+        if [ -n "$LTO_O_LEVEL" ]; then
+          LTO_LDFLAGS="-Wl,--lto-O${LTO_O_LEVEL}"
+        fi
+
+        # NEW: create debug artifacts dir
+        mkdir -p "$GITHUB_WORKSPACE/debug-artifacts"
+
+        echo "::group::Toolchain (effective in Build step)"
+        echo "OP_LTO=${OP_LTO}"
+        echo "clang: $(${CLANG_BIN_PATH}/clang --version | head -n1)"
+        echo "lld  : $(${CLANG_BIN_PATH}/ld.lld --version | head -n1)"
+        echo "which clang: $(command -v clang || true)"
+        echo "which ld.lld: $(command -v ld.lld || true)"
+        echo "CC=$CC"
+        echo "LD=$LD"
+        echo "AR=$AR"
+        echo "NM=$NM"
+        echo "PATH(first 250)=${PATH:0:250}"
+        if [ -n "${RUSTC_BIN_PATH:-}" ]; then
+          echo "rustc: $($RUSTC --version | head -n1)"
+        fi
+        echo "::endgroup::"
         
         if [ "${{ inputs.clean }}" = "true" ]; then
           echo "🧹 Clean build mode - ccache disabled"
@@ -1204,7 +1068,7 @@ runs:
         
         if [ "${{ inputs.clean }}" != "true" ]; then
           echo "ccache wrapper test:"
-          clang --version 2>&1 | head -n1 || true
+          ${CLANG_BIN_PATH}/clang --version 2>&1 | head -n1 || true
           echo ""
           echo "ccache configuration:"
           ccache -p | grep -E "(compression|direct_mode|readonly_direct|depend|sloppiness)" || true
@@ -1259,9 +1123,22 @@ runs:
             exit 1
             ;;
         esac
-        
+
+        # NEW: isolate common ThinLTO boot failure mode (ThinLTO + (K)CFI)
+        if [ "${{ inputs.disable_cfi_for_debug }}" = "true" ]; then
+          echo "disable_cfi_for_debug=true => best-effort disabling CFI/KCFI"
+          scripts/config --file "$OUT/.config" -d CFI_CLANG || true
+          scripts/config --file "$OUT/.config" -d CFI_PERMISSIVE || true
+          scripts/config --file "$OUT/.config" -d KCFI || true
+        fi
         
         make O="$OUT" olddefconfig
+
+        # NEW: save final .config for none vs thin diff
+        cp "$OUT/.config" "$GITHUB_WORKSPACE/debug-artifacts/final.config.${OP_LTO}"
+        echo "::group::Final config (key options)"
+        grep -E 'CONFIG_(LTO|LTO_CLANG|THINLTO|CFI|KCFI|RUST|ANDROID_BINDER|SHADOW_CALL_STACK|ARM64_BTI|ARM64_PTR_AUTH|VMLINUX_BTF)' "$OUT/.config" || true
+        echo "::endgroup::"
         
         KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
@@ -1273,6 +1150,7 @@ runs:
         echo "Kernel: ${KERNEL_FULL_VER}"
         echo "Threads: $(nproc --all)"
         echo "Optimization: ${{ inputs.optimize_level }}"
+        echo "LDFLAGS(extra): ${LTO_LDFLAGS}"
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
         echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
         echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
@@ -1301,7 +1179,7 @@ runs:
         BUILD_START=$(date +%s)
         set -o pipefail
         
-        make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
+        make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" LDFLAGS="$LTO_LDFLAGS" 2>&1 | tee build.log
         
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
@@ -1318,6 +1196,28 @@ runs:
           echo "::endgroup::"
           exit 1
         fi
+        
+        # NEW: collect debug artifacts for analysis
+        cp -f "$COMMON/build.log" "$GITHUB_WORKSPACE/debug-artifacts/build.log.${OP_LTO}" || true
+        cp -f "$IMG" "$GITHUB_WORKSPACE/debug-artifacts/Image.${OP_LTO}" || true
+        [ -f "$OUT/System.map" ] && cp -f "$OUT/System.map" "$GITHUB_WORKSPACE/debug-artifacts/System.map.${OP_LTO}" || true
+        [ -f "$OUT/vmlinux" ] && cp -f "$OUT/vmlinux" "$GITHUB_WORKSPACE/debug-artifacts/vmlinux.${OP_LTO}" || true
+
+        echo "::group::Kernel introspection"
+        echo "Linux version string from Image:"
+        strings "$IMG" | grep -m1 -E '^Linux version ' || true
+        if [ -f "$OUT/vmlinux" ]; then
+          echo ""
+          echo "vmlinux file:"
+          file "$OUT/vmlinux" || true
+          echo ""
+          echo "readelf -S (first 80 lines):"
+          readelf -S "$OUT/vmlinux" | head -n 80 || true
+          echo ""
+          echo "CFI/KCFI/BTF/LTO hints (strings):"
+          strings "$OUT/vmlinux" | grep -E -i 'kcfi|cfi|btf|thinlto|lto' | head -n 80 || true
+        fi
+        echo "::endgroup::"
         
         IMG_SIZE=$(stat -c%s "$IMG")
         
@@ -1367,8 +1267,7 @@ runs:
         }' | head -n1)
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0
-        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
+          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
           DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
         else
           HIT_RATE="0.0"
@@ -1445,6 +1344,16 @@ runs:
         echo "   - SHA256: $IMG_SHA256"
         echo "   - Build time: ${BUILD_TIME}s"
         echo "::endgroup::"
+
+    # NEW: Upload debug artifacts for thin vs none analysis
+    - name: Upload debug artifacts (thin vs none analysis)
+      if: ${{ always() && inputs.debug_artifacts == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-${{ inputs.ksu_type }}-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}-lto_${{ env.OP_LTO }}
+        path: debug-artifacts/*
+        compression-level: 0
+        retention-days: 14
 
     - name: Create Kernel ZIP
       id: create_zip
@@ -1634,3 +1543,203 @@ runs:
         path: ${{ env.CONFIG }}/artifacts/
         compression-level: 0
         retention-days: 20
+
+    - name: Install bindgen only (no rustc)
+      shell: bash
+      if: ${{ env.OP_RUST_BUILD == 'true' }}
+      run: |
+        # Install bindgen via cargo (no full rustc needed)
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+        source $HOME/.cargo/env
+        
+        # Install bindgen CLI only (~50-100MB total)
+        cargo install bindgen-cli --version 0.69.5
+        
+        # Verify
+        bindgen --version
+        which bindgen
+
+    - name: Show bindgen version
+      shell: bash
+      if: ${{ env.OP_RUST_BUILD == 'true' }}
+      run: bindgen --version
+
+    - name: Setup Base Environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        CONFIG="$OP_MODEL"
+        echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
+        REPO="/usr/local/bin/repo"
+        if [ ! -x "$REPO" ]; then
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
+          chmod +x "$REPO"
+        fi
+        echo "REPO=$REPO" >> "$GITHUB_ENV"
+
+    - name: Optimize Global Git for Repo Tool
+      shell: bash
+      run: |
+        set -euo pipefail
+        git config --global feature.manyFiles true
+        git config --global core.fsmonitor true
+        git config --global pack.sparse true
+
+    - name: Initialize and Sync Kernel Source
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Initialize kernel source"
+        echo "Creating folder for configuration: $CONFIG"
+        mkdir -p "$CONFIG"
+        cd "$CONFIG"
+        echo "Initializing and syncing kernel source..."
+        
+        if [[ "$OP_MANIFEST" == https://* ]]; then
+          mkdir -p .repo/manifests
+          curl --fail --show-error --location --proto '=https' "$OP_MANIFEST" -o .repo/manifests/temp_manifest.xml
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        elif [[ "$OP_BRANCH" == wild/* ]]; then
+          mkdir -p .repo/manifests
+          cp "../manifests/$(echo "$OP_OS_VERSION" | tr '[:upper:]' '[:lower:]')/$OP_MANIFEST" .repo/manifests/temp_manifest.xml
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "oneplus/sm8650" -m temp_manifest.xml --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        else
+          "$REPO" init -u https://github.com/OnePlusOSS/kernel_manifest.git -b "$OP_BRANCH" -m "$OP_MANIFEST" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+        fi
+        
+        "$REPO" --version
+        success=false
+        for i in 1 2 3; do
+          if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
+             -j"$(nproc --all)" --fail-fast; then
+            success=true
+            break
+          fi
+          echo "⚠️ repo sync attempt $i failed; retrying..."
+          sleep 30
+        done
+        $success || { echo "::error::repo sync failed after 3 attempts"; exit 1; }
+        echo "✅ Kernel source synced"
+        echo "::endgroup::"
+
+    - name: Get Kernel Version Info
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Get kernel version"
+        CONFIG_DIR="$GITHUB_WORKSPACE/$CONFIG"
+        ARTIFACTS_DIR="$CONFIG_DIR/artifacts"
+        mkdir -p "$ARTIFACTS_DIR"
+        cd "$CONFIG_DIR/kernel_platform/common"
+        
+        CONFIG_FILES=("build.config.common" "build.config.constants")
+        BRANCH_LINE=""
+        for f in "${CONFIG_FILES[@]}"; do
+          if [ -f "$f" ]; then
+            l=$(grep '^[[:space:]]*BRANCH=' "$f" || true)
+            if [ -n "$l" ]; then BRANCH_LINE="$l"; break; fi
+          fi
+        done
+        
+        if [ -z "$BRANCH_LINE" ]; then
+          echo "::error::No BRANCH= found in config files"; exit 1
+        fi
+        
+        BRANCH_VALUE="${BRANCH_LINE#*=}"
+        ANDROID_VERSION="${BRANCH_VALUE%-*}"
+        
+        if [ -z "$ANDROID_VERSION" ]; then
+          echo "::error::Could not parse android version from BRANCH=$BRANCH_VALUE"
+          exit 1
+        fi
+        
+        VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
+        PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
+        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
+        FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
+        
+        cd "$ARTIFACTS_DIR"
+        echo "$ANDROID_VERSION-$FULL_VERSION" > "${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "$OP_OS_VERSION" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
+        
+        {
+          echo "ANDROID_VER=$ANDROID_VERSION"
+          echo "KERNEL_VER=$VERSION.$PATCHLEVEL"
+          echo "TKERNEL_VER=$FULL_VERSION"
+          echo "KERNEL_FULL_VER=$ANDROID_VERSION-$FULL_VERSION"
+          if [ "${{ env.OP_SUSFS }}" = true ]; then
+            echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
+          fi
+        } >> "$GITHUB_ENV"
+        
+        echo "✅ Detected: $ANDROID_VERSION-$FULL_VERSION"
+        if [ "${{ env.OP_SUSFS }}" = true ]; then
+          echo "   SUSFS Branch: gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
+        fi
+        echo "::endgroup::"
+
+    - name: 🏷️ Set Build Identity (Hardcoded)
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Set build user/host"
+                
+        BUILD_USER="OnePlus"
+        BUILD_HOST="ubuntu-build"
+        
+        echo "BUILD_USER=$BUILD_USER" >> "$GITHUB_ENV"
+        echo "BUILD_HOST=$BUILD_HOST" >> "$GITHUB_ENV"
+        
+        echo ""
+        echo "✅ Build identity configured:"
+        echo "   User: $BUILD_USER"
+        echo "   Host: $BUILD_HOST"
+        echo "::endgroup::"
+
+    - name: Detect Clang and Rust
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Detect Clang"
+        KP="$GITHUB_WORKSPACE/$CONFIG/kernel_platform"
+        CLANG_FOUND=false
+        RUSTC_FOUND=false
+        for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
+          [ -d "$base/clang/host/linux-x86" ] || continue
+          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 || true)
+          if [ -n "$latest" ] && [ -x "$latest/bin/clang" ]; then
+            CLANG_BIN="$latest/bin"
+            CLANG_FOUND=true
+            break
+          fi
+        done
+        for base in "$KP/prebuilts" "$KP/prebuilts-master"; do
+          [ -d "$base/rust/linux-x86/" ] || continue
+          ls -la "$base/rust/linux-x86/"
+          # FIX: choose newest rust toolchain, not oldest
+          latest=$(ls -d "$base/rust/linux-x86/1."* 2>/dev/null | sort -V | tail -n1 || true)
+          if [ -n "$latest" ] && [ -x "$latest/bin/rustc" ]; then
+            RUSTC_BIN="$latest/bin"
+            RUSTC_FOUND=true
+            break
+          fi
+        done
+        if ! $CLANG_FOUND && command -v clang >/dev/null 2>&1; then
+          CLANG_BIN="$(dirname "$(command -v clang)")"
+          CLANG_FOUND=true
+          echo "Using system clang."
+        fi
+        $CLANG_FOUND || { echo "::error::No clang toolchain found"; exit 1; }
+        $RUSTC_FOUND || { echo "::warning::No RUST toolchain found! Ignoring";}
+        echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
+        if [ "$RUSTC_FOUND" = true ]; then
+          echo "RUSTC_BIN_PATH=$RUSTC_BIN" >> "$GITHUB_ENV"
+          RUSTC_VERSION="$("$RUSTC_BIN/rustc" --version | head -n1)"
+          echo "RUSTC_VERSION=$RUSTC_VERSION" >> "$GITHUB_ENV"
+          echo "✅ Detected RUSTC: $RUSTC_VERSION"
+        fi
+        
+        CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
+        echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
+        echo "✅ Detected Clang: $CLANG_VERSION"
+        echo "::endgroup::"
