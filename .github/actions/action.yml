@@ -958,6 +958,10 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
+
+        echo "Test a SusFS patch to prevent ..5.u.S file creation"
+        curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/susfs_experiments/test_no_5uS.patch | patch -p1 --forward
+        
         if [ "$OP_HMBIRD" = true ]; then
           echo "Patching hmbird!"
           dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
