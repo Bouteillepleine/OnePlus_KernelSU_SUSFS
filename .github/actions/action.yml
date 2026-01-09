@@ -958,10 +958,7 @@ runs:
         else
           echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
         fi
-
-        echo "Test a SusFS patch to prevent ..5.u.S file creation"
-        curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/susfs_experiments/test_no_5uS.patch | patch -p1 --forward
-        
+               
         if [ "$OP_HMBIRD" = true ]; then
           echo "Patching hmbird!"
           dos2unix "../../../kernel_patches/oneplus/hmbird/fengchi_${OP_MODEL}_${OP_OS_VERSION}.patch"
@@ -977,8 +974,7 @@ runs:
         
         patch -p1 --forward < "../../../kernel_patches/common/optimized_mem_operations.patch"
         patch -p1 --forward < "../../../kernel_patches/common/file_struct_8bytes_align.patch"
-        patch -p1 --forward < "../../../kernel_patches/common/reduce_cache_pressure.patch"
-        
+        patch -p1 --forward < "../../../kernel_patches/common/reduce_cache_pressure.patch"        
         patch -p1 --forward < "../../../kernel_patches/common/mem_opt_prefetch.patch"
         
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | tail -n1)" = "$KERNEL_VERSION" ]; then
@@ -1003,6 +999,45 @@ runs:
         fi
         
         echo "✅ Other patches applied"
+        echo "::endgroup::"
+
+    - name: Apply No_5uS patch
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply No_5uS.patch"
+        
+        cd "$CONFIG/kernel_platform/common"
+
+        PATCH_URL="https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/No_5uS.patch"
+        PATCH_FILE="/tmp/No_5uS.patch"
+
+        echo "Downloading: $PATCH_URL"
+        curl --fail --location --proto '=https' -LSs "$PATCH_URL" -o "$PATCH_FILE"
+
+        echo "Patch file stats:"
+        wc -l "$PATCH_FILE" || true
+        head -n 20 "$PATCH_FILE" || true
+
+        # Astuce: détecter le bon -p en testant -p0..-p3
+        applied=false
+        for p in 0 1 2 3; do
+          echo "Trying dry-run with -p$p ..."
+          if patch --dry-run -p"$p" --forward < "$PATCH_FILE" >/dev/null; then
+            echo "✅ Dry-run OK with -p$p, applying..."
+            patch -p"$p" --forward < "$PATCH_FILE"
+            applied=true
+            break
+          fi
+        done
+
+        if [ "$applied" != "true" ]; then
+          echo "::error::No_5uS.patch could not be applied cleanly (dry-run failed for -p0..-p3)."
+          echo "Tip: check if the patch targets a different directory level or already-applied changes."
+          exit 1
+        fi
+
+        echo "✅ No_5uS.patch applied"
         echo "::endgroup::"
 
     - name: Apply KSU Hooks
