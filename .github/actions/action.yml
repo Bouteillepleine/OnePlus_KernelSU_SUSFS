@@ -628,7 +628,7 @@ runs:
           return 1
         }
         
-        retry_clone "https://github.com/TheWildJames/AnyKernel3.git" "$ANYKERNEL_BRANCH"
+        retry_clone "https://github.com/Bouteillepleine/AnyKernel3.git" "$ANYKERNEL_BRANCH"
         retry_clone "https://github.com/TheWildJames/kernel_patches.git"
         
         if [ "${{ env.OP_SUSFS }}" = true ]; then
@@ -1114,6 +1114,24 @@ runs:
         CONFIG_TRACEPOINTS=y
         EOF
 
+    - name: Disable Debug Options
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$CONFIG/kernel_platform"
+        cat >> common/arch/arm64/configs/gki_defconfig <<'EOF'
+        # Disable Kernel Debugging
+        CONFIG_DEBUG_KERNEL=n
+        CONFIG_DEBUG_INFO=n
+        CONFIG_DEBUG_INFO_DWARF4=n
+        # Disable Lock Debugging
+        CONFIG_LOCK_DEBUGGING=n
+        CONFIG_DEBUG_MUTEXES=n
+        CONFIG_DEBUG_SPINLOCK=n
+        CONFIG_DEBUG_ATOMIC_SLEEP=n
+        CONFIG_GDB_SCRIPTS=n
+        EOF
+
     - name: Add RUST build configs
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
@@ -1299,7 +1317,23 @@ runs:
             exit 1
             ;;
         esac
-        
+
+        disable_list=(
+          CONFIG_REGMAP_KUNIT
+          CONFIG_INPUT_KUNIT_TEST
+          CONFIG_SND_SOC_TOPOLOGY_KUNIT_TEST
+          CONFIG_SND_SOC_UTILS_KUNIT_TEST
+          CONFIG_HID_KUNIT_TEST
+          CONFIG_RTC_LIB_KUNIT_TEST
+          CONFIG_CLK_KUNIT_TEST
+          CONFIG_CLK_GATE_KUNIT_TEST
+          CONFIG_IIO_FORMAT_KUNIT_TEST
+          CONFIG_EXT4_KUNIT_TESTS
+          CONFIG_FAT_KUNIT_TEST
+        )
+        for sym in "${disable_list[@]}"; do
+          scripts/config --file "$OUT/.config" -d "$sym" || true
+        done
         
         make O="$OUT" olddefconfig
         
