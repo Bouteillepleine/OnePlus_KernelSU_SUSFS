@@ -1029,7 +1029,10 @@ runs:
         patch -p1 -F3 --forward < "$KERNEL_PATCHES_FOLDER/common/silence_system_logspam.patch"
         echo "Patching use_unlikely_wrap_cpufreq.patch"
         patch -p1 -F3 --forward < "$KERNEL_PATCHES_FOLDER/common/use_unlikely_wrap_cpufreq.patch"
-        
+
+        echo "Patching susfs_experiments/test_no_5uS.patch"
+        curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/susfs_experiments/test_no_5uS.patch | patch -p1 -F3 --forward
+        echo "Patching susfs_experiments/random_qstr.patch"
         
         echo "✅ Other patches applied"
         echo "::endgroup::"
