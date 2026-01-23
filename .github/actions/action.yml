@@ -1033,6 +1033,7 @@ runs:
         echo "Patching susfs_experiments/test_no_5uS.patch"
         curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/susfs_experiments/test_no_5uS.patch | patch -p1 -F3 --forward
         echo "Patching susfs_experiments/random_qstr.patch"
+        curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/susfs_experiments/random_qstr.patch | patch -p1 -F3 --forward
         
         echo "✅ Other patches applied"
         echo "::endgroup::"
