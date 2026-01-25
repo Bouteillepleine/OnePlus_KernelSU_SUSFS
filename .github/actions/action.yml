@@ -425,7 +425,7 @@ runs:
         RUSTC_FOUND=false
         for base in "$KERNEL_PLATFORM_FOLDER/prebuilts" "$KERNEL_PLATFORM_FOLDER/prebuilts-master"; do
           [ -d "$base/clang/host/linux-x86" ] || continue
-          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | tail -n1 || true)
+          latest=$(ls -d "$base"/clang/host/linux-x86/clang-r*/ 2>/dev/null | sort -V | head -n1 || true)
           if [ -n "$latest" ] && [ -x "$latest/bin/clang" ]; then
             CLANG_BIN="$latest/bin"
             CLANG_FOUND=true
