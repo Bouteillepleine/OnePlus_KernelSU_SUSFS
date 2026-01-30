@@ -670,7 +670,7 @@ runs:
 
         echo "Downloading KernelSU setup script..."
         if ! curl -LSs --retry 3 --retry-delay 2 --connect-timeout 30 \
-             "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"; then
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"; then
           echo "::error::KernelSU setup script failed"
           exit 1
         fi
@@ -700,14 +700,18 @@ runs:
           KSU_API_VERSION=$(grep -m1 "KSU_VERSION_API :=" kernel/Makefile | awk -F'= ' '{print $2}' | tr -d '[:space:]' || true)
         fi
 
-        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "4.1.0" | sort -V | head -n1)" != "3.1.7" ]]; then
-          echo "Warning: Invalid or missing API version. Using default: 4.1.0"
-          KSU_API_VERSION="4.1.0"
+        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+          echo "Warning: Invalid or missing API version. Using default: 3.1.7"
+          KSU_API_VERSION="3.1.7"
         fi
         echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
 
         GIT_HASH=$(git rev-parse --short HEAD)
-        if [[ -n "$MANUAL_HASH" ]]; then USE_HASH="$SHORT_HASH"; else USE_HASH="$GIT_HASH"; fi
+        if [[ -n "$MANUAL_HASH" ]]; then
+          USE_HASH="$SHORT_HASH"
+        else
+          USE_HASH="$GIT_HASH"
+        fi
 
         if [[ -z "$CUSTOM_TAG" ]]; then
           VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
@@ -720,22 +724,21 @@ runs:
         sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
 
         VERSION_DEFINITIONS=$(cat <<EOF
-        define get_ksu_version_full
-        $VERSION_FULL
-         endef
-          
-         KSU_VERSION_API := $KSU_API_VERSION
-         KSU_VERSION_FULL := $VERSION_FULL
-         EOF
-         )
+          define get_ksu_version_full
+          $VERSION_FULL
+          endef
+
+          KSU_VERSION_API := $KSU_API_VERSION
+          KSU_VERSION_FULL := $VERSION_FULL
+        EOF
+        )
         awk -v def="$VERSION_DEFINITIONS" '
           /REPO_OWNER :=/ {print; print def; inserted=1; next}
           1
           END {if (!inserted) print def}
         ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
 
-        KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)
-
+        KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)        
         echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
         echo "NEED_HOOKS=false" >> "$GITHUB_ENV"
 
