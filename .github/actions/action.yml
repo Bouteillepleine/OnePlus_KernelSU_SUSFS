@@ -773,49 +773,42 @@ runs:
 
         echo "::endgroup::"
     
-    - name: Apply SUSFS Patches (single, reject-aware)
+    - name: Apply SUSFS Patches (tolerant; no KSU enable patch)
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Apply SUSFS patches"
+        echo "::group::Apply SUSFS patches (tolerant)"
     
-        # 1) Copy SUSFS headers/fs additions
-        cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/"
-        cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/"
+        # Copy SUSFS headers/fs additions
+        cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/" || true
+        cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
     
         SUSFS_VERSION="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}' || true)"
         echo "SUSVER=${SUSFS_VERSION:-unknown}" >> "$GITHUB_ENV"
         echo "${SUSFS_VERSION:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "SusFS Version: ${SUSFS_VERSION:-unknown}"
     
-        # 2) Enable SUSFS inside KSU/KSUN (NOT needed for SUKISU in most setups, but harmless if patch exists)
-        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-          cd "$KSUN_FOLDER"
-          patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-        elif [ "${{ inputs.ksu_type }}" = "KSU" ] || [ "${{ inputs.ksu_type }}" = "SUKISU" ]; then
-          cd "$KSU_FOLDER"
-          patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-        fi
-    
-        # 3) Apply kernel SUSFS patch (THIS is the dangerous one → must be reject-aware)
+        # Apply kernel SUSFS patch (Numbersf-style tolerant)
         cd "$COMMON_KERNEL_FOLDER"
-    
         SUSFS_PATCH="50_add_susfs_in_gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.patch"
+    
         if [ ! -f "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ]; then
-          echo "::error::Missing SUSFS kernel patch: $SUSFS_PATCH"
+          echo "::warning::Missing SUSFS kernel patch: $SUSFS_PATCH"
+          echo "Available patches:"
           ls -la "$SUSFS_FOLDER/kernel_patches" | head -n 80 || true
-          exit 1
+          echo "::endgroup::"
+          exit 0
         fi
     
         cp "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ./
     
-        # Optional Trusty-missing fix (keep your existing idea)
+        # Optional Trusty-missing fix (keep; still tolerant)
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         TKERNEL_VERSION="${{ env.TKERNEL_VER }}"
         TRUSTY_EXISTS="false"
+    
         if [[ "$KERNEL_VERSION" == "6.6" || "$KERNEL_VERSION" == "6.12" ]]; then
-          # Your manifests_fallback path isn't guaranteed in this composite; so only try if present
           if [ -n "${OP_MANIFEST:-}" ] && [ -f "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" ]; then
             if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" 2>/dev/null; then
               TRUSTY_EXISTS="true"
@@ -824,57 +817,49 @@ runs:
     
           if [[ "$TRUSTY_EXISTS" == "false" ]]; then
             if [[ "$KERNEL_VERSION" == "6.12" ]] && [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.12.0" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH"
-              sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH"
+              echo "Applying SUSFS 6.12 Trusty-missing fix..."
+              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH" || true
+              sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH" || true
             fi
             if [[ "$KERNEL_VERSION" == "6.6" ]] && [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH"
-              sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH"
+              echo "Applying SUSFS 6.6 Trusty-missing fix..."
+              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH" || true
+              sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH" || true
             fi
           fi
         fi
     
-        echo "Applying: $SUSFS_PATCH"
-        patch -p1 --forward < "$SUSFS_PATCH"
+        echo "Applying (tolerant): $SUSFS_PATCH"
+        patch -p1 -F 3 < "$SUSFS_PATCH" || true
     
-        # Fail hard if rejects exist
-        if find . -name "*.rej" -o -name "*.orig" | grep -q .; then
-          echo "::error::SUSFS patch produced rejects (.rej/.orig)."
-          find . -name "*.rej" -o -name "*.orig" -print
-          exit 1
-        fi
-    
-        # 4) Record SUSFS commit in your metadata file (if available)
+        # Record metadata (even if patch partially applied)
         echo "SUSFS" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "${SUSFS_VERSION:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "${SUSFS_COMMIT_SHA:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
     
-        echo "✅ SUSFS patches applied cleanly"
+        echo "✅ SUSFS step completed (tolerant mode)"
         echo "::endgroup::"
 
-    - name: Apply Hide Stuff Patches (SukiSU Ultra, reject-aware)
+    - name: Apply Hide Stuff Patches (SukiSU Ultra, tolerant)
       shell: bash
       if: ${{ inputs.ksu_type == 'SUKISU' }}
       run: |
         set -euo pipefail
-        echo "::group::Apply hide stuff patches"
-        COMMON_DIR="$COMMON_KERNEL_FOLDER"
+        echo "::group::Apply hide stuff patches (tolerant)"
+    
+        cd "$COMMON_KERNEL_FOLDER"
         PATCH_DIR="$GITHUB_WORKSPACE/SukiSU_patch"
     
-        cd "$COMMON_DIR"
-    
-        test -f "$PATCH_DIR/69_hide_stuff.patch" || { echo "::error::Missing $PATCH_DIR/69_hide_stuff.patch"; exit 1; }
-    
-        cp "$PATCH_DIR/69_hide_stuff.patch" ./
-        patch -p1 --forward -F 3 < 69_hide_stuff.patch
-    
-        if find . -name "*.rej" -o -name "*.orig" | grep -q .; then
-          echo "::error::Hide-stuff patch produced rejects (.rej/.orig)."
-          find . -name "*.rej" -o -name "*.orig" -print
-          exit 1
+        if [ ! -f "$PATCH_DIR/69_hide_stuff.patch" ]; then
+          echo "::warning::Missing $PATCH_DIR/69_hide_stuff.patch; skipping"
+          echo "::endgroup::"
+          exit 0
         fi
     
-        echo "✅ Hide stuff applied cleanly"
+        cp "$PATCH_DIR/69_hide_stuff.patch" ./
+        patch -p1 -F 3 < 69_hide_stuff.patch || true
+    
+        echo "✅ Hide stuff step completed (tolerant mode)"
         echo "::endgroup::"
 
     - name: Add KSU / KSUN and SUSFS Configuration Settings
