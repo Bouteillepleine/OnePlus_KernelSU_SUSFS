@@ -726,8 +726,8 @@ runs:
 
           KSU_VERSION_API := $KSU_API_VERSION
           KSU_VERSION_FULL := $VERSION_FULL
-EOF
-        )
+        EOF
+                )
 
         awk -v def="$VERSION_DEFINITIONS" '
           /REPO_OWNER :=/ {print; print def; inserted=1; next}
@@ -746,8 +746,7 @@ EOF
         echo "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
         echo "::endgroup::"
-
-    # ✅ IMPORTANT: on garde TON step original SUSFS (complet) pour KSU/KSUN
+    
     - name: Apply SUSFS Patches
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' && inputs.ksu_type != 'SUKISU' }}
