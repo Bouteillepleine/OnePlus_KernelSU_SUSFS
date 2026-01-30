@@ -702,7 +702,7 @@ runs:
 
         if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "4.1.0" | sort -V | head -n1)" != "3.1.7" ]]; then
           echo "Warning: Invalid or missing API version. Using default: 4.1.0"
-          KSU_API_VERSION="3.1.7"
+          KSU_API_VERSION="4.1.0"
         fi
         echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
 
