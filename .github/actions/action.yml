@@ -492,46 +492,28 @@ runs:
         echo "CCACHE_DISABLE=1" >> "$GITHUB_ENV"
         echo "::endgroup::"
 
-    - name: Clone AnyKernel3 and Other Dependencies
+    - name: Clone AnyKernel3 and Other Dependencies (with SUSFS pin)
       shell: bash
       run: |
         set -euo pipefail
         echo "::group::Clone dependencies"
         echo "Cloning AnyKernel3 and other dependencies..."
-
+    
         ANYKERNEL_BRANCH="gki-2.0"
-
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
-          SUSFS_INPUT="${{ inputs.susfs_commit_hash_or_branch }}"
-          declare -A DEFAULT_SUSFS=(
-            ["android12-5.10"]="gki-android12-5.10"
-            ["android13-5.15"]="gki-android13-5.15"
-            ["android14-6.1"]="gki-android14-6.1"
-            ["android15-6.6"]="gki-android15-6.6"
-            ["android16-6.12"]="gki-android16-6.12"
-          )
-          KERNEL_KEY="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
-          if [ -z "$SUSFS_INPUT" ] || [ "$SUSFS_INPUT" = "next" ]; then
-            SUSFS_BRANCH="${DEFAULT_SUSFS[$KERNEL_KEY]:-gki-android15-6.6}"
-            echo "ℹ️  Using default SUSFS branch for $KERNEL_KEY: $SUSFS_BRANCH"
-          else
-            SUSFS_BRANCH="$SUSFS_INPUT"
-            echo "🔧 Using custom SUSFS ref: $SUSFS_BRANCH"
-          fi
-        fi
-
+    
         retry_clone() {
           local url="$1"
           local branch="${2:-main}"
           local depth="${3:-1}"
-          local dir="$(basename "$url" .git)"
+          local dir
+          dir="$(basename "$url" .git)"
           local max_attempts=3
           local attempt=1
           local clone_args=(--branch "$branch")
           if [ "$depth" != "0" ] && [ -n "$depth" ]; then
             clone_args+=(--depth "$depth")
           fi
-
+    
           while [ $attempt -le $max_attempts ]; do
             echo "🔄 Attempt $attempt/$max_attempts: cloning $url ($branch)${depth:+ [depth=$depth]}"
             git clone "${clone_args[@]}" "$url" "$dir" && { echo "✅ Success"; return 0; }
@@ -539,41 +521,67 @@ runs:
             rm -rf "$dir" 2>/dev/null || true
             sleep $((attempt++ * 5))
           done
-
+    
           echo "💥 All attempts failed"
           return 1
         }
-
+    
         retry_clone "https://github.com/TheWildJames/AnyKernel3.git" "$ANYKERNEL_BRANCH"
         retry_clone "https://github.com/TheWildJames/kernel_patches.git"
-
+    
         # Needed for SUKISU hide patches
         if [ "${{ inputs.ksu_type }}" = "SUKISU" ]; then
           retry_clone "https://github.com/ShirkNeko/SukiSU_patch.git" "main" 1
         fi
-
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
+    
+        # SUSFS (only if device config enables it)
+        if [ "${{ env.OP_SUSFS }}" = "true" ]; then
+          SUSFS_INPUT="${{ inputs.susfs_commit_hash_or_branch }}"
+    
+          declare -A DEFAULT_SUSFS=(
+            ["android12-5.10"]="gki-android12-5.10"
+            ["android13-5.15"]="gki-android13-5.15"
+            ["android14-6.1"]="gki-android14-6.1"
+            ["android15-6.6"]="gki-android15-6.6"
+            ["android16-6.12"]="gki-android16-6.12"
+          )
+    
+          KERNEL_KEY="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
+    
+          # If input empty or "next", use default branch for this kernel line
+          if [ -z "${SUSFS_INPUT:-}" ] || [ "${SUSFS_INPUT}" = "next" ]; then
+            SUSFS_REF="${DEFAULT_SUSFS[$KERNEL_KEY]:-gki-android15-6.6}"
+            echo "ℹ️  Using default SUSFS ref for $KERNEL_KEY: $SUSFS_REF"
+          else
+            SUSFS_REF="$SUSFS_INPUT"
+            echo "🔧 Using custom SUSFS ref: $SUSFS_REF"
+          fi
+    
+          # Clone full (depth=0) so commits/tags/branches are available
           retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "master" 0
           cd susfs4ksu
-          if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1; then
-            echo "✅ Checking out remote branch: $SUSFS_BRANCH"
-            git checkout "$SUSFS_BRANCH"
-          elif git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1; then
-            echo "✅ Checking out ref/commit: $SUSFS_BRANCH"
-            git checkout "$SUSFS_BRANCH"
+    
+          # Checkout branch or commit/tag
+          if git rev-parse --verify "origin/$SUSFS_REF" >/dev/null 2>&1; then
+            git checkout -f "$SUSFS_REF"
+          elif git rev-parse --verify "$SUSFS_REF" >/dev/null 2>&1; then
+            git checkout -f "$SUSFS_REF"
           else
-            echo "::error::SUSFS branch or commit '$SUSFS_BRANCH' not found in repository"
-            git branch -r | head -n 20
+            echo "::error::SUSFS ref '$SUSFS_REF' not found"
+            echo "Remote branches (first 30):"
+            git branch -r | head -n 30
             exit 1
           fi
-
-          SUSFS_COMMIT_SHA=$(git rev-parse HEAD)
-          SUSFS_BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
-          echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> $GITHUB_ENV
-          echo "SUSFS_BRANCH_NAME=$SUSFS_BRANCH_NAME" >> $GITHUB_ENV
+    
+          SUSFS_COMMIT_SHA="$(git rev-parse HEAD)"
+          SUSFS_BRANCH_NAME="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)"
+          echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> "$GITHUB_ENV"
+          echo "SUSFS_BRANCH_NAME=$SUSFS_BRANCH_NAME" >> "$GITHUB_ENV"
+          echo "✅ SUSFS pinned: $SUSFS_BRANCH_NAME @ $SUSFS_COMMIT_SHA"
+    
           cd ..
         fi
-
+    
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
 
@@ -658,59 +666,68 @@ runs:
         META="${{ inputs.ksu_meta }}"
         if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
           echo "::error::Invalid 'ksu_meta' format. Expected: branch/custom_tag/commit_hash"
-          echo "Example: main/Ultra/abc12345"
+          echo "Example: builtin/Numbersf/"
           exit 1
         fi
 
         IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
-
         echo "Branch: $BRANCH_NAME"
         echo "Custom Tag: ${CUSTOM_TAG:-Not set}"
         echo "Manual Commit: ${MANUAL_HASH:-Not set}"
 
-        echo "Downloading KernelSU setup script..."
-        if ! curl -LSs --retry 3 --retry-delay 2 --connect-timeout 30 \
-          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"; then
-          echo "::error::KernelSU setup script failed"
-          exit 1
-        fi
+        # Install SukiSU into kernel_platform/KernelSU
+        curl -fsSL --retry 3 --connect-timeout 30 \
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
 
-        [ -d "./KernelSU" ] || { echo "::error::KernelSU directory was not created"; exit 1; }
-        cd ./KernelSU
+        cd "./KernelSU"
 
+        # Pin to manual commit if provided
         if [[ -n "${MANUAL_HASH:-}" ]]; then
-          echo "Checking out specified commit: $MANUAL_HASH"
-          git fetch origin "$BRANCH_NAME" --depth=50 || { echo "::error::Failed to fetch branch '$BRANCH_NAME'"; exit 1; }
-          git checkout "$MANUAL_HASH" || { echo "::error::Failed to checkout commit '$MANUAL_HASH'"; exit 1; }
+          git fetch origin "$BRANCH_NAME" --depth=50
+          git checkout "$MANUAL_HASH"
           SHORT_HASH="${MANUAL_HASH:0:8}"
         fi
 
-        SULOG_PATH="./kernel/sulog.c"
-        if [ -f "$SULOG_PATH" ] && ! grep -q '#include <linux/version.h>' "$SULOG_PATH"; then
-          sed -i '0,/^#include/s|^\(#include.*\)$|\1\n#include <linux/version.h>|' "$SULOG_PATH"
-          grep -q '#include <linux/version.h>' "$SULOG_PATH" || { echo "::error::Failed to patch sulog.c"; exit 1; }
-        fi
+        # Record exact commit
+        KSU_COMMIT_SHA="$(git rev-parse HEAD)"
+        echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> "$GITHUB_ENV"
 
-        echo "Determining KSU API version..."
+        # Patch sulog include if needed (repo layout differs across commits)
+        for cand in "./kernel/sulog.c" "./drivers/kernelsu/sulog.c"; do
+          if [ -f "$cand" ] && ! grep -q '#include <linux/version.h>' "$cand"; then
+            sed -i '0,/^#include/s|^\(#include.*\)$|\1\n#include <linux/version.h>|' "$cand"
+          fi
+        done
+
+        # Determine which file holds version defs (Kbuild preferred like the working YAML)
+        VERFILE=""
+        if [ -f "kernel/Kbuild" ]; then
+          VERFILE="kernel/Kbuild"
+        elif [ -f "kernel/Makefile" ]; then
+          VERFILE="kernel/Makefile"
+        else
+          echo "::error::Cannot find kernel/Kbuild or kernel/Makefile inside KernelSU checkout"
+          exit 1
+        fi
+        echo "Using version file: $VERFILE"
+
+        # Extract API version (try remote first like the working YAML; fallback to local)
         KSU_API_VERSION="$(curl -fsSL --retry 3 --connect-timeout 30 \
-          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" 2>/dev/null | \
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Kbuild" 2>/dev/null | \
           grep -m1 'KSU_VERSION_API :=' | awk -F':=' '{print $2}' | tr -d '[:space:]' || true)"
 
-        if [[ -z "$KSU_API_VERSION" ]] && [ -f "kernel/Makefile" ]; then
-          KSU_API_VERSION="$(grep -m1 'KSU_VERSION_API :=' kernel/Makefile | awk -F':=' '{print $2}' | tr -d '[:space:]' || true)"
+        if [[ -z "$KSU_API_VERSION" ]]; then
+          KSU_API_VERSION="$(grep -m1 'KSU_VERSION_API :=' "$VERFILE" | awk -F':=' '{print $2}' | tr -d '[:space:]' || true)"
         fi
 
-        # Force fallback to 4.1.0 if missing/unreadable
+        # Keep your chosen default here (set to 4.1.0 if you want that behavior)
         if [[ -z "$KSU_API_VERSION" ]]; then
           echo "Warning: Missing API version. Using default: 4.1.0"
           KSU_API_VERSION="4.1.0"
         fi
-
-        # If you want to FORCE 4.1.0 no matter what, uncomment:
-        # KSU_API_VERSION="4.1.0"
-
         echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
 
+        # Assemble full version string
         GIT_HASH="$(git rev-parse --short HEAD)"
         if [[ -n "${MANUAL_HASH:-}" ]]; then
           USE_HASH="$SHORT_HASH"
@@ -724,10 +741,11 @@ runs:
           VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
         fi
 
-        sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
-        sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
-        sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
-
+        # Remove old defs and inject new defs
+        sed -i '/define get_ksu_version_full/,/endef/d' "$VERFILE"
+        sed -i '/KSU_VERSION_API :=/d' "$VERFILE"
+        sed -i '/KSU_VERSION_FULL :=/d' "$VERFILE"
+        
         VERSION_DEFINITIONS=$(cat <<EOF
           define get_ksu_version_full
           $VERSION_FULL
@@ -741,302 +759,122 @@ runs:
           /REPO_OWNER :=/ {print; print def; inserted=1; next}
           1
           END {if (!inserted) print def}
-        ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+        ' "$VERFILE" > "${VERFILE}.tmp" && mv "${VERFILE}.tmp" "$VERFILE"
 
+        # KSU numeric version (keeping your existing scheme)
         KSU_VERSION="$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)"
         echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
         echo "NEED_HOOKS=false" >> "$GITHUB_ENV"
 
-        cd ..
-        echo "KSU_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        # Write to your metadata artifact file
         echo "SUKISU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "$KSU_COMMIT_SHA" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
         echo "::endgroup::"
     
-    - name: Apply SUSFS Patches
+    - name: Apply SUSFS Patches (single, reject-aware)
       shell: bash
-      if: ${{ env.OP_SUSFS == 'true' && inputs.ksu_type != 'SUKISU' }}
+      if: ${{ env.OP_SUSFS == 'true' }}
       run: |
         set -euo pipefail
         echo "::group::Apply SUSFS patches"
-        cd "$KERNEL_PLATFORM_FOLDER"
-        echo "Applying SUSFS patches..."
+    
+        # 1) Copy SUSFS headers/fs additions
         cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/"
         cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/"
-
-        susfs_version=$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')
-        echo "SUSVER=$susfs_version" >> $GITHUB_ENV
-        echo "$susfs_version" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        echo "SusFS Version: $susfs_version"
-
-        version_lte() {
-          [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$1" ]
-        }
-
-        if version_lte "${susfs_version:1}" "1.5.12"; then
-          echo "NEED_HOOKS=true" >> $GITHUB_ENV
-        else
-          echo "NEED_HOOKS=false" >> $GITHUB_ENV
+    
+        SUSFS_VERSION="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}' || true)"
+        echo "SUSVER=${SUSFS_VERSION:-unknown}" >> "$GITHUB_ENV"
+        echo "${SUSFS_VERSION:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "SusFS Version: ${SUSFS_VERSION:-unknown}"
+    
+        # 2) Enable SUSFS inside KSU/KSUN (NOT needed for SUKISU in most setups, but harmless if patch exists)
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          cd "$KSUN_FOLDER"
+          patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+        elif [ "${{ inputs.ksu_type }}" = "KSU" ] || [ "${{ inputs.ksu_type }}" = "SUKISU" ]; then
+          cd "$KSU_FOLDER"
+          patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
         fi
-
-        case "$susfs_version" in
-          "v1.5.8")
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              patch -p1 --forward --fuzz=3 < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              patch -p1 --forward --fuzz=3 < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch"
-              patch -p1 --forward --fuzz=3 < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch"
-              patch -p1 --forward --fuzz=3 < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch"
-              patch -p1 --forward --fuzz=3 < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch"
-            else
-              cd "$KSU_FOLDER"
-              patch -p1 --forward --fuzz=3 < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-            fi
-            ;;
-          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd "$KSUN_FOLDER"
-              patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-                echo "Patching file: $file.c with fix_$file.c.patch"
-                patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
-              done
-              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
-            else
-              cd "$KSU_FOLDER"
-              patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-            fi
-            ;;
-          "v2.0.0")
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd "$KSUN_FOLDER"
-              patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
-                echo "Patching file: $file with fix_$file.patch"
-                patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/fix_$file.patch"
-              done
-              echo "Patching Hook Mode!"
-              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch"
-              echo "Patching KSU_TOOLKIT Support for SusFS kernel!"
-              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/ksu_toolkit.patch"
-              echo "Patching Multi-manager Support for SusFS kernel!"
-              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/multi_manager.patch"
-            else
-              cd "$KSU_FOLDER"
-              patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-            fi
-            ;;
-          *)
-            echo "::error::Unsupported SUSFS version: $susfs_version"
-            exit 1
-            ;;
-        esac
-
+    
+        # 3) Apply kernel SUSFS patch (THIS is the dangerous one → must be reject-aware)
         cd "$COMMON_KERNEL_FOLDER"
-        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-          fi
-        fi
-
-        fake_patched=0
-        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-        fi
-
-        patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
-
-        if [ "$fake_patched" = 1 ]; then
-          if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-            sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c || true
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
-          fi
-        fi
-
-        echo "✅ SUSFS patches applied"
-        echo "::endgroup::"
-
-    - name: Apply SUSFS Patches (SukiSU Ultra)
-      shell: bash
-      if: ${{ env.OP_SUSFS == 'true' && inputs.ksu_type == 'SUKISU' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Apply SUSFS patches (SukiSU Ultra)"
-        cd "$GITHUB_WORKSPACE"
-
-        SUSFS_BRANCH="${SUSFS_KERNEL_BRANCH}"
-
-        echo "Using existing SUSFS repo at: $SUSFS_FOLDER (switching to $SUSFS_BRANCH)"
-        if [ ! -d "$SUSFS_FOLDER/.git" ]; then
-          echo "::error::SUSFS repo not found at $SUSFS_FOLDER (expected it to be cloned earlier)"
-          ls -la "$GITHUB_WORKSPACE" || true
-          exit 1
-        fi
-
-        cd "$SUSFS_FOLDER"
-        git fetch origin --prune --depth=1 || true
-        git checkout -f "$SUSFS_BRANCH" || git checkout -f "origin/$SUSFS_BRANCH"
-        cd "$GITHUB_WORKSPACE"
-
-        echo "Cloning SukiSU patch repository (if missing)..."
-        if [ ! -d "$GITHUB_WORKSPACE/SukiSU_patch" ]; then
-          if ! git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1 2>&1 | tee /tmp/patch_clone.log; then
-            echo "::error::Failed to clone SukiSU_patch repository"
-            cat /tmp/patch_clone.log
-            exit 1
-          fi
-        fi
-
-        cd "$KERNEL_PLATFORM_FOLDER"
-
-        echo "Copying SUSFS files..."
+    
         SUSFS_PATCH="50_add_susfs_in_gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.patch"
-
         if [ ! -f "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ]; then
-          echo "::error::SUSFS patch not found: $SUSFS_PATCH"
-          ls -la "$SUSFS_FOLDER/kernel_patches/" || true
+          echo "::error::Missing SUSFS kernel patch: $SUSFS_PATCH"
+          ls -la "$SUSFS_FOLDER/kernel_patches" | head -n 80 || true
           exit 1
         fi
-
-        cp "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ./common/
-        cp -r "$SUSFS_FOLDER/kernel_patches/fs/"* ./common/fs/
-        cp -r "$SUSFS_FOLDER/kernel_patches/include/linux/"* ./common/include/linux/
-
-        cd ./common
-
-        if [ -f "./include/linux/susfs.h" ]; then
-          SUSFS_VERSION=$(grep '#define SUSFS_VERSION' ./include/linux/susfs.h | awk -F'"' '{print $2}')
-          echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
-          echo "SUSVER=$SUSFS_VERSION" >> "$GITHUB_ENV"
-          echo "Detected SUSFS version: $SUSFS_VERSION"
-        fi
-
-        GKI_V="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
-        SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-
-        if [ "$GKI_V" = "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-          echo "Fixing legacy 5.15 issues (SUBLEVEL=$SUBLEVEL)..."
-          if curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused \
-            "https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy"; then
-            patch -p1 < fix_5.15.legacy.patch || echo "::warning::Legacy 5.15 patch applied with warnings"
-          else
-            echo "::warning::Failed to download 5.15 legacy patch"
-          fi
-        fi
-
+    
+        cp "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ./
+    
+        # Optional Trusty-missing fix (keep your existing idea)
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         TKERNEL_VERSION="${{ env.TKERNEL_VER }}"
         TRUSTY_EXISTS="false"
-
-        if [[ "$KERNEL_VERSION" == "6.6" ]] || [[ "$KERNEL_VERSION" == "6.12" ]]; then
-          if [ -f "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" ]; then
+        if [[ "$KERNEL_VERSION" == "6.6" || "$KERNEL_VERSION" == "6.12" ]]; then
+          # Your manifests_fallback path isn't guaranteed in this composite; so only try if present
+          if [ -n "${OP_MANIFEST:-}" ] && [ -f "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" ]; then
             if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" 2>/dev/null; then
               TRUSTY_EXISTS="true"
             fi
           fi
-
-          if [[ "$KERNEL_VERSION" == "6.12" ]]; then
-            if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.12.0" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
-              echo "Fixing SUSFS for 6.12 without Trusty OS..."
+    
+          if [[ "$TRUSTY_EXISTS" == "false" ]]; then
+            if [[ "$KERNEL_VERSION" == "6.12" ]] && [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.12.0" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
               sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH"
               sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH"
             fi
-          elif [[ "$KERNEL_VERSION" == "6.6" ]]; then
-            if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
-              echo "Fixing SUSFS for 6.6 without Trusty OS..."
+            if [[ "$KERNEL_VERSION" == "6.6" ]] && [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
               sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH"
               sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH"
             fi
           fi
         fi
-
-        fake_patched=0
-
-        if [ "$GKI_V" = "android16-6.12" ]; then
-          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
-                   -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-            fake_patched=1
-          fi
+    
+        echo "Applying: $SUSFS_PATCH"
+        patch -p1 --forward < "$SUSFS_PATCH"
+    
+        # Fail hard if rejects exist
+        if find . -name "*.rej" -o -name "*.orig" | grep -q .; then
+          echo "::error::SUSFS patch produced rejects (.rej/.orig)."
+          find . -name "*.rej" -o -name "*.orig" -print
+          exit 1
         fi
-
-        if [ "$GKI_V" = "android15-6.6" ]; then
-          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
-                   -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-            fake_patched=1
-          fi
-        fi
-
-        if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-        fi
-
-        echo "Applying SUSFS patch: $SUSFS_PATCH"
-        patch -p1 < "$SUSFS_PATCH" || echo "::warning::SUSFS patch applied with warnings"
-
-        if [ "$fake_patched" = 1 ]; then
-          if [ "$GKI_V" = "android16-6.12" ] || [ "$GKI_V" = "android15-6.6" ]; then
-            sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' \
-                   -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c || true
-          fi
-          if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
-          fi
-        fi
-
-        echo "✅ SUSFS patches applied: ${SUSFS_VERSION:-unknown}"
+    
+        # 4) Record SUSFS commit in your metadata file (if available)
+        echo "SUSFS" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "${SUSFS_VERSION:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "${SUSFS_COMMIT_SHA:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+    
+        echo "✅ SUSFS patches applied cleanly"
         echo "::endgroup::"
 
-    - name: Apply Hide Stuff Patches (SukiSU Ultra)
+    - name: Apply Hide Stuff Patches (SukiSU Ultra, reject-aware)
       shell: bash
       if: ${{ inputs.ksu_type == 'SUKISU' }}
       run: |
         set -euo pipefail
         echo "::group::Apply hide stuff patches"
-        COMMON_DIR="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
+        COMMON_DIR="$COMMON_KERNEL_FOLDER"
         PATCH_DIR="$GITHUB_WORKSPACE/SukiSU_patch"
-
+    
         cd "$COMMON_DIR"
-
-        if [ ! -f "$PATCH_DIR/69_hide_stuff.patch" ]; then
-          echo "::error::Hide stuff patch not found at: $PATCH_DIR/69_hide_stuff.patch"
+    
+        test -f "$PATCH_DIR/69_hide_stuff.patch" || { echo "::error::Missing $PATCH_DIR/69_hide_stuff.patch"; exit 1; }
+    
+        cp "$PATCH_DIR/69_hide_stuff.patch" ./
+        patch -p1 --forward -F 3 < 69_hide_stuff.patch
+    
+        if find . -name "*.rej" -o -name "*.orig" | grep -q .; then
+          echo "::error::Hide-stuff patch produced rejects (.rej/.orig)."
+          find . -name "*.rej" -o -name "*.orig" -print
           exit 1
         fi
-
-        cp "$PATCH_DIR/69_hide_stuff.patch" ./
-        echo "Applying hide stuff patch..."
-        patch -p1 -F 3 < 69_hide_stuff.patch || echo "::warning::Hide stuff patch applied with warnings"
-
-        echo "✅ Hide stuff patches applied"
+    
+        echo "✅ Hide stuff applied cleanly"
         echo "::endgroup::"
 
     - name: Add KSU / KSUN and SUSFS Configuration Settings
