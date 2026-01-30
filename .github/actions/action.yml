@@ -25,7 +25,8 @@ inputs:
     description: 'SukiSU Ultra metadata in format: branch/custom_tag/commit_hash'
     required: false
     type: string
-    default: 'susfs-main/⚡Ultra⚡/'
+    default: 'main/⚡Ultra⚡/'
+'
 
   susfs_commit_hash_or_branch:
     description: 'SUSFS branch or commit hash (empty = auto-detect by kernel version)'
