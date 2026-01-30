@@ -700,8 +700,8 @@ runs:
           KSU_API_VERSION=$(grep -m1 "KSU_VERSION_API :=" kernel/Makefile | awk -F'= ' '{print $2}' | tr -d '[:space:]' || true)
         fi
 
-        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-          echo "Warning: Invalid or missing API version. Using default: 3.1.7"
+        if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "4.1.0" | sort -V | head -n1)" != "3.1.7" ]]; then
+          echo "Warning: Invalid or missing API version. Using default: 4.1.0"
           KSU_API_VERSION="3.1.7"
         fi
         echo "KSU_API_VERSION=$KSU_API_VERSION" >> "$GITHUB_ENV"
@@ -720,15 +720,14 @@ runs:
         sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
 
         VERSION_DEFINITIONS=$(cat <<EOF
-          define get_ksu_version_full
-          $VERSION_FULL
-          endef
-
-          KSU_VERSION_API := $KSU_API_VERSION
-          KSU_VERSION_FULL := $VERSION_FULL
-        EOF
-                )
-
+        define get_ksu_version_full
+        $VERSION_FULL
+         endef
+          
+         KSU_VERSION_API := $KSU_API_VERSION
+         KSU_VERSION_FULL := $VERSION_FULL
+         EOF
+         )
         awk -v def="$VERSION_DEFINITIONS" '
           /REPO_OWNER :=/ {print; print def; inserted=1; next}
           1
@@ -875,7 +874,6 @@ runs:
         echo "✅ SUSFS patches applied"
         echo "::endgroup::"
 
-    # ✅ Ton SUSFS spécial SUKISU (ton script)
     - name: Apply SUSFS Patches (SukiSU Ultra)
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' && inputs.ksu_type == 'SUKISU' }}
@@ -885,14 +883,20 @@ runs:
         cd "$GITHUB_WORKSPACE"
 
         SUSFS_BRANCH="${SUSFS_KERNEL_BRANCH}"
-        echo "Cloning SUSFS repository (branch: $SUSFS_BRANCH)..."
-        if ! git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" --depth=1 2>&1 | tee /tmp/susfs_clone.log; then
-          echo "::error::Failed to clone SUSFS repository"
-          cat /tmp/susfs_clone.log
+
+        echo "Using existing SUSFS repo at: $SUSFS_FOLDER (switching to $SUSFS_BRANCH)"
+        if [ ! -d "$SUSFS_FOLDER/.git" ]; then
+          echo "::error::SUSFS repo not found at $SUSFS_FOLDER (expected it to be cloned earlier)"
+          ls -la "$GITHUB_WORKSPACE" || true
           exit 1
         fi
 
-        echo "Cloning SukiSU patch repository..."
+        cd "$SUSFS_FOLDER"
+        git fetch origin --prune --depth=1 || true
+        git checkout -f "$SUSFS_BRANCH" || git checkout -f "origin/$SUSFS_BRANCH"
+        cd "$GITHUB_WORKSPACE"
+
+        echo "Cloning SukiSU patch repository (if missing)..."
         if [ ! -d "$GITHUB_WORKSPACE/SukiSU_patch" ]; then
           if ! git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1 2>&1 | tee /tmp/patch_clone.log; then
             echo "::error::Failed to clone SukiSU_patch repository"
@@ -906,22 +910,22 @@ runs:
         echo "Copying SUSFS files..."
         SUSFS_PATCH="50_add_susfs_in_gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.patch"
 
-        if [ ! -f "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/$SUSFS_PATCH" ]; then
+        if [ ! -f "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ]; then
           echo "::error::SUSFS patch not found: $SUSFS_PATCH"
-          ls -la "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/" || true
+          ls -la "$SUSFS_FOLDER/kernel_patches/" || true
           exit 1
         fi
 
-        cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/$SUSFS_PATCH" ./common/
-        cp -r "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/"* ./common/fs/
-        cp -r "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/"* ./common/include/linux/
+        cp "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ./common/
+        cp -r "$SUSFS_FOLDER/kernel_patches/fs/"* ./common/fs/
+        cp -r "$SUSFS_FOLDER/kernel_patches/include/linux/"* ./common/include/linux/
 
         cd ./common
 
         if [ -f "./include/linux/susfs.h" ]; then
           SUSFS_VERSION=$(grep '#define SUSFS_VERSION' ./include/linux/susfs.h | awk -F'"' '{print $2}')
-          echo "SUSFS_VERSION=$SUSFS_VERSION" >> $GITHUB_ENV
-          echo "SUSVER=$SUSFS_VERSION" >> $GITHUB_ENV
+          echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
+          echo "SUSVER=$SUSFS_VERSION" >> "$GITHUB_ENV"
           echo "Detected SUSFS version: $SUSFS_VERSION"
         fi
 
@@ -1313,48 +1317,36 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::ccache final statistics"
-        
+
         export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-        
+
         echo "ccache Statistics"
         ccache -s
-        
+
         STATS="$(ccache -s)"
-        
-        CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        HITS=$(echo "$STATS" | awk '/^[[:space:]]*Hits:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        DIRECT=$(echo "$STATS" | awk '/Direct:/ {
-          match($0, /[0-9]+/); 
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
+
+        CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH)}' | head -n1)
+        HITS=$(echo "$STATS" | awk '/^[[:space:]]*Hits:/ {match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH)}' | head -n1)
+        DIRECT=$(echo "$STATS" | awk '/Direct:/ {match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH)}' | head -n1)
+
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0
-        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
+          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
           DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
         else
           HIT_RATE="0.0"
           DIRECT_RATE="0.0"
         fi
-        
+
         echo "hit_rate=${HIT_RATE}%" >> "$GITHUB_OUTPUT"
         echo "direct_rate=${DIRECT_RATE}%" >> "$GITHUB_OUTPUT"
-        
+
         echo "::endgroup::"
-        
-        echo "## 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        ccache -s >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+
+        echo "## 📊 ccache Statistics" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        ccache -s >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
 
     - name: Collect Build Stats / Validate Image
       id: collect_stats
