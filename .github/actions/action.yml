@@ -773,71 +773,96 @@ runs:
 
         echo "::endgroup::"
     
-    - name: Apply SUSFS Patches (tolerant; no KSU enable patch)
+    - name: Apply SUSFS
       shell: bash
-      if: ${{ env.OP_SUSFS == 'true' }}
+      if: ${{ env.OP_SUSFS == 'true' && inputs.susfs_commit_hash_or_branch != '-1' }}
       run: |
         set -euo pipefail
-        echo "::group::Apply SUSFS patches (tolerant)"
+        echo "::group::Apply SUSFS (Numbersf-style)"
     
-        # Copy SUSFS headers/fs additions
-        cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/" || true
-        cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
+        cd "$CONFIG_FOLDER"
+    
+        SUSFS_META="${{ inputs.susfs_commit_hash_or_branch }}"
+        SUSFS_BRANCH="gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
+        echo "SUSFS_BRANCH=$SUSFS_BRANCH"
+        echo "SUSFS_META=$SUSFS_META"
+    
+        rm -rf susfs4ksu || true
+        git clone -b "$SUSFS_BRANCH" https://gitlab.com/simonpunk/susfs4ksu.git
+        cd susfs4ksu
+    
+        if [ -n "${SUSFS_META:-}" ] && [ "$SUSFS_META" != "next" ]; then
+          echo "Pinning SUSFS to: $SUSFS_META"
+          git fetch origin --tags --prune || true
+          git checkout -f "$SUSFS_META" || { echo "::error::SUSFS_META '$SUSFS_META' not found"; exit 1; }
+        else
+          echo "No SUSFS_META pin; using branch head."
+        fi
+    
+        SUSFS_COMMIT_SHA="$(git rev-parse HEAD)"
+        SUSFS_BRANCH_NAME="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)"
+        echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> "$GITHUB_ENV"
+        echo "SUSFS_BRANCH_NAME=$SUSFS_BRANCH_NAME" >> "$GITHUB_ENV"
+        echo "✅ SUSFS pinned: $SUSFS_BRANCH_NAME @ $SUSFS_COMMIT_SHA"
+    
+        cd ..
+    
+        echo "Copying SUSFS patch + files into common/"
+        cp "susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.patch" "$COMMON_KERNEL_FOLDER/" || {
+          echo "::error::Missing SUSFS patch for this kernel line"
+          ls -la "susfs4ksu/kernel_patches" | head -n 80 || true
+          exit 1
+        }
+        cp susfs4ksu/kernel_patches/fs/* "$COMMON_KERNEL_FOLDER/fs/" || true
+        cp susfs4ksu/kernel_patches/include/linux/* "$COMMON_KERNEL_FOLDER/include/linux/" || true
+    
+        cd "$COMMON_KERNEL_FOLDER"
+    
+        GKI_V="${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}"
+        SUBLEVEL="$(grep '^SUBLEVEL *=' Makefile | head -n1 | awk '{print $3}' | tr -d ' ')"
+        echo "GKI_V=$GKI_V SUBLEVEL=$SUBLEVEL"
+    
+        fake_patched=0
+    
+        if [ "$GKI_V" = "android15-6.6" ]; then
+          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
+            echo "Injecting nr_subpages/res guard (android15-6.6)"
+            sed -i \
+              -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
+              -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' \
+              ./fs/proc/task_mmu.c
+            fake_patched=1
+          fi
+        fi
+    
+        if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ] || [ "$GKI_V" = "android14-6.1" ]; then
+          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
+            echo "Marking fake_patched for vma_pages guard ($GKI_V)"
+            fake_patched=1
+          fi
+        fi
+    
+        echo "Applying SUSFS patch (tolerant)"
+        patch -p1 -F 3 < "50_add_susfs_in_gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.patch" || true
+    
+        if [ "$fake_patched" = 1 ]; then
+          if [ "$GKI_V" = "android15-6.6" ]; then
+            sed -i \
+              -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' \
+              -e '/pagemap_entry_t \*res = NULL;/d' \
+              ./fs/proc/task_mmu.c || true
+          fi
+          if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ] || [ "$GKI_V" = "android14-6.1" ]; then
+            if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
+            fi
+          fi
+        fi
     
         SUSFS_VERSION="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}' || true)"
         echo "SUSVER=${SUSFS_VERSION:-unknown}" >> "$GITHUB_ENV"
-        echo "${SUSFS_VERSION:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "SusFS Version: ${SUSFS_VERSION:-unknown}"
     
-        # Apply kernel SUSFS patch (Numbersf-style tolerant)
-        cd "$COMMON_KERNEL_FOLDER"
-        SUSFS_PATCH="50_add_susfs_in_gki-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.patch"
-    
-        if [ ! -f "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ]; then
-          echo "::warning::Missing SUSFS kernel patch: $SUSFS_PATCH"
-          echo "Available patches:"
-          ls -la "$SUSFS_FOLDER/kernel_patches" | head -n 80 || true
-          echo "::endgroup::"
-          exit 0
-        fi
-    
-        cp "$SUSFS_FOLDER/kernel_patches/$SUSFS_PATCH" ./
-    
-        # Optional Trusty-missing fix (keep; still tolerant)
-        KERNEL_VERSION="${{ env.KERNEL_VER }}"
-        TKERNEL_VERSION="${{ env.TKERNEL_VER }}"
-        TRUSTY_EXISTS="false"
-    
-        if [[ "$KERNEL_VERSION" == "6.6" || "$KERNEL_VERSION" == "6.12" ]]; then
-          if [ -n "${OP_MANIFEST:-}" ] && [ -f "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" ]; then
-            if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/$CONFIG/.repo/manifests_fallback/$OP_MANIFEST" 2>/dev/null; then
-              TRUSTY_EXISTS="true"
-            fi
-          fi
-    
-          if [[ "$TRUSTY_EXISTS" == "false" ]]; then
-            if [[ "$KERNEL_VERSION" == "6.12" ]] && [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.12.0" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
-              echo "Applying SUSFS 6.12 Trusty-missing fix..."
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH" || true
-              sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH" || true
-            fi
-            if [[ "$KERNEL_VERSION" == "6.6" ]] && [[ "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" == "$TKERNEL_VERSION" ]]; then
-              echo "Applying SUSFS 6.6 Trusty-missing fix..."
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$SUSFS_PATCH" || true
-              sed -i '/#include <trace\/hooks\/fs.h>/d' "$SUSFS_PATCH" || true
-            fi
-          fi
-        fi
-    
-        echo "Applying (tolerant): $SUSFS_PATCH"
-        patch -p1 -F 3 < "$SUSFS_PATCH" || true
-    
-        # Record metadata (even if patch partially applied)
-        echo "SUSFS" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        echo "${SUSFS_VERSION:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        echo "${SUSFS_COMMIT_SHA:-unknown}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-    
-        echo "✅ SUSFS step completed (tolerant mode)"
         echo "::endgroup::"
 
     - name: Apply Hide Stuff Patches (SukiSU Ultra, tolerant)
