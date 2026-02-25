@@ -1464,58 +1464,6 @@ runs:
         echo "   - Build time: ${BUILD_TIME}s"
         echo "::endgroup::"
 
-    - name: Create Kernel ZIP
-      id: create_zip
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Create kernel ZIP package"
-        
-        # Reuse the image path resolved by Collect Build Stats to avoid divergence
-        IMAGE_PATH="${RESOLVED_IMAGE_PATH:-$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image}"
-        
-        if [ ! -f "$IMAGE_PATH" ]; then
-          echo "::error::Built Image not found at: $IMAGE_PATH"
-          exit 1
-        fi
-        
-        cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
-        cd "$AK3_FOLDER"
-        
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
-          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
-        else
-          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
-        fi
-        mkdir -p "$ARTIFACTS_FOLDER"
-        
-        echo "Creating flashable ZIP: $ZIP_NAME"
-        
-        if ! zip -r9 "$ZIP_NAME" ./* \
-             -x "*.git*" \
-             -x "$ZIP_NAME" \
-             -x "README.md" 2>&1 | tee /tmp/zip.log; then
-          echo "::error::Failed to create ZIP package"
-          exit 1
-        fi
-        
-        mv "$ZIP_NAME" "$ARTIFACTS_FOLDER/"
-        
-        find "$ARTIFACTS_FOLDER" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" -delete
-        
-        ZIP_SIZE=$(stat -c%s "$ARTIFACTS_FOLDER/$ZIP_NAME")
-        ZIP_SHA256=$(sha256sum "$ARTIFACTS_FOLDER/$ZIP_NAME" | awk '{print $1}')
-        
-        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-        echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-        
-        echo ""
-        echo "✅ Kernel ZIP created successfully"
-        echo "   Name: $ZIP_NAME"
-        echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
-        echo "   SHA256: $ZIP_SHA256"
-        echo "::endgroup::"
-
     - name: Download Latest SUSFS Module from CI      
       continue-on-error: true
       shell: bash
@@ -1591,6 +1539,110 @@ runs:
         else
           echo "⚠️ Failed to download artifact"
           echo "   HTTP request failed or artifact not accessible"
+        fi
+        
+        echo "::endgroup::"
+
+    - name: Create Kernel ZIP
+      id: create_zip
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Create kernel ZIP package"
+        
+        # Reuse the image path resolved by Collect Build Stats to avoid divergence
+        IMAGE_PATH="${RESOLVED_IMAGE_PATH:-$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image}"
+        
+        if [ ! -f "$IMAGE_PATH" ]; then
+          echo "::error::Built Image not found at: $IMAGE_PATH"
+          exit 1
+        fi
+        
+        cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
+        cd "$AK3_FOLDER"
+        
+        # 🆕 FIX: Liste des fichiers avant nettoyage
+        echo "📁 Files in AnyKernel3 before cleanup:"
+        ls -lh *.zip 2>/dev/null || echo "No ZIP files found"
+        
+        if [ "${{ env.OP_SUSFS }}" = true ]; then
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
+        else
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
+        fi
+        mkdir -p "$ARTIFACTS_FOLDER"
+        
+        echo "Creating flashable ZIP: $ZIP_NAME"
+        
+        # 🆕 FIX: Vérifier la présence du module SUSFS
+        SUSFS_MODULE_PRESENT=false
+        if [ "${{ env.OP_SUSFS }}" = true ]; then
+          if ls ksu_module_susfs*.zip 1> /dev/null 2>&1; then
+            SUSFS_MODULE_PRESENT=true
+            SUSFS_MODULE_FILE=$(ls ksu_module_susfs*.zip | head -n1)
+            echo "✅ SUSFS module found: $SUSFS_MODULE_FILE"
+            SUSFS_MODULE_SIZE=$(stat -c%s "$SUSFS_MODULE_FILE" 2>/dev/null || stat -f%z "$SUSFS_MODULE_FILE" 2>/dev/null)
+            echo "📊 Module size: $(numfmt --to=iec-i --suffix=B "$SUSFS_MODULE_SIZE" 2>/dev/null || echo "${SUSFS_MODULE_SIZE} bytes")"
+          else
+            echo "⚠️ WARNING: SUSFS module not found in AnyKernel3 folder"
+            echo "   Expected: ksu_module_susfs*.zip"
+            echo "   Contents:"
+            ls -lh
+          fi
+        fi
+        
+        # 🆕 FIX: Créer le ZIP avec ou sans exclusion des .zip selon la présence du module
+        if [ "$SUSFS_MODULE_PRESENT" = true ]; then
+          echo "📦 Creating ZIP with SUSFS module included"
+          if ! zip -r9 "$ZIP_NAME" ./* \
+               -x "*.git*" \
+               -x "AK3_*.zip" \
+               -x "AnyKernel3*.zip" \
+               -x "README.md" 2>&1 | tee /tmp/zip.log; then
+            echo "::error::Failed to create ZIP package"
+            exit 1
+          fi
+        else
+          echo "📦 Creating ZIP without SUSFS module"
+          if ! zip -r9 "$ZIP_NAME" ./* \
+               -x "*.git*" \
+               -x "*.zip" \
+               -x "README.md" 2>&1 | tee /tmp/zip.log; then
+            echo "::error::Failed to create ZIP package"
+            exit 1
+          fi
+        fi
+        
+        mv "$ZIP_NAME" "$ARTIFACTS_FOLDER/"
+        
+        find "$ARTIFACTS_FOLDER" -maxdepth 1 -type f ! -name "$ZIP_NAME" ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" -delete
+        
+        ZIP_SIZE=$(stat -c%s "$ARTIFACTS_FOLDER/$ZIP_NAME")
+        ZIP_SHA256=$(sha256sum "$ARTIFACTS_FOLDER/$ZIP_NAME" | awk '{print $1}')
+        
+        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+        echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+        
+        echo ""
+        echo "✅ Kernel ZIP created successfully"
+        echo "   Name: $ZIP_NAME"
+        echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
+        echo "   SHA256: $ZIP_SHA256"
+        
+        # 🆕 FIX: Vérifier le contenu du ZIP
+        echo ""
+        echo "📋 Verifying ZIP contents:"
+        unzip -l "$ARTIFACTS_FOLDER/$ZIP_NAME" | grep -E "(Image|ksu_module_susfs|anykernel.sh)" || true
+        
+        # 🆕 FIX: Vérification finale de la présence du module SUSFS
+        if [ "${{ env.OP_SUSFS }}" = true ]; then
+          if unzip -l "$ARTIFACTS_FOLDER/$ZIP_NAME" | grep -q "ksu_module_susfs.*\.zip"; then
+            echo ""
+            echo "✅ SUSFS module successfully included in ZIP"
+          else
+            echo ""
+            echo "⚠️ WARNING: SUSFS module NOT found in final ZIP"
+          fi
         fi
         
         echo "::endgroup::"
