@@ -971,6 +971,23 @@ runs:
         # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
         echo "✅ BBG LSM added"
         echo "::endgroup::"
+
+    - name: Apply Unicode Fix Patch
+      shell: bash
+      if: ${{ env.OP_UNICODE == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Apply Unicode Fix patch"
+        cd "$COMMON_KERNEL_FOLDER"
+        KERNEL_VERSION="${{ env.KERNEL_VER }}"
+        MIN_VERSION="5.16"
+        
+        echo "Patching unicode!"
+        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
+            patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1-.patch"
+        else
+            patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
+        fi
     
     - name: Apply KSU Hooks
       shell: bash
