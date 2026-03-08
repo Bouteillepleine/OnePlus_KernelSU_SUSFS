@@ -971,7 +971,7 @@ runs:
         # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
         echo "✅ BBG LSM added"
         echo "::endgroup::"
-
+    
     - name: Apply Unicode Fix Patch
       shell: bash
       if: ${{ env.OP_UNICODE == 'true' }}
@@ -988,7 +988,7 @@ runs:
         else
             patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
         fi
-    
+
     - name: Apply KSU Hooks
       shell: bash
       if: ${{ env.NEED_HOOKS == 'true' }}
@@ -1009,8 +1009,8 @@ runs:
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
         CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
         CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
         CONFIG_KSU_SUSFS_SUS_PATH=y
         CONFIG_KSU_SUSFS_SUS_MOUNT=y
         CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
@@ -1055,12 +1055,19 @@ runs:
         CONFIG_IP6_NF_MATCH_HL=y
         EOF
 
-    - name: Add IP SET Support
+    - name: Add IP SET & IPv6_NAT Support
       if: ${{ env.OP_IP_SET == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
-        echo "Add IP SET Support"
+        echo "Add IP SET & IPv6_NAT Support"
+        cd "$COMMON_KERNEL_FOLDER"
+        KERNEL_VERSION="${{ env.KERNEL_VER }}"
+        
+        if [[ "$KERNEL_VERSION" != "6.12" ]]; then
+            echo "CONFIG_BPF_STREAM_PARSER=y" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+        fi
+        
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_IP_SET=y
         CONFIG_IP_SET_MAX=65534
@@ -1080,7 +1087,13 @@ runs:
         CONFIG_IP_SET_HASH_NETPORT=y
         CONFIG_IP_SET_HASH_NETIFACE=y
         CONFIG_IP_SET_LIST_SET=y
+        CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+        CONFIG_NETFILTER_XT_SET=y
+        CONFIG_IP6_NF_NAT=y
+        CONFIG_IP6_NF_TARGET_MASQUERADE=y
         EOF
+        
+        patch -p1 -F 3 < "$KERNEL_PATCHES_FOLDER/common/IPv6_NAT_FIX.patch"
 
     - name: Add Build based configs
       shell: bash
@@ -1104,7 +1117,7 @@ runs:
         CONFIG_DEBUG_ATOMIC_SLEEP=n
         CONFIG_GDB_SCRIPTS=n
         EOF
-        
+
     - name: Add RUST build configs
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
@@ -1587,9 +1600,10 @@ runs:
           echo "=== OnePlus Features ==="
           echo "BBR: ${{ env.OP_BBR }}"
           echo "BBG: ${{ env.OP_BBG }}"
-          echo "Hmbird: ${{ env.OP_HMBIRD }}"
+          echo "HMBIRD SCX: ${{ env.OP_HMBIRD }}"
           echo "TTL: ${{ env.OP_TTL }}"
-          echo "IP_SET: ${{ env.OP_IP_SET }}"
+          echo "IP_SET & IPv6 NAT: ${{ env.OP_IP_SET }}"
+          echo "Unicode Fix: ${{ env.OP_UNICODE }}"
           echo ""
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "Compiler: ${CLANG_VERSION:-unknown}"
@@ -1648,9 +1662,10 @@ runs:
           echo "|---------|--------|"
           echo "| **BBR** | ${{ env.OP_BBR }} |"
           echo "| **BBG** | ${{ env.OP_BBG }} |"
-          echo "| **Hmbird** | ${{ env.OP_HMBIRD }} |"
+          echo "| **HMBIRD SCX** | ${{ env.OP_HMBIRD }} |"
           echo "| **TTL** | ${{ env.OP_TTL }} |"
-          echo "| **IP_SET** | ${{ env.OP_IP_SET }} |"
+          echo "| **IP_SET & IPv6 NAT** | ${{ env.OP_IP_SET }} |"
+          echo "| **Unicode Fix** | ${{ env.OP_UNICODE }} |"
           
           echo ""
           echo "### 📊 Build Metrics"
@@ -1678,4 +1693,4 @@ runs:
         name: kernel-${{ inputs.ksu_type }}-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}
         path: ${{ env.ARTIFACTS_FOLDER }}/
         compression-level: 0
-        retention-days: 20
+        retention-days: 90
