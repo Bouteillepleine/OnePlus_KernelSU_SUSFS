@@ -630,7 +630,7 @@ runs:
         cd "$KERNEL_PLATFORM_FOLDER"
         
         # Install ReSukiSU via official setup script (builtin mode)
-        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s builtin
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
         
         # Record variant in metadata file
         echo "ReSukiSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
@@ -641,10 +641,7 @@ runs:
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
         cd ..
         
-        echo "CONFIG_KPM=y"              >> common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KALLSYMS=y"         >> common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KALLSYMS_ALL=y"     >> common/arch/arm64/configs/gki_defconfig
-        echo "CONFIG_KPROBES=y"          >> common/arch/arm64/configs/gki_defconfig
+        echo "CONFIG_KPM=y"              >> common/arch/arm64/configs/gki_defconfig        
         
         echo "✅ ReSukiSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
