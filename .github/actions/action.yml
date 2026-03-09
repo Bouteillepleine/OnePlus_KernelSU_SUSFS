@@ -20,6 +20,14 @@ inputs:
     required: false
     type: string
     default: ""
+  kpm_mode:
+    description: 'KPM mode: KPM (enable + patch_linux), KPN (disable)'
+    required: false
+    type: choice
+    options:
+      - KPM
+      - KPN
+    default: KPM
   optimize_level:
     description: 'Compiler optimization level (O2 or O3)'
     required: false
@@ -97,6 +105,7 @@ runs:
         lto="$OP_LTO"
         uname="$OP_UNAME"
         optimize='${{ inputs.optimize_level }}'
+        kpm_mode='${{ inputs.kpm_mode }}'
         
         errors=()
         
@@ -211,6 +220,11 @@ runs:
         case "$optimize" in
           O2|O3) ;;
           *) errors+=("optimize_level must be O2 or O3. Got: '$optimize'"); ;;
+        esac
+        
+        case "$kpm_mode" in
+          KPM|KPN) ;;
+          *) errors+=("kpm_mode must be KPM or KPN. Got: '$kpm_mode'"); ;;
         esac
         
         if [ ${#errors[@]} -ne 0 ]; then
@@ -461,11 +475,11 @@ runs:
         echo "::group::Configure ccache environment"
         CACHE_DIR="$HOME/.ccache"
         echo "CCACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
-        echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
+        echo "CCACHE_MAXSIZE=3G" >> "$GITHUB_ENV"
         mkdir -p "$CACHE_DIR"
         echo "Cache configuration:"
         echo "  Directory: $CACHE_DIR"
-        echo "  Max size: 1G"
+        echo "  Max size: 3G"
         echo "  Android: ${ANDROID_VER:-unknown}"
         echo "  Kernel: ${KERNEL_VER:-unknown}"
         echo "  OOS Version: ${OP_OS_VERSION:-unknown}"
@@ -477,11 +491,11 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        # ✅ Clé renommée : ksun → resukisu
-        key: ccache-resukisu-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        key: ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-resukisu-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-resukisu-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ccache-resukisu-v4-${{ env.OP_MODEL }}-
 
     - name: Configure ccache
       shell: bash
@@ -628,22 +642,35 @@ runs:
         set -euo pipefail
         echo "::group::Add ReSukiSU"
         cd "$KERNEL_PLATFORM_FOLDER"
-        
-        # Install ReSukiSU via official setup script (builtin mode)
-        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
-        
-        # Record variant in metadata file
+    
+        KSU_REF="${{ inputs.ksu_branch_or_hash }}"
+        [ -z "$KSU_REF" ] && KSU_REF="main"
+    
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$KSU_REF"
+    
         echo "ReSukiSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        
-        # Capture commit SHA
+    
         cd KernelSU
-        KSU_COMMIT_SHA=$(git rev-parse HEAD)
-        echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
+        KSU_COMMIT_SHA="$(git rev-parse HEAD)"
+        echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> "$GITHUB_ENV"
+    
+        KSUVER="$(git describe --tags --always 2>/dev/null || true)"
+        if [ -z "$KSUVER" ]; then
+          KSUVER="$(grep -RhoE 'KSU_VERSION[[:space:]]*[:=][[:space:]]*"?[0-9A-Za-z._-]+' . 2>/dev/null | head -n1 | sed -E 's/.*[:=][[:space:]]*"?//')"
+        fi
+        [ -z "$KSUVER" ] && KSUVER="unknown"
+        echo "KSUVER=$KSUVER" >> "$GITHUB_ENV"
         cd ..
-        
-        echo "CONFIG_KPM=y"              >> common/arch/arm64/configs/gki_defconfig        
-        
-        echo "✅ ReSukiSU added (commit: ${KSU_COMMIT_SHA:0:8})"
+    
+        if [ "${{ inputs.kpm_mode }}" = "KPM" ]; then
+          echo "CONFIG_KPM=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "✅ CONFIG_KPM enabled (KPM)"
+        else
+          echo "CONFIG_KPM=n" >> common/arch/arm64/configs/gki_defconfig
+          echo "✅ CONFIG_KPM disabled (KPN)"
+        fi
+    
+        echo "✅ ReSukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version: $KSUVER)"
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
@@ -785,17 +812,28 @@ runs:
         echo "✅ ReSukiSU hooks applied"
         echo "::endgroup::"
 
-    - name: Add ReSukiSU and SUSFS Configuration Settings
+    - name: Add ReSukiSU Base Configuration Settings
       shell: bash
       run: |
         set -euo pipefail
-        echo "Add ReSukiSU and SUSFS Configuration Settings"
+        echo "Add ReSukiSU Base Configuration Settings"
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
+        CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
+        CONFIG_TMPFS_XATTR=y
+        CONFIG_TMPFS_POSIX_ACL=y
+        EOF
+    
+    - name: Add SUSFS Configuration Settings
+      if: ${{ env.OP_SUSFS == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Add SUSFS Configuration Settings"
+        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_KSU_SUSFS=y
         CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-        CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
         CONFIG_KSU_SUSFS_SUS_PATH=y
         CONFIG_KSU_SUSFS_SUS_MOUNT=y
         CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
@@ -811,8 +849,6 @@ runs:
         CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         CONFIG_KSU_SUSFS_SUS_MAP=y
         CONFIG_KSU_SUSFS_SUS_SU=n
-        CONFIG_TMPFS_XATTR=y
-        CONFIG_TMPFS_POSIX_ACL=y
         EOF
 
     - name: Add BBR
@@ -913,6 +949,8 @@ runs:
         echo "ksu_type=ReSukiSU" >> "$GITHUB_OUTPUT"
         if [ "${{ env.OP_SUSFS }}" = true ]; then
           echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
+        else
+          echo "susfs_version=disabled" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Customize Kernel Branding
@@ -975,11 +1013,6 @@ runs:
         export KBUILD_BUILD_HOST="${BUILD_HOST:-kleaf}"
         export KBUILD_BUILD_VERSION=1
         
-        echo "📅 Build timestamp: $KBUILD_BUILD_TIMESTAMP (from commit $COMMIT_HASH)"
-        echo "🔢 SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
-        echo "👤 Build user: $KBUILD_BUILD_USER"
-        echo "🖥️  Build host: $KBUILD_BUILD_HOST"
-        
         export CC="ccache clang"
         export CXX="ccache clang++"
         export HOSTCC="ccache clang"
@@ -999,37 +1032,10 @@ runs:
         fi
         
         if [ "${{ inputs.clean }}" = "true" ]; then
-          echo "🧹 Clean build mode - ccache disabled"
           export CCACHE_DISABLE=1
-        else
-          echo "🚀 ccache-accelerated build"
         fi
         OUT=out
         mkdir -p "$OUT"
-        
-        echo "============================================"
-        echo "🔍 Compiler & ccache Verification"
-        echo "============================================"
-        echo "PATH: ${PATH:0:200}..."
-        echo "which clang: $(which clang)"
-        echo "CC: $CC"
-        echo "CXX: $CXX"
-        echo "CCACHE_BASEDIR: ${CCACHE_BASEDIR:-not set}"
-        echo ""
-        
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          echo "ccache wrapper test:"
-          clang --version 2>&1 | head -n1 || true
-          echo ""
-          echo "ccache configuration:"
-          ccache -p | grep -E "(compression|direct_mode|readonly_direct|depend|sloppiness)" || true
-          echo ""
-          echo "ccache pre-build status:"
-          ccache -s | head -n 20
-        else
-          echo "⚠️ Clean build - ccache bypassed"
-        fi
-        echo "============================================"
         
         make O="$OUT" gki_defconfig
         
@@ -1075,7 +1081,6 @@ runs:
             ;;
         esac
 
-        # Disable KUNIT tests
         disable_list=(
           CONFIG_REGMAP_KUNIT
           CONFIG_INPUT_KUNIT_TEST
@@ -1099,44 +1104,9 @@ runs:
         KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
         
-        echo "============================================"
-        echo "🔧 Build Configuration"
-        echo "============================================"
-        echo "Device: ${OP_MODEL}"
-        echo "Kernel: ${KERNEL_FULL_VER}"
-        echo "KSU Type: ReSukiSU"
-        echo "Threads: $(nproc --all)"
-        echo "Optimization: ${{ inputs.optimize_level }}"
-        echo "KCFLAGS: ${KCFLAGS:0:150}..."
-        echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
-        echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
-        echo "Workspace: $WORKSPACE"
-        
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          echo "ccache: ENABLED"
-          echo "  Dir: $CCACHE_DIR"
-          echo "  Base: $CCACHE_BASEDIR"
-          echo "  Max size: $CCACHE_MAXSIZE"
-          echo "  Compression: zstd level 3"
-          echo "  Features: readonly_direct, file_clone, inode_cache, depend"
-        else
-          echo "ccache: DISABLED (clean build)"
-        fi
-        echo "============================================"
-        
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          if [ ! -d "$CCACHE_DIR" ] || [ -z "$(find "$CCACHE_DIR" -type f 2>/dev/null | head -n1)" ]; then
-            echo "🔥 Priming cache with header preprocessing..."
-            make -C "$COMMON_KERNEL_FOLDER" O="$OUT" headers_install prepare 2>&1 | head -n 20 || true
-            echo ""
-          fi
-        fi
-        
         BUILD_START=$(date +%s)
         set -o pipefail
-        
         make -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" 2>&1 | tee build.log
-        
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
         
@@ -1147,28 +1117,8 @@ runs:
         IMG="$OUT/arch/arm64/boot/Image"
         if [ ! -f "$IMG" ]; then
           echo "::error::Kernel Image missing"
-          echo "::group::Last 100 lines of build log"
-          tail -n 100 build.log || echo "Build log not available"
-          echo "::endgroup::"
           exit 1
         fi
-        
-        IMG_SIZE=$(stat -c%s "$IMG")
-        
-        echo "============================================"
-        echo "✅ Build Completed Successfully"
-        echo "============================================"
-        echo "Duration: $((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
-        echo "Image: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
-        
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          echo ""
-          echo "📊 ccache Post-Build Statistics"
-          echo "============================================"
-          ccache -s
-        fi
-        echo "============================================"
-        echo "::endgroup::"
 
     - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
@@ -1176,29 +1126,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::ccache final statistics"
-        
         export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-        
-        echo "ccache Statistics"
-        ccache -s
-        
         STATS="$(ccache -s)"
         
-        CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ {
-          match($0, /[0-9]+/);
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        HITS=$(echo "$STATS" | awk '/^[[:space:]]*Hits:/ {
-          match($0, /[0-9]+/);
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
-        
-        DIRECT=$(echo "$STATS" | awk '/Direct:/ {
-          match($0, /[0-9]+/);
-          print substr($0, RSTART, RLENGTH)
-        }' | head -n1)
+        CACHEABLE=$(echo "$STATS" | awk '/Cacheable calls:/ { match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH) }' | head -n1)
+        HITS=$(echo "$STATS" | awk '/^[[:space:]]*Hits:/ { match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH) }' | head -n1)
+        DIRECT=$(echo "$STATS" | awk '/Direct:/ { match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH) }' | head -n1)
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
           HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
@@ -1210,21 +1143,12 @@ runs:
         
         echo "hit_rate=${HIT_RATE}%" >> "$GITHUB_OUTPUT"
         echo "direct_rate=${DIRECT_RATE}%" >> "$GITHUB_OUTPUT"
-        
-        echo "::endgroup::"
-        
-        echo "## 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        ccache -s >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
 
     - name: Collect Build Stats / Validate Image
       id: collect_stats
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Collect Build stats"
         IMG="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
         
         if [ -f "$KERNEL_PLATFORM_FOLDER/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image" ]; then
@@ -1262,18 +1186,44 @@ runs:
         BUILD_TIME="${BUILD_TIME:-0}"
         
         KERNEL_UNAME=$(strings "$IMG" | grep -E 'Linux version.*#' | tail -n1)
-        echo "Kernel Uname: $KERNEL_UNAME"
         echo "KERNEL_UNAME=$KERNEL_UNAME" >> "$GITHUB_ENV"
         
         printf 'warnings_count=%s\n' "$WARNINGS_COUNT" >> "$GITHUB_OUTPUT"
         printf 'image_sha256=%s\n' "$IMG_SHA256" >> "$GITHUB_OUTPUT"
         printf 'build_time=%s\n' "$BUILD_TIME" >> "$GITHUB_OUTPUT"
-        
-        echo "✅ Validation passed:"
-        echo "   - Warnings: $WARNINGS_COUNT"
-        echo "   - Image size: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
-        echo "   - SHA256: $IMG_SHA256"
-        echo "   - Build time: ${BUILD_TIME}s"
+
+    - name: Apply KPM patch_linux to Image
+      if: ${{ inputs.kpm_mode == 'KPM' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply KPM patch_linux"
+
+        IMAGE_PATH="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
+        if [ -f "$KERNEL_PLATFORM_FOLDER/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image" ]; then
+          IMAGE_PATH="$KERNEL_PLATFORM_FOLDER/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image"
+        elif [ -f "$KERNEL_PLATFORM_FOLDER/bazel-bin/common/kernel_aarch64/Image" ]; then
+          IMAGE_PATH="$KERNEL_PLATFORM_FOLDER/bazel-bin/common/kernel_aarch64/Image"
+        fi
+        [ -f "$IMAGE_PATH" ] || { echo "::error::Built Image not found at: $IMAGE_PATH"; exit 1; }
+
+        cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
+
+        cd "$GITHUB_WORKSPACE"
+        [ -d "SukiSU_patch" ] || git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+        PATCH_LINUX="$GITHUB_WORKSPACE/SukiSU_patch/kpm/patch_linux"
+        [ -f "$PATCH_LINUX" ] || { echo "::error::patch_linux not found"; exit 1; }
+
+        chmod +x "$PATCH_LINUX"
+        cd "$AK3_FOLDER"
+        cp "$PATCH_LINUX" .
+        ./patch_linux
+
+        [ -f oImage ] || { echo "::error::oImage not generated by patch_linux"; exit 1; }
+        mv -f oImage Image
+        rm -f patch_linux
+
+        echo "✅ KPM patch applied and Image replaced"
         echo "::endgroup::"
 
     - name: Create Kernel ZIP
@@ -1296,18 +1246,18 @@ runs:
           exit 1
         fi
         
-        cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
+        if [ "${{ inputs.kpm_mode }}" != "KPM" ]; then
+          cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
+        fi
         cd "$AK3_FOLDER"
         
-        # ✅ ZIP name uses ReSukiSU label
+        KPM_TAG="${{ inputs.kpm_mode }}"
         if [ "${{ env.OP_SUSFS }}" = true ]; then
-          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_ReSukiSU_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_ReSukiSU_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}_${KPM_TAG}.zip"
         else
-          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_ReSukiSU_${KSUVER:-unknown}.zip"
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_ReSukiSU_${KSUVER:-unknown}_${KPM_TAG}.zip"
         fi
         mkdir -p "$ARTIFACTS_FOLDER"
-        
-        echo "Creating flashable ZIP: $ZIP_NAME"
         
         if ! zip -r9 "$ZIP_NAME" ./* \
              -x "*.git*" \
@@ -1324,17 +1274,8 @@ runs:
           ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" \
           -delete
         
-        ZIP_SIZE=$(stat -c%s "$ARTIFACTS_FOLDER/$ZIP_NAME")
-        ZIP_SHA256=$(sha256sum "$ARTIFACTS_FOLDER/$ZIP_NAME" | awk '{print $1}')
-        
         echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
         echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-        
-        echo ""
-        echo "✅ Kernel ZIP created successfully"
-        echo "   Name: $ZIP_NAME"
-        echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
-        echo "   SHA256: $ZIP_SHA256"
         echo "::endgroup::"
 
     - name: Final Build Summary
@@ -1356,6 +1297,7 @@ runs:
           echo "Build Host: ${{ env.BUILD_HOST }}"
           echo "ReSukiSU Version: ${KSUVER:-unknown}"
           echo "ReSukiSU commit SHA: ${KSU_SHA}"
+          echo "KPM Mode: ${{ inputs.kpm_mode }}"
           if [ "${{ env.OP_SUSFS }}" = true ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
             echo "SUSFS Branch: ${{ env.SUSFS_BRANCH_NAME }}"
@@ -1363,16 +1305,7 @@ runs:
           fi
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Clean Build: ${{ inputs.clean }}"
-          echo ""
-          echo "=== OnePlus Features ==="
-          echo "BBR: ${{ env.OP_BBR }}"
-          echo "BBG: ${{ env.OP_BBG }}"
-          echo "Hmbird: ${{ env.OP_HMBIRD }}"
-          echo "TTL: ${{ env.OP_TTL }}"
-          echo "IP_SET: ${{ env.OP_IP_SET }}"
-          echo ""
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
-          echo "Compiler: ${CLANG_VERSION:-unknown}"
           echo "Warnings Count: ${{ steps.collect_stats.outputs.warnings_count }}"
           echo "Build Time: ${{ steps.collect_stats.outputs.build_time }}s"
           if [ "${{ inputs.clean }}" != "true" ]; then
@@ -1382,65 +1315,6 @@ runs:
             echo "ccache: Disabled (clean build)"
           fi
         } | tee summary.txt
-        
-        {
-          echo "### 🎯 Kernel Build Summary"
-          echo ""
-          echo "| Metric | Value |"
-          echo "|--------|-------|"
-          echo "| **Model** | ${{ env.OP_MODEL }} |"
-          echo "| **OS Version** | ${{ env.OP_OS_VERSION }} |"
-          echo "| **Kernel Version** | ${{ steps.save_metadata.outputs.kernel_version }} |"
-          echo "| **Kernel Uname** | \`${{ env.KERNEL_UNAME }}\` |"
-          echo "| **Build User** | ${{ env.BUILD_USER }} |"
-          echo "| **Build Host** | ${{ env.BUILD_HOST }} |"
-          echo "| **ReSukiSU Version** | ${KSUVER:-unknown} |"
-          
-          if [ "$KSU_SHA" != "unknown" ]; then
-            echo "| **ReSukiSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/ReSukiSU/ReSukiSU/commit/$KSU_SHA) |"
-          else
-            echo "| **ReSukiSU Commit** | unknown |"
-          fi
-          
-          if [ "${{ env.OP_SUSFS }}" = true ]; then
-            echo "| **SUSFS Version** | ${SUSVER:-unknown} |"
-            echo "| **SUSFS Branch** | \`${{ env.SUSFS_BRANCH_NAME }}\` |"
-            if [ "$SUSFS_SHA" != "unknown" ]; then
-              echo "| **SUSFS Commit** | [\`${SUSFS_SHA:0:8}\`](https://gitlab.com/simonpunk/susfs4ksu/-/commit/$SUSFS_SHA) |"
-            else
-              echo "| **SUSFS Commit** | unknown |"
-            fi
-          fi
-          
-          echo ""
-          echo "### 🔧 OnePlus Features"
-          echo ""
-          echo "| Feature | Status |"
-          echo "|---------|--------|"
-          echo "| **BBR** | ${{ env.OP_BBR }} |"
-          echo "| **BBG** | ${{ env.OP_BBG }} |"
-          echo "| **Hmbird** | ${{ env.OP_HMBIRD }} |"
-          echo "| **TTL** | ${{ env.OP_TTL }} |"
-          echo "| **IP_SET** | ${{ env.OP_IP_SET }} |"
-          
-          echo ""
-          echo "### 📊 Build Metrics"
-          echo ""
-          echo "| Metric | Value |"
-          echo "|--------|-------|"
-          echo "| **Optimization** | ${{ inputs.optimize_level }} |"
-          echo "| **Clean Build** | ${{ inputs.clean }} |"
-          echo "| **Build Time** | ${{ steps.collect_stats.outputs.build_time }}s |"
-          
-          if [ "${{ inputs.clean }}" != "true" ]; then
-            echo "| **ccache Hit Rate** | ${{ steps.ccache_stats.outputs.hit_rate }} |"
-            echo "| **ccache Direct Rate** | ${{ steps.ccache_stats.outputs.direct_rate }} |"
-          fi
-          
-          echo "| **Image SHA256** | \`${{ steps.collect_stats.outputs.image_sha256 }}\` |"
-          echo "| **Warnings** | ${{ steps.collect_stats.outputs.warnings_count }} |"
-          echo "| **Compiler** | \`${CLANG_VERSION:-unknown}\` |"
-        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
