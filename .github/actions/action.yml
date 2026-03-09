@@ -1226,6 +1226,33 @@ runs:
         echo "✅ KPM patch applied and Image replaced"
         echo "::endgroup::"
 
+    - name: Download Latest SUSFS Module from CI      
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+          jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+
+        if [ -z "$LATEST_RUN_ID" ] || [ "$LATEST_RUN_ID" = "null" ]; then
+          echo "No successful run found for branch v1.5.2+"
+          exit 0
+        fi
+
+        ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+          "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | \
+          jq -r '.artifacts[0].archive_download_url')
+
+        if [ -n "$ARTIFACT_URL" ] && [ "$ARTIFACT_URL" != "null" ]; then
+          curl -L -H "Authorization: Bearer ${{ github.token }}" \
+            -o "$AK3_FOLDER/ksu_module_susfs_1.5.2+_CI.zip" "$ARTIFACT_URL"
+          echo "✅ SUSFS module CI artifact downloaded to AnyKernel3"
+        else
+          echo "Failed to fetch artifact URL"
+        fi
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -1298,6 +1325,11 @@ runs:
           echo "ReSukiSU Version: ${KSUVER:-unknown}"
           echo "ReSukiSU commit SHA: ${KSU_SHA}"
           echo "KPM Mode: ${{ inputs.kpm_mode }}"
+          if [ -f "$AK3_FOLDER/ksu_module_susfs_1.5.2+_CI.zip" ]; then
+            echo "SUSFS CI module: included"
+          else
+            echo "SUSFS CI module: not included"
+          fi
           if [ "${{ env.OP_SUSFS }}" = true ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
             echo "SUSFS Branch: ${{ env.SUSFS_BRANCH_NAME }}"
