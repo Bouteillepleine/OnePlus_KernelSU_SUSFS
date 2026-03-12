@@ -596,15 +596,12 @@ runs:
     
           for ((i=1;i<=attempts;i++)); do
             echo "Attempt $i/$attempts cloning $url ($branch)"
-    
             rm -rf "$dir"
-    
             if [ "$depth" = "0" ]; then
               git clone --branch "$branch" "$url" "$dir" && return 0
             else
               git clone --depth "$depth" --branch "$branch" "$url" "$dir" && return 0
             fi
-    
             sleep $((i*5))
           done
     
@@ -614,6 +611,10 @@ runs:
     
         retry_clone "https://github.com/Bouteillepleine/AnyKernel3.git" "$ANYKERNEL_BRANCH"
         retry_clone "https://github.com/TheWildJames/kernel_patches.git"
+        retry_clone "https://github.com/Enginex0/Super-Builders.git" "main"
+    
+        # Expose Super-Builders patches directory
+        echo "SUPER_BUILDERS_PATCHES=$GITHUB_WORKSPACE/Super-Builders/android16-6.12/ReSukiSU/patches" >> "$GITHUB_ENV"
     
         echo "Dependencies cloned successfully"
         echo "::endgroup::"
@@ -663,6 +664,74 @@ runs:
         fi
     
         echo "✅ ReSukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version: $KSUVER)"
+        echo "::endgroup::"
+
+    - name: Apply Super-Builders SUSFS Patches (android16-6.12)
+      if: ${{ env.OP_SUSFS == 'true' && env.KERNEL_VER == '6.12' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply Super-Builders SUSFS patches for android16-6.12"
+        cd "$COMMON_KERNEL_FOLDER"
+
+        SUSFS_REF="${{ inputs.susfs_commit_hash_or_branch }}"
+        [ -z "$SUSFS_REF" ] && SUSFS_REF="gki-$ANDROID_VER-$KERNEL_VER"
+
+        # 50_ — upstream SUSFS integration
+        PATCH_50="$SUPER_BUILDERS_PATCHES/50_add_susfs_in_gki-android16-6.12.patch"
+        if [ -f "$PATCH_50" ]; then
+          echo "Applying 50_add_susfs_in_gki-android16-6.12.patch..."
+          patch -p1 -F 3 < "$PATCH_50"
+          echo "✅ 50_ SUSFS upstream patch applied"
+        else
+          echo "::error::Patch not found: $PATCH_50"
+          exit 1
+        fi
+
+        # 51_ — enhanced SUSFS (no UID_GATED_HIDING)
+        PATCH_51="$SUPER_BUILDERS_PATCHES/51_enhanced_susfs-android16-6.12.patch"
+        if [ -f "$PATCH_51" ]; then
+          echo "Applying 51_enhanced_susfs-android16-6.12.patch..."
+          patch -p1 -F 3 < "$PATCH_51"
+          echo "✅ 51_ enhanced SUSFS patch applied"
+        else
+          echo "::warning::51_ enhanced patch not found, skipping: $PATCH_51"
+        fi
+
+        echo "::endgroup::"
+
+    - name: Apply Super-Builders ZeroMount + KSU Safety Patches (android16-6.12)
+      if: ${{ env.KERNEL_VER == '6.12' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply ZeroMount + KSU Safety patches for android16-6.12"
+        cd "$COMMON_KERNEL_FOLDER"
+
+        # 60_ — ZeroMount (skip recursive mkdir when path already exists)
+        if [ "${{ inputs.add_zeromount }}" = "true" ]; then
+          PATCH_60="$SUPER_BUILDERS_PATCHES/60_zeromount-android16-6.12.patch"
+          if [ -f "$PATCH_60" ]; then
+            echo "Applying 60_zeromount-android16-6.12.patch..."
+            patch -p1 -F 3 < "$PATCH_60"
+            echo "✅ 60_ ZeroMount patch applied"
+          else
+            echo "::warning::ZeroMount patch not found, skipping: $PATCH_60"
+          fi
+        else
+          echo "⏭️ ZeroMount disabled via input, skipping 60_"
+        fi
+
+        # 70_ — KSU Safety / ReSukiSU 6.12
+        PATCH_70="$SUPER_BUILDERS_PATCHES/70_ksu_safety-resukisu-6.12.patch"
+        if [ -f "$PATCH_70" ]; then
+          echo "Applying 70_ksu_safety-resukisu-6.12.patch..."
+          patch -p1 -F 3 < "$PATCH_70"
+          echo "✅ 70_ KSU Safety patch applied"
+        else
+          echo "::warning::KSU Safety patch not found, skipping: $PATCH_70"
+        fi
+
         echo "::endgroup::"
 
     - name: Detect SUSFS Version
