@@ -326,6 +326,22 @@ runs:
         SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU"
         mkdir -p "$ARTIFACTS_DIR"
+
+        
+        AFDO_PATH_1="$COMMON_KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
+        AFDO_PATH_2="$COMMON_KERNEL_DIR/gki/aarch64/afdo/kernel.afdo"
+        
+        # Check which one exists
+        if [ -f "$AFDO_PATH_1" ]; then
+            AFDO_PROFILE="$AFDO_PATH_1"
+        elif [ -f "$AFDO_PATH_2" ]; then
+            AFDO_PROFILE="$AFDO_PATH_2"
+        else
+            echo "ERROR: AFDO profile not found!"
+            echo "  Tried: $AFDO_PATH_1"
+            echo "  Tried: $AFDO_PATH_2"
+            exit 1
+        fi
         
         echo "CONFIG_FOLDER=$CONFIG_DIR" >> "$GITHUB_ENV"
         echo "ARTIFACTS_FOLDER=$ARTIFACTS_DIR" >> "$GITHUB_ENV"
@@ -336,6 +352,7 @@ runs:
         echo "KERNEL_PATCHES_FOLDER=$KERNEL_PATCHES_DIR" >> "$GITHUB_ENV"
         echo "SUSFS_FOLDER=$SUSFS_DIR" >> "$GITHUB_ENV"
         echo "KSU_FOLDER=$KSU_DIR" >> "$GITHUB_ENV"
+        echo "AFDO_PROFILE_PATH=$AFDO_PROFILE" >> "$GITHUB_ENV"
 
     - name: Get Kernel Version Info
       shell: bash
@@ -994,6 +1011,12 @@ runs:
         
         export KCFLAGS="${KCFLAGS:-} $MAP $MPMAP $FPMAP -no-canonical-prefixes -fdiagnostics-color=never -Qunused-arguments -Wno-unused-command-line-argument -D__ANDROID_COMMON_KERNEL__"
         export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
+        
+        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+        CONFIG_AUTOFDO_CLANG=y
+        EOF
+        
+        export CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE_PATH"
         
         export LLVM=1 LLVM_IAS=1
         export ARCH=arm64 SUBARCH=arm64
