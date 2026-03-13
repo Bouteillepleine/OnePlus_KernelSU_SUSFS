@@ -780,17 +780,31 @@ runs:
     
         PATCH_REPO_DIR="$GITHUB_WORKSPACE/Super-Builders"
         PATCH_BASE="$PATCH_REPO_DIR/${ANDROID_VER}-${KERNEL_VER}/ReSukiSU/patches"
+        PATCH_SUFFIX="${ANDROID_VER}-${KERNEL_VER}"
     
         echo "Cloning Super-Builders patch repository..."
         rm -rf "$PATCH_REPO_DIR"
-        git clone --depth=1 https://github.com/Enginex0/Super-Builders.git "$PATCH_REPO_DIR"
+
+        success=false
+        for i in 1 2 3; do
+          if git clone --depth=1 https://github.com/Enginex0/Super-Builders.git "$PATCH_REPO_DIR"; then
+            success=true
+            break
+          fi
+          echo "⚠️ Clone attempt $i failed, retrying..."
+          rm -rf "$PATCH_REPO_DIR"
+          sleep 5
+        done
+        $success || { echo "::error::Failed to clone Super-Builders"; exit 1; }
     
         cd "$COMMON_KERNEL_FOLDER"
     
-        ENHANCED_PATCH="$PATCH_BASE/51_enhanced_susfs-${SUSFS_KERNEL_BRANCH}.patch"
-        ZEROMOUNT_PATCH="$PATCH_BASE/60_zeromount-${SUSFS_KERNEL_BRANCH}.patch"
+        ENHANCED_PATCH="$PATCH_BASE/51_enhanced_susfs-${PATCH_SUFFIX}.patch"
+        ZEROMOUNT_PATCH="$PATCH_BASE/60_zeromount-${PATCH_SUFFIX}.patch"
     
         echo "Patch base: $PATCH_BASE"
+        echo "Enhanced patch: $ENHANCED_PATCH"
+        echo "ZeroMount patch: $ZEROMOUNT_PATCH"
     
         if [ -f "$ENHANCED_PATCH" ]; then
           echo "Applying enhanced SUSFS patch: $(basename "$ENHANCED_PATCH")"
@@ -804,6 +818,13 @@ runs:
           if [ -f "$ZEROMOUNT_PATCH" ]; then
             echo "Applying ZeroMount patch: $(basename "$ZEROMOUNT_PATCH")"
             patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_PATCH"
+            cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+            CONFIG_ZEROMOUNT=y
+            CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=n
+            CONFIG_KSU_SUSFS_UNICODE_FILTER=n
+            CONFIG_KSU_SUSFS_HIDDEN_NAME=n
+            CONFIG_KSU_SUSFS_HARDENED=n
+            EOF
             echo "✅ ZeroMount patch applied"
           else
             echo "::error::ZeroMount requested but patch not found: $ZEROMOUNT_PATCH"
