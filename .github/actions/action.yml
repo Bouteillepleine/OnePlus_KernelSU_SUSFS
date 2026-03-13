@@ -691,16 +691,15 @@ runs:
         echo "::endgroup::"
 
     - name: Clone and Apply ReSukiSU SUSFS Addon Patches
-      shell: bash      
+      shell: bash
+      if: ${{ env.OP_SUSFS == 'true' }}
       run: |
         set -euo pipefail
         echo "::group::Clone and Apply ReSukiSU SUSFS Addon Patches"
-    
+
         PATCH_REPO_DIR="$GITHUB_WORKSPACE/Super-Builders"
-        PATCH_BASE="$PATCH_REPO_DIR/${ANDROID_VER}-${KERNEL_VER}/ReSukiSU/patches"
-        PATCH_SUFFIX="${ANDROID_VER}-${KERNEL_VER}"
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
-    
+
         echo "Cloning Super-Builders patch repository..."
         rm -rf "$PATCH_REPO_DIR"
 
@@ -715,80 +714,82 @@ runs:
           sleep 5
         done
         $success || { echo "::error::Failed to clone Super-Builders"; exit 1; }
-    
-        cd "$COMMON_KERNEL_FOLDER"
-    
-        CORE_PATCH_SB="$PATCH_BASE/50_add_susfs_in_gki-${PATCH_SUFFIX}.patch"
-        ENHANCED_PATCH="$PATCH_BASE/51_enhanced_susfs-${PATCH_SUFFIX}.patch"
-        ZEROMOUNT_PATCH="$PATCH_BASE/60_zeromount-${PATCH_SUFFIX}.patch"
+
+        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
+        if [ ! -d "$PATCH_REPO_DIR/$VERSION_DIR" ]; then
+          case "$KERNEL_VER" in
+            5.4) VERSION_DIR="android12-5.4" ;;
+            5.10) VERSION_DIR="android12-5.10" ;;
+            5.15) VERSION_DIR="android13-5.15" ;;
+            6.1) VERSION_DIR="android14-6.1" ;;
+            6.6) VERSION_DIR="android15-6.6" ;;
+            6.12) VERSION_DIR="android16-6.12" ;;
+            *)
+              echo "::error::No patch directory for kernel $KERNEL_VER"
+              exit 1
+              ;;
+          esac
+          echo "::notice::Mapped ${ANDROID_VER}-${KERNEL_VER} -> ${VERSION_DIR}"
+        fi
+
+        PATCH_BASE="$PATCH_REPO_DIR/$VERSION_DIR/ReSukiSU/patches"
+        GKI_TAG="$VERSION_DIR"
+
+        CORE_PATCH="$PATCH_BASE/50_add_susfs_in_gki-${GKI_TAG}.patch"
+        ENHANCED_PATCH="$PATCH_BASE/51_enhanced_susfs-${GKI_TAG}.patch"
+        ZEROMOUNT_PATCH="$PATCH_BASE/60_zeromount-${GKI_TAG}.patch"
         SAFETY_PATCH="$PATCH_BASE/70_ksu_safety-resukisu-${KERNEL_VER}.patch"
-    
+
         echo "Patch base: $PATCH_BASE"
-        echo "Core patch (SB): $CORE_PATCH_SB"
+        echo "Core patch: $CORE_PATCH"
         echo "Enhanced patch: $ENHANCED_PATCH"
         echo "ZeroMount patch: $ZEROMOUNT_PATCH"
         echo "Safety patch: $SAFETY_PATCH"
 
-        if [ "${{ inputs.use_sb_susfs_core_patch }}" = "true" ]; then
-          if [ -f "$CORE_PATCH_SB" ]; then
-            echo "Applying Super-Builders SUSFS core patch: $(basename "$CORE_PATCH_SB")"
-            patch -p1 -F3 --no-backup-if-mismatch < "$CORE_PATCH_SB"
-            echo "✅ Super-Builders SUSFS core patch applied"
-          else
-            echo "::error::Requested Super-Builders core patch not found: $CORE_PATCH_SB"
-            exit 1
-          fi
-        else
-          echo "ℹ️ Super-Builders core SUSFS patch disabled (using susfs4ksu core patch)"
-        fi
-    
-        if [ -f "$ENHANCED_PATCH" ]; then
-          echo "Applying enhanced SUSFS patch: $(basename "$ENHANCED_PATCH")"
-          patch -p1 -F3 --no-backup-if-mismatch < "$ENHANCED_PATCH"
-          echo "✅ Enhanced SUSFS patch applied"
-        else
-          echo "ℹ️ Enhanced SUSFS patch not found, skipping: $ENHANCED_PATCH"
-        fi
-    
-        if [ "${{ inputs.add_zeromount }}" = "true" ]; then
-          if [ -f "$ZEROMOUNT_PATCH" ]; then
-            echo "Applying ZeroMount patch: $(basename "$ZEROMOUNT_PATCH")"
-            patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_PATCH"
+        [ -f "$CORE_PATCH" ] || { echo "::error::Core patch not found: $CORE_PATCH"; exit 1; }
+        [ -f "$ENHANCED_PATCH" ] || { echo "::error::Enhanced patch not found: $ENHANCED_PATCH"; exit 1; }
+        [ -f "$ZEROMOUNT_PATCH" ] || { echo "::error::ZeroMount patch not found: $ZEROMOUNT_PATCH"; exit 1; }
 
-            sed -i \
-              -e '/^CONFIG_ZEROMOUNT=/d' \
-              -e '/^CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=/d' \
-              -e '/^CONFIG_KSU_SUSFS_UNICODE_FILTER=/d' \
-              -e '/^CONFIG_KSU_SUSFS_HIDDEN_NAME=/d' \
-              -e '/^CONFIG_KSU_SUSFS_HARDENED=/d' \
-              "$DEFCONFIG"
+        cd "$COMMON_KERNEL_FOLDER"
 
-            cat >> "$DEFCONFIG" <<EOF
-            CONFIG_ZEROMOUNT=y
-            CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=n
-            CONFIG_KSU_SUSFS_UNICODE_FILTER=n
-            CONFIG_KSU_SUSFS_HIDDEN_NAME=n
-            CONFIG_KSU_SUSFS_HARDENED=n
-            EOF
-            echo "✅ ZeroMount patch applied"
-          else
-            echo "::error::ZeroMount requested but patch not found: $ZEROMOUNT_PATCH"
-            exit 1
-          fi
-        else
-          echo "ℹ️ ZeroMount disabled"
-        fi
+        echo "Applying core SUSFS patch: $(basename "$CORE_PATCH")"
+        patch -p1 -F3 --no-backup-if-mismatch < "$CORE_PATCH"
+        echo "✅ Core SUSFS patch applied"
+
+        echo "Applying enhanced SUSFS patch: $(basename "$ENHANCED_PATCH")"
+        patch -p1 -F3 --no-backup-if-mismatch < "$ENHANCED_PATCH"
+        echo "✅ Enhanced SUSFS patch applied"
+
+        echo "Applying ZeroMount patch: $(basename "$ZEROMOUNT_PATCH")"
+        patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_PATCH"
+
+        sed -i \
+          -e '/^CONFIG_ZEROMOUNT=/d' \
+          -e '/^CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=/d' \
+          -e '/^CONFIG_KSU_SUSFS_UNICODE_FILTER=/d' \
+          -e '/^CONFIG_KSU_SUSFS_HIDDEN_NAME=/d' \
+          -e '/^CONFIG_KSU_SUSFS_HARDENED=/d' \
+          "$DEFCONFIG"
+
+        cat >> "$DEFCONFIG" <<EOF
+        CONFIG_ZEROMOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=n
+        CONFIG_KSU_SUSFS_UNICODE_FILTER=n
+        CONFIG_KSU_SUSFS_HIDDEN_NAME=n
+        CONFIG_KSU_SUSFS_HARDENED=n
+        EOF
+        echo "✅ ZeroMount patch applied"
 
         if [ -f "$SAFETY_PATCH" ]; then
           echo "Applying KSU safety patch: $(basename "$SAFETY_PATCH")"
+          cd "$KSU_FOLDER"
           patch -p1 -F3 --no-backup-if-mismatch < "$SAFETY_PATCH"
           echo "✅ KSU safety patch applied"
         else
-          echo "ℹ️ KSU safety patch not found, skipping: $SAFETY_PATCH"
+          echo "ℹ️ No KSU safety patch found, skipping"
         fi
-    
-        echo "::endgroup::"
 
+        echo "::endgroup::"
             
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
