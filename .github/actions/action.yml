@@ -770,8 +770,51 @@ runs:
         fi
 
         echo "✅ SUSFS patches applied"
-        echo "::endgroup::"
+        echo "::endgroup::"        
 
+    - name: Clone and Apply ReSukiSU SUSFS Addon Patches
+      shell: bash      
+      run: |
+        set -euo pipefail
+        echo "::group::Clone and Apply ReSukiSU SUSFS Addon Patches"
+    
+        PATCH_REPO_DIR="$GITHUB_WORKSPACE/Super-Builders"
+        PATCH_BASE="$PATCH_REPO_DIR/${ANDROID_VER}-${KERNEL_VER}/ReSukiSU/patches"
+    
+        echo "Cloning Super-Builders patch repository..."
+        rm -rf "$PATCH_REPO_DIR"
+        git clone --depth=1 https://github.com/Enginex0/Super-Builders.git "$PATCH_REPO_DIR"
+    
+        cd "$COMMON_KERNEL_FOLDER"
+    
+        ENHANCED_PATCH="$PATCH_BASE/51_enhanced_susfs-${SUSFS_KERNEL_BRANCH}.patch"
+        ZEROMOUNT_PATCH="$PATCH_BASE/60_zeromount-${SUSFS_KERNEL_BRANCH}.patch"
+    
+        echo "Patch base: $PATCH_BASE"
+    
+        if [ -f "$ENHANCED_PATCH" ]; then
+          echo "Applying enhanced SUSFS patch: $(basename "$ENHANCED_PATCH")"
+          patch -p1 -F3 --no-backup-if-mismatch < "$ENHANCED_PATCH"
+          echo "✅ Enhanced SUSFS patch applied"
+        else
+          echo "ℹ️ Enhanced SUSFS patch not found, skipping: $ENHANCED_PATCH"
+        fi
+    
+        if [ "${{ inputs.add_zeromount }}" = "true" ]; then
+          if [ -f "$ZEROMOUNT_PATCH" ]; then
+            echo "Applying ZeroMount patch: $(basename "$ZEROMOUNT_PATCH")"
+            patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_PATCH"
+            echo "✅ ZeroMount patch applied"
+          else
+            echo "::error::ZeroMount requested but patch not found: $ZEROMOUNT_PATCH"
+            exit 1
+          fi
+        else
+          echo "ℹ️ ZeroMount disabled"
+        fi
+    
+        echo "::endgroup::"
+            
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
       shell: bash
