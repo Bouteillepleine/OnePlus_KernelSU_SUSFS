@@ -690,88 +690,6 @@ runs:
         echo "✅ ReSukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version: $KSUVER)"
         echo "::endgroup::"
 
-    - name: Apply SUSFS Patches
-      shell: bash
-      if: ${{ env.OP_SUSFS == 'true' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Apply SUSFS patches"
-        cd "$KERNEL_PLATFORM_FOLDER"
-        echo "Applying SUSFS patches..."
-        cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/"
-        cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/"
-        
-        susfs_version=$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')
-        echo "SUSVER=$susfs_version" >> $GITHUB_ENV
-        echo "$susfs_version" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        echo "SusFS Version: $susfs_version"
-
-        cd "$COMMON_KERNEL_FOLDER"
-
-        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-          fi
-        fi
-
-        fake_patched=0
-        if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            echo "nr_subpages Line not found. Fake Patching!"
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-            fake_patched=1
-          fi
-          if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
-            sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-        fi
-        if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            fake_patched=1
-          fi
-          if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
-            sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
-          fi
-        fi
-        
-        patch -p1 < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
-        
-        if [ "$fake_patched" = 1 ]; then
-          if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
-            if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-              sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
-            fi
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android12" ] && [ "${{ env.KERNEL_VER }}" = "5.10" ]; then
-            if grep -qxF $'\t\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-            fi
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android13" ] && [ "${{ env.KERNEL_VER }}" = "5.15" ]; then
-            if grep -qxF $'\t\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-            fi
-          fi
-          if [ "${{ env.ANDROID_VER }}" = "android14" ] && [ "${{ env.KERNEL_VER }}" = "6.1" ]; then
-            if grep -qxF $'\t\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-            fi
-          fi
-        fi
-
-        echo "✅ SUSFS patches applied"
-        echo "::endgroup::"        
-
     - name: Clone and Apply ReSukiSU SUSFS Addon Patches
       shell: bash      
       run: |
@@ -781,6 +699,7 @@ runs:
         PATCH_REPO_DIR="$GITHUB_WORKSPACE/Super-Builders"
         PATCH_BASE="$PATCH_REPO_DIR/${ANDROID_VER}-${KERNEL_VER}/ReSukiSU/patches"
         PATCH_SUFFIX="${ANDROID_VER}-${KERNEL_VER}"
+        DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
     
         echo "Cloning Super-Builders patch repository..."
         rm -rf "$PATCH_REPO_DIR"
@@ -799,12 +718,29 @@ runs:
     
         cd "$COMMON_KERNEL_FOLDER"
     
+        CORE_PATCH_SB="$PATCH_BASE/50_add_susfs_in_gki-${PATCH_SUFFIX}.patch"
         ENHANCED_PATCH="$PATCH_BASE/51_enhanced_susfs-${PATCH_SUFFIX}.patch"
         ZEROMOUNT_PATCH="$PATCH_BASE/60_zeromount-${PATCH_SUFFIX}.patch"
+        SAFETY_PATCH="$PATCH_BASE/70_ksu_safety-resukisu-${KERNEL_VER}.patch"
     
         echo "Patch base: $PATCH_BASE"
+        echo "Core patch (SB): $CORE_PATCH_SB"
         echo "Enhanced patch: $ENHANCED_PATCH"
         echo "ZeroMount patch: $ZEROMOUNT_PATCH"
+        echo "Safety patch: $SAFETY_PATCH"
+
+        if [ "${{ inputs.use_sb_susfs_core_patch }}" = "true" ]; then
+          if [ -f "$CORE_PATCH_SB" ]; then
+            echo "Applying Super-Builders SUSFS core patch: $(basename "$CORE_PATCH_SB")"
+            patch -p1 -F3 --no-backup-if-mismatch < "$CORE_PATCH_SB"
+            echo "✅ Super-Builders SUSFS core patch applied"
+          else
+            echo "::error::Requested Super-Builders core patch not found: $CORE_PATCH_SB"
+            exit 1
+          fi
+        else
+          echo "ℹ️ Super-Builders core SUSFS patch disabled (using susfs4ksu core patch)"
+        fi
     
         if [ -f "$ENHANCED_PATCH" ]; then
           echo "Applying enhanced SUSFS patch: $(basename "$ENHANCED_PATCH")"
@@ -818,7 +754,16 @@ runs:
           if [ -f "$ZEROMOUNT_PATCH" ]; then
             echo "Applying ZeroMount patch: $(basename "$ZEROMOUNT_PATCH")"
             patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_PATCH"
-            cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+
+            sed -i \
+              -e '/^CONFIG_ZEROMOUNT=/d' \
+              -e '/^CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=/d' \
+              -e '/^CONFIG_KSU_SUSFS_UNICODE_FILTER=/d' \
+              -e '/^CONFIG_KSU_SUSFS_HIDDEN_NAME=/d' \
+              -e '/^CONFIG_KSU_SUSFS_HARDENED=/d' \
+              "$DEFCONFIG"
+
+            cat >> "$DEFCONFIG" <<EOF
             CONFIG_ZEROMOUNT=y
             CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=n
             CONFIG_KSU_SUSFS_UNICODE_FILTER=n
@@ -833,8 +778,17 @@ runs:
         else
           echo "ℹ️ ZeroMount disabled"
         fi
+
+        if [ -f "$SAFETY_PATCH" ]; then
+          echo "Applying KSU safety patch: $(basename "$SAFETY_PATCH")"
+          patch -p1 -F3 --no-backup-if-mismatch < "$SAFETY_PATCH"
+          echo "✅ KSU safety patch applied"
+        else
+          echo "ℹ️ KSU safety patch not found, skipping: $SAFETY_PATCH"
+        fi
     
         echo "::endgroup::"
+
             
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
