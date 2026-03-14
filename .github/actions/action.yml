@@ -669,12 +669,20 @@ runs:
         KSU_COMMIT_SHA="$(git rev-parse HEAD)"
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> "$GITHUB_ENV"
 
-        KSUVER="$(git describe --tags --always 2>/dev/null || true)"
-        if [ -z "$KSUVER" ]; then
-          KSUVER="$(grep -RhoE 'KSU_VERSION[[:space:]]*[:=][[:space:]]*"?[0-9A-Za-z._-]+' . 2>/dev/null \
-            | head -n1 | sed -E 's/.*[:=][[:space:]]*"?//')"
+        # ── Version code (integer) — 3 sources in priority order ──────
+        # Priority 1: flat "version" file (e.g. "11743")
+        if [ -f "version" ]; then
+          KSUVER="$(tr -d '[:space:]' < version)"
+        # Priority 2: #define KSU_VERSION in kernel/ksu.h
+        elif [ -f "kernel/ksu.h" ]; then
+          KSUVER="$(grep -E '#define KSU_VERSION\b' kernel/ksu.h \
+            | awk '{print $3}' | tr -d '[:space:]')"
+        # Priority 3: fallback — git describe (tag name, not a code)
+        else
+          KSUVER="$(git describe --tags --always 2>/dev/null || echo "unknown")"
         fi
         [ -z "$KSUVER" ] && KSUVER="unknown"
+
         echo "KSUVER=$KSUVER" >> "$GITHUB_ENV"
         cd ..
 
@@ -686,7 +694,7 @@ runs:
           echo "✅ CONFIG_KPM disabled (KPN)"
         fi
 
-        echo "✅ ReSukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version: $KSUVER)"
+        echo "✅ ReSukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version code: $KSUVER)"
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
