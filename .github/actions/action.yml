@@ -308,11 +308,9 @@ runs:
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU"
         mkdir -p "$ARTIFACTS_DIR"
 
-        # ── CHANGE 1: AFDO path resolution — stored unconditionally,
-        #   but only validated/exported when kernel is 6.6 or 6.12.
-        #   Other kernels get AFDO_PROFILE_PATH="" (empty = skip).
+        # ── CHANGE 1: AFDO path resolution — stored unconditionally,        
         AFDO_PROFILE=""
-        if [ "$OP_KERNEL_VERSION" = "6.6" ] || [ "$OP_KERNEL_VERSION" = "6.12" ]; then
+        if [ "$OP_KERNEL_VERSION" = "6.12" ]; then
           AFDO_PATH_1="$COMMON_KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
           AFDO_PATH_2="$COMMON_KERNEL_DIR/gki/aarch64/afdo/kernel.afdo"
           if [ -f "$AFDO_PATH_1" ]; then
@@ -502,7 +500,7 @@ runs:
         echo "::endgroup::"
 
     - name: Cache ccache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
@@ -652,7 +650,7 @@ runs:
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
 
-    - name: Add ReSukiSU (The SukiSaku Project)
+    - name: Add ReSukiSU
       shell: bash
       run: |
         set -euo pipefail
@@ -1025,7 +1023,7 @@ runs:
         export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
 
         # ── CHANGE 2: inject CONFIG_AUTOFDO_CLANG only for 6.6 / 6.12 ──
-        if [ "$KERNEL_VER" = "6.6" ] || [ "$KERNEL_VER" = "6.12" ]; then
+        if [ "$KERNEL_VER" = "6.12" ]; then
           echo "CONFIG_AUTOFDO_CLANG=y" \
             >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
           echo "✅ CONFIG_AUTOFDO_CLANG enabled for kernel $KERNEL_VER"
@@ -1412,7 +1410,7 @@ runs:
 
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: kernel-ReSukiSU-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}
         path: ${{ env.ARTIFACTS_FOLDER }}/
