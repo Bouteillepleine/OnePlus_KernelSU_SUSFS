@@ -726,23 +726,52 @@ jobs:
 
       - name: 📤 Upload Release Assets Dynamically
         run: |
+          set -euo pipefail
           uploaded=0
           failed=0
 
-          while IFS= read -r -d '' file; do
-            if [ -f "$file" ]; then
-              echo "Uploading $(basename "$file")..."
-              if gh release upload "${{ env.NEW_TAG }}" "$file" --clobber; then
-                (( uploaded++ ))
-              else
-                echo "::warning::Failed to upload: $file"
-                (( failed++ ))
-              fi
-            fi
-          done < <(find ./downloaded-artifacts -name "*.zip" -print0 | sort -z)
+          # Collect all ZIPs into an array first (safer than process substitution with set -e)
+          mapfile -t zip_files < <(find ./downloaded-artifacts -name "*.zip" | sort)
 
-          echo "✅ Uploaded: $uploaded | ⚠️ Failed: $failed"
-          [ "$failed" -gt 0 ] && exit 1 || true
+          if [ ${#zip_files[@]} -eq 0 ]; then
+            echo "::warning::No ZIP files found in downloaded-artifacts!"
+            exit 0
+          fi
+
+          echo "Found ${#zip_files[@]} ZIP file(s) to upload:"
+          for f in "${zip_files[@]}"; do
+            echo "  - $(basename "$f") ($(numfmt --to=iec-i --suffix=B "$(stat -c%s "$f")"))"
+          done
+          echo ""
+
+          for file in "${zip_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::warning::File not found (skipping): $file"
+              failed=$((failed + 1))
+              continue
+            fi
+
+            name="$(basename "$file")"
+            echo "⬆️  Uploading: $name"
+
+            if gh release upload "${{ env.NEW_TAG }}" "$file" \
+                 --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}" \
+                 --clobber; then
+              echo "   ✅ OK"
+              uploaded=$((uploaded + 1))
+            else
+              echo "::warning::Failed to upload: $name"
+              failed=$((failed + 1))
+            fi
+          done
+
+          echo ""
+          echo "📊 Upload summary: ✅ $uploaded uploaded | ⚠️ $failed failed"
+
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed file(s) failed to upload"
+            exit 1
+          fi
 
       - name: 📊 Release summary
         if: success()
