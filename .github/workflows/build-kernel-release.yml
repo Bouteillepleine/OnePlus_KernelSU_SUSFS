@@ -570,7 +570,7 @@ jobs:
           git push origin "$NEW_TAG"
 
       - name: 📥 Download Artifacts
-        uses: actions/download-artifact@v5 # ← was @v4
+        uses: actions/download-artifact@v5
         with:
           path: ./downloaded-artifacts
 
@@ -588,13 +588,26 @@ jobs:
             if [ -f "$file" ]; then
               full_model=$(basename "$file" .txt)
               model=$(echo "$full_model" | sed -E 's/_[^_]*$//')
+
+              kernel_version=""
+              os_version=""
+              ksu_type=""
+              ksu_ver=""
+              susfs_ver=""
+
               {
-                read -r kernel_version
-                read -r os_version
-                read -r ksu_type
-                read -r ksu_ver
-                read -r susfs_ver
+                read -r kernel_version || true
+                read -r os_version     || true
+                read -r ksu_type       || true
+                read -r ksu_ver        || true
+                read -r susfs_ver      || true
               } < "$file"
+
+              # Fallback pour les anciens artifacts (2 lignes seulement)
+              ksu_type="${ksu_type:-ReSukiSU}"
+              ksu_ver="${ksu_ver:-unknown}"
+              susfs_ver="${susfs_ver:-unknown}"
+
               device_info["$full_model"]="$model|$os_version|$kernel_version|$ksu_type|$ksu_ver|$susfs_ver"
             fi
           done < <(find downloaded-artifacts -name "*.txt" -print0 | sort -z)
