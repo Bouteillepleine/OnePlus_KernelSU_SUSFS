@@ -74,11 +74,16 @@ on:
         default: ''
 
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # JOB 1 — Build matrix generation
+  # ─────────────────────────────────────────────────────────────
   set-op-model:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      device_count: ${{ steps.set-matrix.outputs.count }}
+      matrix:         ${{ steps.set-matrix.outputs.matrix }}
+      device_count:   ${{ steps.set-matrix.outputs.count }}
+      # FIX 1: single source of truth — computed once, reused by summary + trigger-release
+      ksu_normalized: ${{ steps.set-matrix.outputs.ksu_normalized }}
     steps:
       - name: 📥 Checkout Code (to access configs/)
         uses: actions/checkout@v4
@@ -97,7 +102,8 @@ jobs:
           input="${{ github.event.inputs.op_model }}"
           ksu_options_raw='${{ github.event.inputs.ksu_options }}'
 
-          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c '
+          # ── Normalize & validate KSU options ONCE ──────────────────────
+          if ! ksu_normalized=$(echo "$ksu_options_raw" | jq -c '
             map(
               if .type then
                 .type |= ascii_upcase |
@@ -110,10 +116,11 @@ jobs:
               else error("No type found")
               end
             )' 2>&1); then
-            echo "::error::ksu_options validation failed: $ksu_options_normalized"
+            echo "::error::ksu_options validation failed: $ksu_normalized"
             exit 1
           fi
 
+          # ── Assemble full config matrix from configs/*.json ────────────
           echo "[" > matrix.json
           mapfile -t all_json_files < <(find configs/ -name "*.json" -print0 | xargs -0 -n1)
           for i in "${!all_json_files[@]}"; do
@@ -127,8 +134,8 @@ jobs:
           done
           echo "]" >> matrix.json
 
+          # ── Apply op_model filter ──────────────────────────────────────
           jq_filter="."
-
           case "$input" in
             OOS14+15+16)
               ;;
@@ -170,12 +177,13 @@ jobs:
             exit 1
           fi
 
+          # ── Cross-product: devices × KSU entries ──────────────────────
           merged_matrix=$(jq -n \
             --argjson devices "$filtered" \
-            --argjson ksu_list "$ksu_options_normalized" \
+            --argjson ksu_list "$ksu_normalized" \
             '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
 
-          final_count=$(echo "$merged_matrix" | jq -s length)
+          final_count=$(echo "$merged_matrix" | jq 'length')
           wrapped=$(jq -n --argjson items "$merged_matrix" '{ include: $items }')
 
           echo "✅ Found $final_count device(s) to build"
@@ -183,12 +191,16 @@ jobs:
           echo "Selected devices:"
           jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' <<<"$merged_matrix"
 
-          echo "matrix=$(jq -c . <<< "$wrapped")" >> "$GITHUB_OUTPUT"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
+          # ── Outputs ───────────────────────────────────────────────────
+          echo "matrix=$(jq -c . <<< "$wrapped")"                >> "$GITHUB_OUTPUT"
+          echo "count=$count"                                     >> "$GITHUB_OUTPUT"
+          # FIX 1: expose normalized KSU JSON once — no re-computation downstream
+          echo "ksu_normalized=$(jq -c . <<< "$ksu_normalized")" >> "$GITHUB_OUTPUT"
 
           echo "::endgroup::"
 
-      - name: Upload build matrix
+      # FIX 2: upload happens after filtering — snapshot reflects actual build targets
+      - name: 📤 Upload filtered build matrix
         uses: actions/upload-artifact@v4
         with:
           name: build-matrix
@@ -197,23 +209,11 @@ jobs:
 
       - name: 📊 Build plan summary
         run: |
-          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c '
-            map(
-              if .type then
-                .type |= ascii_upcase |
-                if .hash == null then
-                  if .type == "RESUKISU" then .hash = "main"
-                  else .hash = "main"
-                  end
-                else .
-                end
-              else error("No type found")
-              end
-            )' 2>&1)
+          # FIX 1: re-use already-normalized value from step output — no third computation
+          ksu_normalized='${{ steps.set-matrix.outputs.ksu_normalized }}'
 
           {
-            cat << 'EOF'
+            cat << 'HEREDOC'
           ## 🎯 Build Plan
 
           **Target:** ${{ inputs.op_model }}
@@ -221,9 +221,9 @@ jobs:
 
           **Configuration:**
           - ReSukiSU Config: `
-          EOF
-            printf '%s' "$ksu_options_normalized"
-            cat << 'EOF'
+          HEREDOC
+            printf '%s' "$ksu_normalized"
+            cat << 'HEREDOC'
           `
           - KPM Mode: ${{ inputs.kpm_mode }}
           - Optimization: ${{ inputs.optimize_level }}
@@ -231,7 +231,7 @@ jobs:
           - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
 
           **SUSFS Configuration:**
-          EOF
+          HEREDOC
           } >> "$GITHUB_STEP_SUMMARY"
 
           declare -A susfs_inputs=(
@@ -245,20 +245,23 @@ jobs:
           for key in "android12-5.10" "android13-5.15" "android14-6.1" "android15-6.6" "android16-6.12"; do
             value="${susfs_inputs[$key]}"
             if [ -z "$value" ]; then
-              echo "- $key: 🔄 auto (\`gki-$key\`)" >> $GITHUB_STEP_SUMMARY
+              echo "- $key: 🔄 auto (\`gki-$key\`)" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "- $key: 📌 \`$value\`" >> $GITHUB_STEP_SUMMARY
+              echo "- $key: 📌 \`$value\`"           >> "$GITHUB_STEP_SUMMARY"
             fi
           done
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> **💡 Note:** Empty values auto-map to matching \`gki-androidX-Y.Z\` branches." >> $GITHUB_STEP_SUMMARY
+          echo ""                                                                                                  >> "$GITHUB_STEP_SUMMARY"
+          echo "> **💡 Note:** Empty values auto-map to matching \`gki-androidX-Y.Z\` branches."                 >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "> **⚠️ Android-Kernel Filter:** Only OOS15 and OOS16 devices will be built for \`${{ inputs.op_model }}\`" >> $GITHUB_STEP_SUMMARY
+            echo ""                                                                                                >> "$GITHUB_STEP_SUMMARY"
+            echo "> **⚠️ Android-Kernel Filter:** Only OOS15 and OOS16 devices will be built for \`${{ inputs.op_model }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # ─────────────────────────────────────────────────────────────
+  # JOB 2 — Parallel kernel builds (one runner per matrix cell)
+  # ─────────────────────────────────────────────────────────────
   build:
     name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ matrix.ksu_type }})
     needs: set-op-model
@@ -266,8 +269,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
-    outputs:
-      resukisu_ver: ${{ steps.build-stat.outputs.ksu_version }}
     steps:
       - name: 🧹 Emergency Disk Cleanup
         if: ${{ matrix.disk_cleanup }}
@@ -296,7 +297,8 @@ jobs:
       - name: Download Apache Arrow's util_free_space.sh
         if: ${{ matrix.disk_cleanup }}
         run: |
-          curl -L -o util_free_space.sh https://raw.githubusercontent.com/apache/arrow/main/ci/scripts/util_free_space.sh
+          curl -fsSL -o util_free_space.sh \
+            https://raw.githubusercontent.com/apache/arrow/main/ci/scripts/util_free_space.sh
           chmod +x util_free_space.sh
           ./util_free_space.sh
 
@@ -389,13 +391,13 @@ jobs:
         id: build
         uses: ./.github/actions
         with:
-          op_config_json: ${{ steps.prepare_config.outputs.config_json }}
-          ksu_type: ${{ matrix.ksu_type }}
-          ksu_branch_or_hash: ${{ matrix.ksu_hash }}
+          op_config_json:              ${{ steps.prepare_config.outputs.config_json }}
+          ksu_type:                    ${{ matrix.ksu_type }}
+          ksu_branch_or_hash:          ${{ matrix.ksu_hash }}
           susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
-          kpm_mode: ${{ inputs.kpm_mode }}
-          optimize_level: ${{ inputs.optimize_level }}
-          clean: ${{ inputs.clean_build }}
+          kpm_mode:                    ${{ inputs.kpm_mode }}
+          optimize_level:              ${{ inputs.optimize_level }}
+          clean:                       ${{ inputs.clean_build }}
 
       - name: 📊 Build statistics
         id: build-stat
@@ -407,7 +409,7 @@ jobs:
           echo "OS Version: ${{ matrix.os_version }}"
           echo "Kernel: ${{ matrix.android_version }}-${{ matrix.kernel_version }}"
           echo "KPM Mode: ${{ inputs.kpm_mode }}"
-          if [ "${{ matrix.susfs }}" = true ]; then
+          if [ "${{ matrix.susfs }}" = "true" ]; then
             echo "SUSFS Branch: ${{ steps.susfs.outputs.susfs_branch }}"
           fi
           echo "Status: ${{ job.status }}"
@@ -422,7 +424,7 @@ jobs:
             echo "  - KPM Mode: ${{ inputs.kpm_mode }}"
             echo "ksu_version=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
 
-            if [ "${{ matrix.susfs }}" = true ]; then
+            if [ "${{ matrix.susfs }}" = "true" ]; then
               echo "  - SUSFS: ${{ steps.build.outputs.susfs_version }}"
             fi
             echo "  - Build time: ${{ steps.build.outputs.build_time }}s"
@@ -446,22 +448,27 @@ jobs:
       - name: 📝 Job summary
         if: always()
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # FIX 3: evaluate status icon in bash — avoids expression evaluation issues
+          STATUS_ICON=$( [ "${{ job.status }}" = "success" ] && echo "✅ Success" || echo "❌ Failed" )
 
-          ### ${{ matrix.model }} (${{ matrix.os_version }}) - ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+
+          ### ${{ matrix.model }} (${{ matrix.os_version }}) - ${STATUS_ICON}
 
           **Kernel:** ${{ matrix.android_version }}-${{ matrix.kernel_version }}
           **KPM Mode:** ${{ inputs.kpm_mode }}
           EOF
 
-          if [ "${{ matrix.susfs }}" = true ]; then
-            cat >> $GITHUB_STEP_SUMMARY << EOF
-          **SUSFS Branch:** \`${{ steps.susfs.outputs.susfs_branch || format('(auto: gki-{0}-{1})', matrix.android_version, matrix.kernel_version) }}\`
+          if [ "${{ matrix.susfs }}" = "true" ]; then
+            SUSFS_LABEL="${{ steps.susfs.outputs.susfs_branch }}"
+            [ -z "$SUSFS_LABEL" ] && SUSFS_LABEL="auto: gki-${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          **SUSFS Branch:** \`${SUSFS_LABEL}\`
           EOF
           fi
 
           if [ "${{ steps.build.outcome }}" = "success" ]; then
-            cat >> $GITHUB_STEP_SUMMARY << EOF
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
           | Metric | Value |
           |--------|-------|
           | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
@@ -469,28 +476,28 @@ jobs:
           | **KPM Mode** | ${{ inputs.kpm_mode }} |
           EOF
 
-            if [ "${{ matrix.susfs }}" = true ]; then
-              cat >> $GITHUB_STEP_SUMMARY << EOF
+            if [ "${{ matrix.susfs }}" = "true" ]; then
+              cat >> "$GITHUB_STEP_SUMMARY" << EOF
           | **SUSFS** | ${{ steps.build.outputs.susfs_version }} |
           EOF
             fi
 
-            cat >> $GITHUB_STEP_SUMMARY << EOF
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
           | **Build Time** | ${{ steps.build.outputs.build_time }}s |
           EOF
 
             if [ "${{ inputs.clean_build }}" != "true" ]; then
-              cat >> $GITHUB_STEP_SUMMARY << EOF
+              cat >> "$GITHUB_STEP_SUMMARY" << EOF
           | **ccache Hit Rate** | ${{ steps.build.outputs.ccache_hit_rate }} |
           | **ccache Direct Rate** | ${{ steps.build.outputs.ccache_direct_rate }} |
           EOF
             fi
 
             if [ -n "${{ steps.build.outputs.warnings }}" ]; then
-              echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" >> $GITHUB_STEP_SUMMARY
+              echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" >> "$GITHUB_STEP_SUMMARY"
             fi
 
-            cat >> $GITHUB_STEP_SUMMARY << EOF
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
 
           **SHA256:** \`${{ steps.build.outputs.image_sha256 }}\`
           EOF
@@ -501,11 +508,11 @@ jobs:
         run: |
           echo "::group::Cleanup"
 
-          sudo rm -rf "$GITHUB_WORKSPACE/out" || true
-          sudo rm -rf "$GITHUB_WORKSPACE/build" || true
+          sudo rm -rf "$GITHUB_WORKSPACE/out"        || true
+          sudo rm -rf "$GITHUB_WORKSPACE/build"      || true
           sudo rm -rf "$GITHUB_WORKSPACE/kernel/out" || true
-          sudo rm -rf "$GITHUB_WORKSPACE/.repo" || true
-          sudo rm -rf /tmp/* || true
+          sudo rm -rf "$GITHUB_WORKSPACE/.repo"      || true
+          sudo rm -rf /tmp/*                         || true
 
           if command -v ccache >/dev/null 2>&1; then
             echo ""
@@ -521,16 +528,22 @@ jobs:
 
           echo "::endgroup::"
 
+  # ─────────────────────────────────────────────────────────────
+  # JOB 3 — GitHub Release (conditional on make_release)
+  # ─────────────────────────────────────────────────────────────
   trigger-release:
-    needs: [build]
+    # FIX 4: add set-op-model dependency to access ksu_normalized output
+    needs: [set-op-model, build]
     runs-on: ubuntu-latest
     if: ${{ inputs.make_release }}
     env:
-      REPO_OWNER: ${{ github.repository_owner }}
-      REPO_NAME: ${{ github.event.repository.name }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With ReSukiSU & SUSFS v2.0.0 *TEST BUILD*'
+      REPO_OWNER:         ${{ github.repository_owner }}
+      REPO_NAME:          ${{ github.event.repository.name }}
+      GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_NAME:       '*TEST BUILD* OnePlus Kernels With ReSukiSU & SUSFS v2.0.0 *TEST BUILD*'
       SUSFS_BASE_VERSION: 'v2.0.0'
+      # FIX 1: consume pre-normalized KSU JSON — no re-computation in this job
+      KSU_NORMALIZED:     ${{ needs.set-op-model.outputs.ksu_normalized }}
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -539,18 +552,26 @@ jobs:
 
       - name: 🏷️ Generate and Create New Tag
         run: |
+          set -euo pipefail
+
           BASE_TAG="$SUSFS_BASE_VERSION-r0"
-          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name')
+          LATEST_TAG=$(gh api "repos/$REPO_OWNER/$REPO_NAME/tags" --jq '.[0].name // empty')
+
           if [ -z "$LATEST_TAG" ]; then
             LATEST_TAG="$BASE_TAG"
           else
             LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
           fi
-          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
+
+          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{
+            suffix = ($2 == "" ? 0 : $2) + 1
+            printf "%s-r%d", $1, suffix
+          }')
+
           echo "New tag: $NEW_TAG"
-          echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
-          git tag $NEW_TAG
-          git push origin $NEW_TAG
+          echo "NEW_TAG=${NEW_TAG}" >> "$GITHUB_ENV"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
 
       - name: 📥 Download Artifacts
         uses: actions/download-artifact@v4
@@ -565,37 +586,28 @@ jobs:
 
           declare -A device_info
 
+          # FIX 2: matrix.json now reflects the filtered build targets
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/build-matrix/matrix.json)
 
-          for file in $(find downloaded-artifacts -name "*.txt" -type f | sort); do
+          # FIX 5: null-safe file iteration — handles spaces and special chars in filenames
+          while IFS= read -r -d '' file; do
             if [ -f "$file" ]; then
               full_model=$(basename "$file" .txt)
               model=$(echo "$full_model" | sed -E 's/_[^_]*$//')
-              kernel_version=$(sed -n '1p' "$file")
-              os_version=$(sed -n '2p' "$file")
-              ksu_type=$(sed -n '3p' "$file")
-              ksu_ver=$(sed -n '4p' "$file")
-              susfs_ver=$(sed -n '5p' "$file")
+              {
+                read -r kernel_version
+                read -r os_version
+                read -r ksu_type
+                read -r ksu_ver
+                read -r susfs_ver
+              } < "$file"
               device_info["$full_model"]="$model|$os_version|$kernel_version|$ksu_type|$ksu_ver|$susfs_ver"
             fi
-          done
+          done < <(find downloaded-artifacts -name "*.txt" -print0 | sort -z)
 
-          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c '
-            map(
-              if .type then
-                .type |= ascii_upcase |
-                if .hash == null then
-                  if .type == "RESUKISU" then .hash = "main"
-                  else .hash = "main"
-                  end
-                else .
-                end
-              else error("No type found")
-              end
-            )')
-
-          resukisu_hash=$(echo "$ksu_options_normalized" | jq -r 'map(select(.type == "RESUKISU")) | first | .hash // empty')
+          # FIX 1: extract ReSukiSU branch from pre-normalized env var — no fourth computation
+          resukisu_hash=$(echo "$KSU_NORMALIZED" | \
+            jq -r 'map(select(.type == "RESUKISU")) | first | .hash // "(auto)"')
 
           RESUKISU_BRANCH="$resukisu_hash"
           OPTIMIZE_LEVEL="${{ inputs.optimize_level }}"
@@ -613,6 +625,14 @@ jobs:
           [ -z "$SUSFS_A14" ] && SUSFS_A14="gki-android14-6.1 (auto)"
           [ -z "$SUSFS_A15" ] && SUSFS_A15="gki-android15-6.6 (auto)"
           [ -z "$SUSFS_A16" ] && SUSFS_A16="gki-android16-6.12 (auto)"
+
+          if [ ${#device_info[@]} -eq 0 ]; then
+            echo "::error::No device info found!" >&2
+            exit 1
+          fi
+
+          first_entry=$(printf '%s\n' "${!device_info[@]}" | sort | head -n1)
+          IFS='|' read -r _ _ _ _ ksu_ver_global _ <<< "${device_info[$first_entry]}"
 
           cat << EOF > release_notes.md
           # 🎯 OnePlus Kernels with ReSukiSU & SUSFS $SUSFS_BASE_VERSION
@@ -632,34 +652,23 @@ jobs:
           for full_key in $(printf '%s\n' "${!device_info[@]}" | sort); do
             IFS='|' read -r model os_ver kernel_ver _ _ _ <<< "${device_info[$full_key]}"
 
+            # FIX 6: build feature string entirely in jq — no fragile IFS tab splitting on multi-byte emoji
             feature_flags=$(jq -r --arg MODEL "$model" '
               .[] |
               select(.model == $MODEL) |
-              "\(.hmbird // false)\t\(.susfs // false)\t\(.bbr // false)\t\(.bbg // false)\t\(.ttl // false)\t\(.ip_set // false)"
+              [
+                (.hmbird  // false | if . then "🐦 HMBIRD"  else "" end),
+                (.susfs   // false | if . then "ඞ SusFS"   else "" end),
+                (.bbr     // false | if . then "🚀 BBR"     else "" end),
+                (.bbg     // false | if . then "🛡️ BBG"    else "" end),
+                (.ttl     // false | if . then "⏱️ TTL"    else "" end),
+                (.ip_set  // false | if . then "🔧 IP_SET"  else "" end)
+              ] | map(select(. != "")) | join(" ")
             ' <<< "$JSON_BUILD_DATA")
 
-            features=""
-            if [[ -n "$feature_flags" ]]; then
-              IFS=$'\t' read -r hmbird susfs bbr bbg ttl ip_set <<< "$feature_flags"
-              [[ "$hmbird" == "true" ]] && features+="🐦 HMBIRD "
-              [[ "$susfs" == "true" ]]  && features+="ඞ SusFS "
-              [[ "$bbr" == "true" ]]    && features+="🚀 BBR "
-              [[ "$bbg" == "true" ]]    && features+="🛡️ BBG "
-              [[ "$ttl" == "true" ]]    && features+="⏱️ TTL "
-              [[ "$ip_set" == "true" ]] && features+="🔧 IP_SET"
-            fi
-
             printf "| %-13s | %-10s | %-16s | %-30s |\n" \
-              "$model" "$os_ver" "$kernel_ver" "$features" >> release_notes.md
+              "$model" "$os_ver" "$kernel_ver" "$feature_flags" >> release_notes.md
           done
-
-          if [ ${#device_info[@]} -gt 0 ]; then
-            first_entry=$(printf '%s\n' "${!device_info[@]}" | sort | head -n1)
-            IFS='|' read -r _ _ _ _ ksu_ver_global _ <<< "${device_info[$first_entry]}"
-          else
-            echo "::error::No device info found!" >&2
-            exit 1
-          fi
 
           cat << EOF >> release_notes.md
 
@@ -669,21 +678,8 @@ jobs:
 
           | Component | Version/Setting |
           |-----------|----------------|
-          EOF
-
-          if [ -n "$RESUKISU_BRANCH" ]; then
-            cat << EOF >> release_notes.md
           | **ReSukiSU Branch** | \`$RESUKISU_BRANCH\` |
           | **ReSukiSU Version** | \`$ksu_ver_global\` |
-          EOF
-          else
-            cat << EOF >> release_notes.md
-          | **ReSukiSU Branch** | \`(auto)\` |
-          | **ReSukiSU Version** | \`$ksu_ver_global\` |
-          EOF
-          fi
-
-          cat << EOF >> release_notes.md
           | **KPM Mode** | \`$KPM_MODE\` |
           | **SUSFS Version** | \`$SUSFS_BASE_VERSION\` |
           | **Optimization Level** | \`$OPTIMIZE_LEVEL\` |
@@ -713,6 +709,8 @@ jobs:
           **⚡ Built with ❤️ by the community**
           EOF
 
+          echo "✅ release_notes.md generated ($(wc -l < release_notes.md) lines)"
+
       - name: 🚀 Create GitHub Release
         run: |
           gh release create "${{ env.NEW_TAG }}" \
@@ -723,33 +721,47 @@ jobs:
 
       - name: 📤 Upload Release Assets Dynamically
         run: |
-          for file in ./downloaded-artifacts/*/*.zip; do
+          # FIX 7: track upload count and fail loudly if any asset fails
+          uploaded=0
+          failed=0
+
+          # FIX 5: null-safe zip iteration
+          while IFS= read -r -d '' file; do
             if [ -f "$file" ]; then
-              echo "Uploading $file..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
+              echo "Uploading $(basename "$file")..."
+              if gh release upload "${{ env.NEW_TAG }}" "$file" --clobber; then
+                (( uploaded++ ))
+              else
+                echo "::warning::Failed to upload: $file"
+                (( failed++ ))
+              fi
             fi
-          done
+          done < <(find ./downloaded-artifacts -name "*.zip" -print0 | sort -z)
+
+          echo "✅ Uploaded: $uploaded | ⚠️ Failed: $failed"
+          [ "$failed" -gt 0 ] && exit 1 || true
 
       - name: 📊 Release summary
         if: success()
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
 
           ---
 
           ## 🎉 Release Created Successfully
 
           **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})
+          **Status:** Draft — publish manually when ready
           **Kernels:** $(find ./downloaded-artifacts -name "*.zip" | wc -l)
 
           ### 📦 Assets
           EOF
 
-          for zip in ./downloaded-artifacts/*/*.zip; do
+          # FIX 5: null-safe zip iteration for summary
+          while IFS= read -r -d '' zip; do
             if [ -f "$zip" ]; then
               name=$(basename "$zip")
-              size=$(stat -c%s "$zip")
-              size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
-              echo "- \`$name\` (${size_mb} MB)" >> $GITHUB_STEP_SUMMARY
+              size_mb=$(awk "BEGIN { printf \"%.2f\", $(stat -c%s "$zip") / 1048576 }")
+              echo "- \`$name\` (${size_mb} MB)" >> "$GITHUB_STEP_SUMMARY"
             fi
-          done
+          done < <(find ./downloaded-artifacts -name "*.zip" -print0 | sort -z)
