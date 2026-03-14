@@ -984,6 +984,17 @@ runs:
           fi
         } >> "$GITHUB_OUTPUT"
 
+        # ── Append the 3 missing lines to the metadata .txt ───────────
+        {
+          echo "ReSukiSU"
+          echo "${KSUVER:-unknown}"
+          if [ "$OP_SUSFS" = "true" ]; then
+            echo "${SUSVER:-unknown}"
+          else
+            echo "disabled"
+          fi
+        } >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+
     - name: Customize Kernel Branding
       shell: bash
       run: |
