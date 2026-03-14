@@ -308,18 +308,26 @@ runs:
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU"
         mkdir -p "$ARTIFACTS_DIR"
 
-        AFDO_PATH_1="$COMMON_KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
-        AFDO_PATH_2="$COMMON_KERNEL_DIR/gki/aarch64/afdo/kernel.afdo"
-
-        if [ -f "$AFDO_PATH_1" ]; then
-          AFDO_PROFILE="$AFDO_PATH_1"
-        elif [ -f "$AFDO_PATH_2" ]; then
-          AFDO_PROFILE="$AFDO_PATH_2"
+        # ── CHANGE 1: AFDO path resolution — stored unconditionally,
+        #   but only validated/exported when kernel is 6.6 or 6.12.
+        #   Other kernels get AFDO_PROFILE_PATH="" (empty = skip).
+        AFDO_PROFILE=""
+        if [ "$OP_KERNEL_VERSION" = "6.6" ] || [ "$OP_KERNEL_VERSION" = "6.12" ]; then
+          AFDO_PATH_1="$COMMON_KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
+          AFDO_PATH_2="$COMMON_KERNEL_DIR/gki/aarch64/afdo/kernel.afdo"
+          if [ -f "$AFDO_PATH_1" ]; then
+            AFDO_PROFILE="$AFDO_PATH_1"
+          elif [ -f "$AFDO_PATH_2" ]; then
+            AFDO_PROFILE="$AFDO_PATH_2"
+          else
+            echo "::error::AFDO profile not found for kernel $OP_KERNEL_VERSION!"
+            echo "  Tried: $AFDO_PATH_1"
+            echo "  Tried: $AFDO_PATH_2"
+            exit 1
+          fi
+          echo "✅ AFDO profile resolved: $AFDO_PROFILE"
         else
-          echo "::error::AFDO profile not found!"
-          echo "  Tried: $AFDO_PATH_1"
-          echo "  Tried: $AFDO_PATH_2"
-          exit 1
+          echo "ℹ️  AFDO skipped — not applicable for kernel $OP_KERNEL_VERSION"
         fi
 
         {
@@ -639,7 +647,7 @@ runs:
       run: |
         set -euo pipefail
         cd "$KERNEL_PLATFORM_FOLDER"
-        rm -f common/android/abi_gki_protected_exports_*   || true
+        rm -f common/android/abi_gki_protected_exports_*     || true
         rm -f msm-kernel/android/abi_gki_protected_exports_* || true
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
@@ -1016,11 +1024,20 @@ runs:
           -D__ANDROID_COMMON_KERNEL__"
         export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
 
-        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" << 'EOF'
-        CONFIG_AUTOFDO_CLANG=y
-        EOF
+        # ── CHANGE 2: inject CONFIG_AUTOFDO_CLANG only for 6.6 / 6.12 ──
+        if [ "$KERNEL_VER" = "6.6" ] || [ "$KERNEL_VER" = "6.12" ]; then
+          echo "CONFIG_AUTOFDO_CLANG=y" \
+            >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+          echo "✅ CONFIG_AUTOFDO_CLANG enabled for kernel $KERNEL_VER"
+        else
+          echo "ℹ️  CONFIG_AUTOFDO_CLANG skipped for kernel $KERNEL_VER"
+        fi
 
-        export CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE_PATH"
+        # ── CHANGE 3: export CLANG_AUTOFDO_PROFILE only when path is set ──
+        if [ -n "${AFDO_PROFILE_PATH:-}" ]; then
+          export CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE_PATH"
+          echo "✅ CLANG_AUTOFDO_PROFILE=$CLANG_AUTOFDO_PROFILE"
+        fi
 
         export LLVM=1 LLVM_IAS=1
         export ARCH=arm64 SUBARCH=arm64
@@ -1147,7 +1164,7 @@ runs:
           exit 1
         fi
 
-        echo "::endgroup::"
+        echo "::endgroup::"    
 
     - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
