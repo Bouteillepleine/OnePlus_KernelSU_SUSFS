@@ -660,21 +660,8 @@ runs:
         KSU_REF="${{ inputs.ksu_branch_or_hash }}"
         [ -z "$KSU_REF" ] && KSU_REF="main"
 
-        # ── setup.sh peut retourner exit code 1 même en cas de succès ──
-        # (git stash vide, "Already up to date", etc.)
-        # On vérifie manuellement que KernelSU/ a bien été créé.
         curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" \
-          | bash -s "$KSU_REF" || true
-
-        if [ ! -d "KernelSU" ]; then
-          echo "::error::setup.sh failed — KernelSU directory not created"
-          exit 1
-        fi
-
-        if [ ! -f "KernelSU/kernel/Makefile" ] && [ ! -f "common/drivers/kernelsu/Makefile" ]; then
-          echo "::error::setup.sh failed — KernelSU integration files missing"
-          exit 1
-        fi
+          | bash -s "$KSU_REF"
 
         echo "ReSukiSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
@@ -683,11 +670,14 @@ runs:
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> "$GITHUB_ENV"
 
         # ── Version code (integer) — 3 sources in priority order ──────
+        # Priority 1: flat "version" file (e.g. "11743")
         if [ -f "version" ]; then
           KSUVER="$(tr -d '[:space:]' < version)"
+        # Priority 2: #define KSU_VERSION in kernel/ksu.h
         elif [ -f "kernel/ksu.h" ]; then
           KSUVER="$(grep -E '#define KSU_VERSION\b' kernel/ksu.h \
             | awk '{print $3}' | tr -d '[:space:]')"
+        # Priority 3: fallback — git describe (tag name, not a code)
         else
           KSUVER="$(git describe --tags --always 2>/dev/null || echo "unknown")"
         fi
