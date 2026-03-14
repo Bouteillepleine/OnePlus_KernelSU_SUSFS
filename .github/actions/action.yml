@@ -393,6 +393,36 @@ runs:
         fi
         echo "::endgroup::"
 
+    # ── CHANGE 1: AFDO path resolution ──────────────────────────────────────
+    - name: Resolve AFDO Profile Path
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Resolve AFDO profile"
+
+        AFDO_PROFILE=""
+        if [ "$OP_KERNEL_VERSION" = "6.12" ]; then
+          AFDO_PATH_1="$COMMON_KERNEL_FOLDER/android/gki/aarch64/afdo/kernel.afdo"
+          AFDO_PATH_2="$COMMON_KERNEL_FOLDER/gki/aarch64/afdo/kernel.afdo"
+          if [ -f "$AFDO_PATH_1" ]; then
+            AFDO_PROFILE="$AFDO_PATH_1"
+          elif [ -f "$AFDO_PATH_2" ]; then
+            AFDO_PROFILE="$AFDO_PATH_2"
+          else
+            echo "::error::AFDO profile not found for kernel $OP_KERNEL_VERSION!"
+            echo "  Tried: $AFDO_PATH_1"
+            echo "  Tried: $AFDO_PATH_2"
+            exit 1
+          fi
+          echo "✅ AFDO profile resolved: $AFDO_PROFILE"
+          echo "AFDO_PROFILE_PATH=$AFDO_PROFILE" >> "$GITHUB_ENV"
+        else
+          echo "ℹ️  AFDO skipped — not applicable for kernel $OP_KERNEL_VERSION"
+        fi
+
+        echo "::endgroup::"
+    # ────────────────────────────────────────────────────────────────────────
+
     - name: 🏷️ Set Build Identity (Hardcoded)
       shell: bash
       run: |
@@ -1000,14 +1030,6 @@ runs:
           patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/experimental/bbg/bbg_fix_get_link.patch"
         fi
         
-        # if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-          # cd ./KernelSU-Next
-        # else
-          # cd ./KernelSU
-        # fi
-        
-        # echo "Patching BBG Enhanced Security!"
-        # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
         echo "✅ BBG LSM added"
         echo "::endgroup::"
 
@@ -1060,7 +1082,7 @@ runs:
         echo "::group::Apply Unicode Fix patch"
         cd "$COMMON_KERNEL_FOLDER"
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
-        MIN_VERSION="5.16"
+        MIN_VERSION="5.16"        
         
         echo "Patching unicode!"
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
@@ -1167,12 +1189,22 @@ runs:
         CONFIG_GDB_SCRIPTS=n
         EOF
 
+        # ── CHANGE 2: Enable CONFIG_AUTOFDO_CLANG for kernel 6.12 ──────────
+        if [ "$KERNEL_VER" = "6.12" ]; then
+          echo "CONFIG_AUTOFDO_CLANG=y" \
+            >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+          echo "✅ CONFIG_AUTOFDO_CLANG enabled for kernel $KERNEL_VER"
+        else
+          echo "ℹ️  CONFIG_AUTOFDO_CLANG skipped for kernel $KERNEL_VER"
+        fi
+        # ────────────────────────────────────────────────────────────────────
+
     - name: Add RUST build configs
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
       run: |
         set -euo pipefail
-        echo "Add Build based configs"
+        echo "Add RUST build configs"
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_ANDROID_BINDER_IPC_RUST=m
         CONFIG_RUST=y
@@ -1240,7 +1272,7 @@ runs:
         export ARCH=arm64 SUBARCH=arm64
         export CROSS_COMPILE=aarch64-linux-gnu-
         export PAHOLE="$KERNEL_PLATFORM_FOLDER/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
-        export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm 
+        export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm
         export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
         
         set +u
@@ -1283,6 +1315,13 @@ runs:
         else
           echo "🚀 ccache-accelerated build"
         fi
+
+        # ── CHANGE 3: export CLANG_AUTOFDO_PROFILE only when path is set ───
+        if [ -n "${AFDO_PROFILE_PATH:-}" ]; then
+          export CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE_PATH"
+          echo "✅ CLANG_AUTOFDO_PROFILE=$CLANG_AUTOFDO_PROFILE"
+        fi
+        # ────────────────────────────────────────────────────────────────────
         
         OUT=out
         mkdir -p "$OUT"
@@ -1480,8 +1519,7 @@ runs:
         }' | head -n1)
         
         if [ "${CACHEABLE:-0}" -gt 0 ]; then
-          HIT_RATE=$(awk -v h="${HITS:-0
-        }" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
+          HIT_RATE=$(awk -v h="${HITS:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (h/c)*100}')
           DIRECT_RATE=$(awk -v d="${DIRECT:-0}" -v c="$CACHEABLE" 'BEGIN{printf "%.1f", (d/c)*100}')
         else
           HIT_RATE="0.0"
