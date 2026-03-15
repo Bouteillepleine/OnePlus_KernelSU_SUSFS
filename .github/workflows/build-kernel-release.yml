@@ -42,9 +42,8 @@ on:
         required: true
         type: choice
         options:
-          - KPM
           - KPN
-        default: KPM
+        default: KPN
       optimize_level:
         description: "Compiler optimization level"
         required: true
