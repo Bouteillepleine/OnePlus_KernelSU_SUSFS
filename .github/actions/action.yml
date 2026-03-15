@@ -1,4 +1,4 @@
-name: 'Build OnePlus Kernel with ReSukiSU'
+name: 'Build OnePlus Kernel with SukiSU'
 inputs:
   op_config_json:
     description: 'JSON string containing full device config'
@@ -9,9 +9,9 @@ inputs:
     required: true
     type: choice
     options:
-      - ReSukiSU
+      - SukiSU
   ksu_branch_or_hash:
-    description: 'ReSukiSU branch or commit hash (empty = auto-detect)'
+    description: 'SukiSU branch or commit hash (empty = auto-detect)'
     required: false
     type: string
     default: ""
@@ -44,10 +44,10 @@ outputs:
     description: 'Full kernel version string'
     value: ${{ steps.save_metadata.outputs.kernel_version }}
   ksu_version:
-    description: 'ReSukiSU version number'
+    description: 'SukiSU version number'
     value: ${{ steps.save_metadata.outputs.ksu_version }}
   ksu_type:
-    description: 'ReSukiSU Variant'
+    description: 'SukiSU Variant'
     value: ${{ steps.save_metadata.outputs.ksu_type }}
   susfs_version:
     description: 'SUSFS version string'
@@ -308,7 +308,6 @@ runs:
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU"
         mkdir -p "$ARTIFACTS_DIR"
 
-        # ── CHANGE 1: AFDO path resolution — stored unconditionally,        
         AFDO_PROFILE=""
         if [ "$OP_KERNEL_VERSION" = "6.12" ]; then
           AFDO_PATH_1="$COMMON_KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
@@ -503,11 +502,11 @@ runs:
       uses: actions/cache@v5
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        key: ccache-sukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         restore-keys: |
-          ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
-          ccache-resukisu-v4-${{ env.OP_MODEL }}-
+          ccache-sukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
+          ccache-sukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ccache-sukisu-v4-${{ env.OP_MODEL }}-
 
     - name: Configure ccache
       shell: bash
@@ -650,24 +649,24 @@ runs:
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         df -h
 
-    - name: Add ReSukiSU
+    - name: Add SukiSU
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add ReSukiSU"
+        echo "::group::Add SukiSU"
         cd "$KERNEL_PLATFORM_FOLDER"
-    
+
         KSU_REF="${{ inputs.ksu_branch_or_hash }}"
         [ -z "$KSU_REF" ] && KSU_REF="main"
-    
-        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$KSU_REF"
-    
-        echo "ReSukiSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-    
+
+        curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$KSU_REF"
+
+        echo "SukiSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+
         cd KernelSU
         KSU_COMMIT_SHA="$(git rev-parse HEAD)"
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> "$GITHUB_ENV"
-    
+
         KSUVER="$(git describe --tags --always 2>/dev/null || true)"
         if [ -z "$KSUVER" ]; then
           KSUVER="$(grep -RhoE 'KSU_VERSION[[:space:]]*[:=][[:space:]]*"?[0-9A-Za-z._-]+' . 2>/dev/null | head -n1 | sed -E 's/.*[:=][[:space:]]*"?//')"
@@ -675,7 +674,7 @@ runs:
         [ -z "$KSUVER" ] && KSUVER="unknown"
         echo "KSUVER=$KSUVER" >> "$GITHUB_ENV"
         cd ..
-    
+
         if [ "${{ inputs.kpm_mode }}" = "KPM" ]; then
           echo "CONFIG_KPM=y" >> common/arch/arm64/configs/gki_defconfig
           echo "✅ CONFIG_KPM enabled (KPM)"
@@ -683,8 +682,8 @@ runs:
           echo "CONFIG_KPM=n" >> common/arch/arm64/configs/gki_defconfig
           echo "✅ CONFIG_KPM disabled (KPN)"
         fi
-    
-        echo "✅ ReSukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version: $KSUVER)"
+
+        echo "✅ SukiSU added (ref: $KSU_REF, commit: ${KSU_COMMIT_SHA:0:8}, version: $KSUVER)"
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
@@ -826,17 +825,17 @@ runs:
       if: ${{ env.NEED_HOOKS == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Apply ReSukiSU hooks"
+        echo "::group::Apply SukiSU hooks"
         cd "$COMMON_KERNEL_FOLDER"
         patch -p1 < "$KERNEL_PATCHES_FOLDER/next/scope_min_manual_hooks_v1.4.patch"
-        echo "✅ ReSukiSU hooks applied"
+        echo "✅ SukiSU hooks applied"
         echo "::endgroup::"
 
-    - name: Add ReSukiSU Base Configuration Settings
+    - name: Add SukiSU Base Configuration Settings
       shell: bash
       run: |
         set -euo pipefail
-        echo "Add ReSukiSU Base Configuration Settings"
+        echo "Add SukiSU Base Configuration Settings"
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" << 'EOF'
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
@@ -966,7 +965,7 @@ runs:
         {
           echo "kernel_version=${KERNEL_FULL_VER}"
           echo "ksu_version=${KSUVER:-unknown}"
-          echo "ksu_type=ReSukiSU"
+          echo "ksu_type=SukiSU"
           if [ "$OP_SUSFS" = "true" ]; then
             echo "susfs_version=${SUSVER:-unknown}"
           else
@@ -974,9 +973,8 @@ runs:
           fi
         } >> "$GITHUB_OUTPUT"
 
-        # ── Append the 3 missing lines to the metadata .txt ───────────
         {
-          echo "ReSukiSU"
+          echo "SukiSU"
           echo "${KSUVER:-unknown}"
           if [ "$OP_SUSFS" = "true" ]; then
             echo "${SUSVER:-unknown}"
@@ -1031,7 +1029,6 @@ runs:
           -D__ANDROID_COMMON_KERNEL__"
         export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
 
-        # ── CHANGE 2: inject CONFIG_AUTOFDO_CLANG only for 6.6 / 6.12 ──
         if [ "$KERNEL_VER" = "6.12" ]; then
           echo "CONFIG_AUTOFDO_CLANG=y" \
             >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
@@ -1040,7 +1037,6 @@ runs:
           echo "ℹ️  CONFIG_AUTOFDO_CLANG skipped for kernel $KERNEL_VER"
         fi
 
-        # ── CHANGE 3: export CLANG_AUTOFDO_PROFILE only when path is set ──
         if [ -n "${AFDO_PROFILE_PATH:-}" ]; then
           export CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE_PATH"
           echo "✅ CLANG_AUTOFDO_PROFILE=$CLANG_AUTOFDO_PROFILE"
@@ -1171,7 +1167,7 @@ runs:
           exit 1
         fi
 
-        echo "::endgroup::"    
+        echo "::endgroup::"
 
     - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
@@ -1203,7 +1199,6 @@ runs:
       run: |
         set -euo pipefail
 
-        # ── Resolve Image path (3 candidate locations) ────────────────
         IMG="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
         if [ -f "$KERNEL_PLATFORM_FOLDER/out/${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}/dist/Image" ]; then
           IMG="$KERNEL_PLATFORM_FOLDER/out/${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}/dist/Image"
@@ -1219,7 +1214,7 @@ runs:
         if ! file "$IMG" | grep -qi 'ARM64'; then
           echo "::error::Image is not ARM64 format"
           file "$IMG"
-          exit 
+          exit 1
         fi
 
         IMG_SIZE=$(stat -c %s "$IMG")
@@ -1255,7 +1250,6 @@ runs:
         set -euo pipefail
         echo "::group::Apply KPM patch_linux"
 
-        # ── Resolve Image path ─────────────────────────────────────────
         IMAGE_PATH="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
         if [ -f "$KERNEL_PLATFORM_FOLDER/out/${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}/dist/Image" ]; then
           IMAGE_PATH="$KERNEL_PLATFORM_FOLDER/out/${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}/dist/Image"
@@ -1321,7 +1315,6 @@ runs:
         set -euo pipefail
         echo "::group::Create kernel ZIP package"
 
-        # ── Resolve Image path ─────────────────────────────────────────
         IMAGE_PATH="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
         if [ -f "$KERNEL_PLATFORM_FOLDER/out/${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}/dist/Image" ]; then
           IMAGE_PATH="$KERNEL_PLATFORM_FOLDER/out/${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}/dist/Image"
@@ -1334,7 +1327,6 @@ runs:
           exit 1
         fi
 
-        # Only copy Image if KPM did not already place a patched one
         if [ "${{ inputs.kpm_mode }}" != "KPM" ]; then
           cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
         fi
@@ -1343,9 +1335,9 @@ runs:
 
         KPM_TAG="${{ inputs.kpm_mode }}"
         if [ "$OP_SUSFS" = "true" ]; then
-          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_ReSukiSU_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}_${KPM_TAG}.zip"
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_SukiSU_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}_${KPM_TAG}.zip"
         else
-          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_ReSukiSU_${KSUVER:-unknown}_${KPM_TAG}.zip"
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_SukiSU_${KSUVER:-unknown}_${KPM_TAG}.zip"
         fi
 
         mkdir -p "$ARTIFACTS_FOLDER"
@@ -1360,7 +1352,6 @@ runs:
 
         mv "$ZIP_NAME" "$ARTIFACTS_FOLDER/"
 
-        # Remove everything except the ZIP and the metadata .txt
         find "$ARTIFACTS_FOLDER" -maxdepth 1 -type f \
           ! -name "$ZIP_NAME" \
           ! -name "${OP_MODEL}_${OP_OS_VERSION}.txt" \
@@ -1387,8 +1378,8 @@ runs:
           echo "Kernel Uname: ${KERNEL_UNAME:-unknown}"
           echo "Build User: ${BUILD_USER}"
           echo "Build Host: ${BUILD_HOST}"
-          echo "ReSukiSU Version: ${KSUVER:-unknown}"
-          echo "ReSukiSU commit SHA: ${KSU_SHA}"
+          echo "SukiSU Version: ${KSUVER:-unknown}"
+          echo "SukiSU commit SHA: ${KSU_SHA}"
           echo "KPM Mode: ${{ inputs.kpm_mode }}"
 
           if [ -f "$AK3_FOLDER/ksu_module_susfs_1.5.2+_CI.zip" ]; then
@@ -1421,7 +1412,7 @@ runs:
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v5
       with:
-        name: kernel-ReSukiSU-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}
+        name: kernel-SukiSU-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}
         path: ${{ env.ARTIFACTS_FOLDER }}/
         compression-level: 0
         retention-days: 20
