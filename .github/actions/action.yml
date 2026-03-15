@@ -24,10 +24,9 @@ inputs:
     description: 'KPM mode: KPM (enable + patch_linux), KPN (disable)'
     required: false
     type: choice
-    options:
-      - KPM
+    options:      
       - KPN
-    default: KPM
+    default: KPN
   optimize_level:
     description: 'Compiler optimization level (O2 or O3)'
     required: false
@@ -770,36 +769,7 @@ runs:
         fi
 
         echo "✅ SUSFS patches applied"
-        echo "::endgroup::"
-
-    - name: 🩹 Patch KPM super_access for kernel >= 6.3
-      shell: bash
-      run: |
-        set -euo pipefail
-        SUPER_ACCESS="$KERNEL_PLATFORM_FOLDER/KernelSU/drivers/kernelsu/kpm/super_access.c"
-
-        if [ ! -f "$SUPER_ACCESS" ]; then
-          echo "ℹ️  super_access.c not found, skipping patch"
-          exit 0
-        fi
-
-        # Check if cb_mutex line exists and needs guarding
-        if grep -q 'DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)' "$SUPER_ACCESS"; then
-          echo "🔧 Patching cb_mutex guard in super_access.c..."
-          sed -i \
-            's/DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)/#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)\nDEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)\n#endif/' \
-            "$SUPER_ACCESS"
-
-          # Ensure linux/version.h is included
-          if ! grep -q '#include <linux/version.h>' "$SUPER_ACCESS"; then
-            sed -i '1s/^/#include <linux\/version.h>\n/' "$SUPER_ACCESS"
-          fi
-
-          echo "✅ cb_mutex guard applied"
-          grep -n 'cb_mutex\|version.h' "$SUPER_ACCESS"
-        else
-          echo "ℹ️  cb_mutex line not found or already patched"
-        fi
+        echo "::endgroup::"    
 
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
