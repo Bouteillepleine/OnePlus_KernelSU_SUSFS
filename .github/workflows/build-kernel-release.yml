@@ -33,10 +33,10 @@ on:
           - android12-5.10
         default: OOS14+15+16
       ksu_options:
-        description: 'Enter ReSukiSU build json'
+        description: 'Enter SukiSU build json'
         required: true
         type: string
-        default: '[{"type":"resukisu"}]'
+        default: '[{"type":"sukisu"}]'
       kpm_mode:
         description: 'KPM mode: KPM (enable + patch_linux), KPN (disable)'
         required: true
@@ -88,7 +88,7 @@ jobs:
       ksu_normalized: ${{ steps.set-matrix.outputs.ksu_normalized }}
     steps:
       - name: 📥 Checkout Code (to access configs/)
-        uses: actions/checkout@v5          # ← was @v4
+        uses: actions/checkout@v5
         with:
           sparse-checkout: |
             configs/
@@ -110,7 +110,7 @@ jobs:
               if .type then
                 .type |= ascii_upcase |
                 if .hash == null then
-                  if .type == "RESUKISU" then .hash = "main"
+                  if .type == "SUKISU" then .hash = "main"
                   else .hash = "main"
                   end
                 else .
@@ -201,7 +201,7 @@ jobs:
           echo "::endgroup::"
 
       - name: 📤 Upload filtered build matrix
-        uses: actions/upload-artifact@v5   # ← was @v4
+        uses: actions/upload-artifact@v5
         with:
           name: build-matrix
           path: matrix.json
@@ -219,7 +219,7 @@ jobs:
           **Devices:** ${{ steps.set-matrix.outputs.count }}
 
           **Configuration:**
-          - ReSukiSU Config: `
+          - SukiSU Config: `
           HEREDOC
             printf '%s' "$ksu_normalized"
             cat << 'HEREDOC'
@@ -343,7 +343,7 @@ jobs:
           echo "susfs_branch=$susfs_branch" >> "$GITHUB_OUTPUT"
 
       - name: 📥 Checkout Code
-        uses: actions/checkout@v5          # ← was @v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -419,7 +419,7 @@ jobs:
             echo ""
             echo "Outputs:"
             echo "  - Kernel: ${{ steps.build.outputs.kernel_version }}"
-            echo "  - ReSukiSU: v${{ steps.build.outputs.ksu_version }}"
+            echo "  - SukiSU: v${{ steps.build.outputs.ksu_version }}"
             echo "  - KPM Mode: ${{ inputs.kpm_mode }}"
             echo "ksu_version=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
 
@@ -470,7 +470,7 @@ jobs:
           | Metric | Value |
           |--------|-------|
           | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
-          | **ReSukiSU** | v${{ steps.build.outputs.ksu_version }} |
+          | **SukiSU** | v${{ steps.build.outputs.ksu_version }} |
           | **KPM Mode** | ${{ inputs.kpm_mode }} |
           EOF
 
@@ -537,12 +537,12 @@ jobs:
       REPO_OWNER:         ${{ github.repository_owner }}
       REPO_NAME:          ${{ github.event.repository.name }}
       GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME:       '*TEST BUILD* OnePlus Kernels With ReSukiSU & SUSFS v2.0.0 *TEST BUILD*'
+      RELEASE_NAME:       '*TEST BUILD* OnePlus Kernels With SukiSU & SUSFS v2.0.0 *TEST BUILD*'
       SUSFS_BASE_VERSION: 'v2.0.0'
       KSU_NORMALIZED:     ${{ needs.set-op-model.outputs.ksu_normalized }}
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v5          # ← was @v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -603,8 +603,8 @@ jobs:
                 read -r susfs_ver      || true
               } < "$file"
 
-              # Fallback pour les anciens artifacts (2 lignes seulement)
-              ksu_type="${ksu_type:-ReSukiSU}"
+              # Fallback for older artifacts (2 lines only)
+              ksu_type="${ksu_type:-SukiSU}"
               ksu_ver="${ksu_ver:-unknown}"
               susfs_ver="${susfs_ver:-unknown}"
 
@@ -612,10 +612,10 @@ jobs:
             fi
           done < <(find downloaded-artifacts -name "*.txt" -print0 | sort -z)
 
-          resukisu_hash=$(echo "$KSU_NORMALIZED" | \
-            jq -r 'map(select(.type == "RESUKISU")) | first | .hash // "(auto)"')
+          sukisu_hash=$(echo "$KSU_NORMALIZED" | \
+            jq -r 'map(select(.type == "SUKISU")) | first | .hash // "(auto)"')
 
-          RESUKISU_BRANCH="$resukisu_hash"
+          SUKISU_BRANCH="$sukisu_hash"
           OPTIMIZE_LEVEL="${{ inputs.optimize_level }}"
           CLEAN_BUILD="${{ inputs.clean_build }}"
           KPM_MODE="${{ inputs.kpm_mode }}"
@@ -641,7 +641,7 @@ jobs:
           IFS='|' read -r _ _ _ _ ksu_ver_global _ <<< "${device_info[$first_entry]}"
 
           cat << EOF > release_notes.md
-          # 🎯 OnePlus Kernels with ReSukiSU & SUSFS $SUSFS_BASE_VERSION
+          # 🎯 OnePlus Kernels with SukiSU & SUSFS $SUSFS_BASE_VERSION
 
           > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
           > **Build ID:** \`${{ github.run_id }}\`
@@ -683,8 +683,8 @@ jobs:
 
           | Component | Version/Setting |
           |-----------|----------------|
-          | **ReSukiSU Branch** | \`$RESUKISU_BRANCH\` |
-          | **ReSukiSU Version** | \`$ksu_ver_global\` |
+          | **SukiSU Branch** | \`$SUKISU_BRANCH\` |
+          | **SukiSU Version** | \`$ksu_ver_global\` |
           | **KPM Mode** | \`$KPM_MODE\` |
           | **SUSFS Version** | \`$SUSFS_BASE_VERSION\` |
           | **Optimization Level** | \`$OPTIMIZE_LEVEL\` |
@@ -706,7 +706,7 @@ jobs:
           ## ✨ Features & Capabilities
 
           ### 🔐 Root Management
-          - **ReSukiSU** - The SukiSaku Project kernel-level root solution
+          - **SukiSU** - The SukiSU-Ultra kernel-level root solution
           - **SUSFS $SUSFS_BASE_VERSION** - Advanced hiding and security features
 
           ---
@@ -730,7 +730,6 @@ jobs:
           uploaded=0
           failed=0
 
-          # Collect all ZIPs into an array first (safer than process substitution with set -e)
           mapfile -t zip_files < <(find ./downloaded-artifacts -name "*.zip" | sort)
 
           if [ ${#zip_files[@]} -eq 0 ]; then
