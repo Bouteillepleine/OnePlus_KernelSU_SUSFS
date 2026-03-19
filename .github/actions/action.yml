@@ -489,19 +489,19 @@ runs:
     # ══════════════════════════════════════════════════════════════
     # SECTION 6 — CCACHE SETUP
     # ══════════════════════════════════════════════════════════════
-
+    
     - name: Set Cache Environment
       shell: bash
       run: |
         set -euo pipefail
         echo "::group::Configure ccache environment"
         CACHE_DIR="$HOME/.ccache"
-        # Use CCACHE_MAX_SIZE from workflow env, fallback to 2G
         RESOLVED_MAX="${CCACHE_MAX_SIZE:-2G}"
         mkdir -p "$CACHE_DIR"
         {
           echo "CCACHE_DIR=$CACHE_DIR"
           echo "CCACHE_MAXSIZE=$RESOLVED_MAX"
+          echo "CCACHE_KEY=ccache-resukisu-v4-${OP_MODEL}-${OP_OS_VERSION}-${KERNEL_FULL_VER}-${CLANG_VERSION_SHORT}"
         } >> "$GITHUB_ENV"
         echo "  Directory : $CACHE_DIR"
         echo "  Max size  : $RESOLVED_MAX"
@@ -510,27 +510,25 @@ runs:
         echo "  Clang     : ${CLANG_VERSION_SHORT:-unknown}"
         echo "::endgroup::"
 
-    - name: Cache ccache
-      uses: actions/cache@v5
+    - name: Restore ccache
+      id: ccache_restore
+      if: ${{ inputs.clean != 'true' }}
+      uses: actions/cache/restore@v5
       with:
         path: ${{ env.CCACHE_DIR }}
-        # Exact key includes Clang version for correctness
-        key: >-
-          ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        key: ${{ env.CCACHE_KEY }}
         restore-keys: |
           ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
           ccache-resukisu-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
           ccache-resukisu-v4-${{ env.OP_MODEL }}-
-        # FIX: always save cache even when a later step fails
-        save-always: true
 
     - name: Configure ccache
+      if: ${{ inputs.clean != 'true' }}
       shell: bash
       run: |
         set -euo pipefail
         echo "::group::Configure ccache for maximum performance"
         export CCACHE_DIR="${CCACHE_DIR}"
-        # Use the single authoritative size variable
         ccache -M "${CCACHE_MAXSIZE}"
         ccache -o compression=true
         ccache -o compression_level=3
@@ -1553,4 +1551,11 @@ runs:
         path: ${{ env.COMMON_KERNEL_FOLDER }}/build.log
         retention-days: 3
         if-no-files-found: warn
+
+    - name: Save ccache
+      if: ${{ always() && inputs.clean != 'true' && steps.ccache_restore.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ${{ env.CCACHE_KEY }}
 
