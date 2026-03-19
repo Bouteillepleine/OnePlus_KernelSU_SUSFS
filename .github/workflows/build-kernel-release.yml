@@ -240,7 +240,7 @@ jobs:
           SUSFS_A16: ${{ inputs.android16-6_12_susfs_branch_or_commit }}
         run: |
           set -euo pipefail
-
+      
           {
             echo "## 🎯 Build Plan"
             echo ""
@@ -249,7 +249,10 @@ jobs:
             echo "**Builds:** ${{ steps.set-matrix.outputs.build_count }}"
             echo ""
             echo "**Configuration:**"
-            printf '- ReSukiSU Config: `%s`\n' "$KSU_NORMALIZED"
+            # FIX: utiliser echo + variable intermédiaire — évite que printf
+            #      interprète les caractères JSON comme des options
+            ksu_display="${KSU_NORMALIZED}"
+            echo "- ReSukiSU Config: \`${ksu_display}\`"
             echo "- KPM Mode: ${{ inputs.kpm_mode }}"
             echo "- Optimization: ${{ inputs.optimize_level }}"
             echo "- Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}"
@@ -257,7 +260,7 @@ jobs:
             echo ""
             echo "**SUSFS Configuration:**"
           } >> "$GITHUB_STEP_SUMMARY"
-
+      
           declare -A susfs_map=(
             ["android12-5.10"]="${SUSFS_A12}"
             ["android13-5.15"]="${SUSFS_A13}"
@@ -265,25 +268,26 @@ jobs:
             ["android15-6.6"]="${SUSFS_A15}"
             ["android16-6.12"]="${SUSFS_A16}"
           )
-
+      
           for key in "android12-5.10" "android13-5.15" "android14-6.1" "android15-6.6" "android16-6.12"; do
             value="${susfs_map[$key]}"
             if [ -z "$value" ]; then
-              echo "- $key: 🔄 auto (\`gki-$key\`)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- ${key}: 🔄 auto (\`gki-${key}\`)" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "- $key: 📌 \`$value\`"           >> "$GITHUB_STEP_SUMMARY"
+              echo "- ${key}: 📌 \`${value}\`"           >> "$GITHUB_STEP_SUMMARY"
             fi
           done
-
+      
           {
             echo ""
             echo "> **💡 Note:** Empty values auto-map to matching \`gki-androidX-Y.Z\` branches."
           } >> "$GITHUB_STEP_SUMMARY"
-
+      
           if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "> **⚠️ Android-Kernel Filter:** Only OOS15 and OOS16 devices will be built for \`${{ inputs.op_model }}\`" \
-              >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo ""
+              echo "> **⚠️ Android-Kernel Filter:** Only OOS15 and OOS16 devices will be built for \`${{ inputs.op_model }}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ─────────────────────────────────────────────────────────────
