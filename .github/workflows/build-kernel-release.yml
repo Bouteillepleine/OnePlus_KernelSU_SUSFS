@@ -427,15 +427,24 @@ jobs:
           optimize_level:              ${{ inputs.optimize_level }}
           clean:                       ${{ inputs.clean_build }}
 
-      - name: 📤 Upload build log on failure
+      - name: Check build log presence
         if: failure()
+        id: check_build_log
+        shell: bash
+        run: |
+          if [ -n "${COMMON_KERNEL_FOLDER:-}" ] && [ -f "${COMMON_KERNEL_FOLDER}/build.log" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+  
+      - name: 📤 Upload build log on failure
+        if: failure() && steps.check_build_log.outputs.found == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: build-log-${{ matrix.model }}-${{ matrix.os_version }}-${{ github.run_attempt }}
-          path: |
-            ${{ env.COMMON_KERNEL_FOLDER }}/build.log
+          path: ${{ env.COMMON_KERNEL_FOLDER }}/build.log
           retention-days: 3
-          if-no-files-found: warn
 
       - name: 📊 Build statistics
         id: build-stat
