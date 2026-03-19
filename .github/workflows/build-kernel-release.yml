@@ -300,7 +300,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 30
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
     steps:
       - name: 🧹 Emergency Disk Cleanup
