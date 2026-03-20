@@ -646,7 +646,6 @@ jobs:
           declare -A kernel_gen_hmbird
           for full_key in $(printf '%s\n' "${!device_info[@]}" | sort); do
             IFS='|' read -r model os_ver kernel_ver _ _ _ <<< "${device_info[$full_key]}"
-            # Extract major.minor from kernel_ver (e.g. android14-6.1.118 → 6.1)
             kv_short=$(echo "$kernel_ver" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
             av_short=$(echo "$kernel_ver" | grep -oE '^android[0-9]+' | head -n1)
             gen_key="${av_short}-${kv_short}"
@@ -662,7 +661,7 @@ jobs:
           # ── Helper: emit one grouped table section ───────────────────
           emit_group() {
             local group_name="$1"
-            local prefix_pattern="$2"   # grep-compatible pattern on model name
+            local prefix_pattern="$2"
             local header_emoji="$3"
 
             local rows=()
@@ -749,9 +748,9 @@ jobs:
           EOF
 
           # ── Emit grouped sections ────────────────────────────────────
-          emit_group "ACE Series"      "^OP-ACE|^OP_ACE"        "🔴" >> release_notes.md
-          emit_group "Nord Series"     "^OP-NORD|^OP_NORD"      "🔵" >> release_notes.md
-          emit_group "Flagship Series" "^OP1[0-9]|^OP[0-9]"    "🟢" >> release_notes.md
+          emit_group "ACE Series"      "^OP-ACE|^OP_ACE"                    "🔴" >> release_notes.md
+          emit_group "Nord Series"     "^OP-NORD|^OP_NORD"                  "🔵" >> release_notes.md
+          emit_group "Flagship Series" "^OP1[0-9]|^OP[0-9]"                "🟢" >> release_notes.md
           emit_group "Open & PAD"      "^OP-OPEN|^OP-PAD|^OP_OPEN|^OP_PAD" "🟡" >> release_notes.md
 
           # ── Coverage summary table ───────────────────────────────────
@@ -796,6 +795,18 @@ jobs:
           - **ReSukiSU v${ksu_ver_global}** — Kernel-level root by the SukiSaku Project. More stable and stealthier than Magisk for supported GKI devices.
           - **SUSFS ${SUSFS_BASE_VERSION}** — Filesystem-level spoofing that hides root mounts, \`/proc\` entries, and kernel modifications from userspace detection.
           - **KPM (${{ inputs.kpm_mode }})** — Kernel Patch Module: allows dynamic kernel patching without reflashing, enabling modular extensions post-boot.
+
+          ---
+
+          ## 💖 Support the Project
+
+          This kernel is built and maintained for free by the community.
+          Any and all donations are genuinely appreciated and help keep the project alive!
+
+          | Platform | Link |
+          |---|---|
+          | 💳 **PayPal** | [paypal.me/fatalcoder524](https://paypal.me/fatalcoder524) |
+          | 📱 **UPI** | DM on Telegram for UPI donations |
 
           ---
 
