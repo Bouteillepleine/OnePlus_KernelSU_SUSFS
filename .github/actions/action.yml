@@ -319,26 +319,6 @@ runs:
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU"
         mkdir -p "$ARTIFACTS_DIR"
 
-        # AFDO profile resolution (only applicable for kernel 6.12)
-        AFDO_PROFILE=""
-        if [ "$OP_KERNEL_VERSION" = "6.12" ]; then
-          AFDO_PATH_1="$COMMON_KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
-          AFDO_PATH_2="$COMMON_KERNEL_DIR/gki/aarch64/afdo/kernel.afdo"
-          if [ -f "$AFDO_PATH_1" ]; then
-            AFDO_PROFILE="$AFDO_PATH_1"
-          elif [ -f "$AFDO_PATH_2" ]; then
-            AFDO_PROFILE="$AFDO_PATH_2"
-          else
-            echo "::error::AFDO profile not found for kernel $OP_KERNEL_VERSION!"
-            echo "  Tried: $AFDO_PATH_1"
-            echo "  Tried: $AFDO_PATH_2"
-            exit 1
-          fi
-          echo "✅ AFDO profile resolved: $AFDO_PROFILE"
-        else
-          echo "ℹ️  AFDO skipped — not applicable for kernel $OP_KERNEL_VERSION"
-        fi
-
         {
           echo "CONFIG_FOLDER=$CONFIG_DIR"
           echo "ARTIFACTS_FOLDER=$ARTIFACTS_DIR"
@@ -349,7 +329,6 @@ runs:
           echo "KERNEL_PATCHES_FOLDER=$KERNEL_PATCHES_DIR"
           echo "SUSFS_FOLDER=$SUSFS_DIR"
           echo "KSU_FOLDER=$KSU_DIR"
-          echo "AFDO_PROFILE_PATH=$AFDO_PROFILE"
         } >> "$GITHUB_ENV"
 
     - name: Get Kernel Version Info
@@ -1098,18 +1077,6 @@ runs:
           -Wno-unused-command-line-argument \
           -D__ANDROID_COMMON_KERNEL__"
         export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
-
-        # AutoFDO: only for kernel 6.12
-        if [ "$KERNEL_VER" = "6.12" ]; then
-          echo "CONFIG_AUTOFDO_CLANG=y" \
-            >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
-          echo "✅ CONFIG_AUTOFDO_CLANG enabled"
-        fi
-
-        if [ -n "${AFDO_PROFILE_PATH:-}" ]; then
-          export CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE_PATH"
-          echo "✅ CLANG_AUTOFDO_PROFILE=$CLANG_AUTOFDO_PROFILE"
-        fi
 
         export LLVM=1 LLVM_IAS=1
         export ARCH=arm64 SUBARCH=arm64
