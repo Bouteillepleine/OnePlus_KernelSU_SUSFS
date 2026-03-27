@@ -641,9 +641,10 @@ jobs:
           first_entry=$(printf '%s\n' "${!device_info[@]}" | sort | head -n1)
           IFS='|' read -r _ _ _ _ ksu_ver_global _ <<< "${device_info[$first_entry]}"
 
-          # ── Count devices per kernel generation ──────────────────────
+          # ── Count devices per kernel generation & detect HMBIRD ──────
           declare -A kernel_gen_count
           declare -A kernel_gen_hmbird
+
           for full_key in $(printf '%s\n' "${!device_info[@]}" | sort); do
             IFS='|' read -r model os_ver kernel_ver _ _ _ <<< "${device_info[$full_key]}"
             kv_short=$(echo "$kernel_ver" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
@@ -652,9 +653,11 @@ jobs:
             kernel_gen_count["$gen_key"]=$(( ${kernel_gen_count["$gen_key"]:-0} + 1 ))
 
             has_hmbird=$(echo "$FEATURE_INDEX_DATA" | \
-              jq -r --arg KEY "${model}|${os_ver}|${kernel_ver}" \
-              'to_entries[] | select(.key | startswith($KEY)) | .value.feature_flags[] | select(. == "🐦 HMBIRD")' \
-              2>/dev/null | head -n1 || echo "")
+              jq -r --arg M "$model" --arg O "$os_ver" \
+              'to_entries[]
+               | select(.value.model == $M and .value.os_version == $O)
+               | .value.feature_flags[]
+               | select(. == "🐦 HMBIRD")' 2>/dev/null | head -n1 || echo "")
             [ -n "$has_hmbird" ] && kernel_gen_hmbird["$gen_key"]="✅" || true
           done
 
@@ -669,23 +672,26 @@ jobs:
               IFS='|' read -r model os_ver kernel_ver _ _ _ <<< "${device_info[$full_key]}"
               echo "$model" | grep -qiE "$prefix_pattern" || continue
 
-              feature_flags=$(echo "$FEATURE_INDEX_DATA" | \
-                jq -r --arg KEY "${model}|${os_ver}|${kernel_ver}" \
+              hmbird_flag=$(echo "$FEATURE_INDEX_DATA" | \
+                jq -r --arg M "$model" --arg O "$os_ver" \
                 'to_entries[]
-                 | select(.key | startswith($KEY))
-                 | .value.feature_flags
-                 | join(" ")' 2>/dev/null || echo "")
+                 | select(.value.model == $M and .value.os_version == $O)
+                 | .value.feature_flags[]
+                 | select(. == "🐦 HMBIRD")' 2>/dev/null | head -n1 || echo "")
 
-              rows+=("$(printf "| %-20s | %-10s | %-22s | %s |" \
-                "$model" "$os_ver" "$kernel_ver" "$feature_flags")")
+              kernel_display="$kernel_ver"
+              [ -n "$hmbird_flag" ] && kernel_display="🐦 $kernel_ver"
+
+              rows+=("$(printf "| %-20s | %-10s | %s |" \
+                "$model" "$os_ver" "$kernel_display")")
             done
 
             if [ ${#rows[@]} -gt 0 ]; then
               echo ""
               echo "### ${header_emoji} ${group_name}"
               echo ""
-              echo "| Model | OS Version | Kernel Version | Features |"
-              echo "|---|---|---|---|"
+              echo "| Model | OOS Version | Kernel |"
+              echo "|---|---|---|"
               for row in "${rows[@]}"; do
                 echo "$row"
               done
@@ -709,12 +715,12 @@ jobs:
 
           | Feature | Description |
           |---|---|
-          | ඞ **SusFS ${SUSFS_BASE_VERSION}** | Filesystem-level hiding — root invisible to banking apps & anti-cheat |
+          | ඞ **SusFS ${SUSFS_BASE_VERSION}** | Advanced filesystem-level hiding — makes root invisible to banking apps & anti-cheat |
           | 🚀 **BBR** | Google's TCP congestion control — better throughput & lower latency |
           | 🛡️ **BBG** | BBR variant tuned for mobile networks |
           | ⏱️ **TTL** | TTL packet manipulation — bypasses tethering detection |
           | 🔧 **IP_SET** | Advanced IP list management for iptables/nftables firewall rules |
-          | 🐦 **HMBIRD** | *(kernel 6.6+ only)* Optimized task scheduler — improves responsiveness & thermals |
+          | 🐦 **HMBIRD** | *(kernel 6.6+ only)* Qualcomm/MediaTek task scheduler — improves responsiveness & thermals |
 
           ---
 
@@ -732,26 +738,26 @@ jobs:
 
           ### 📌 SUSFS Branch Mapping
 
-          | Kernel Version | SUSFS Branch/Commit |
+          | Android / Kernel | SUSFS Branch |
           |---|---|
-          | android12-5.10 | \`${SUSFS_A12}\` |
-          | android13-5.15 | \`${SUSFS_A13}\` |
-          | android14-6.1  | \`${SUSFS_A14}\` |
-          | android15-6.6  | \`${SUSFS_A15}\` |
-          | android16-6.12 | \`${SUSFS_A16}\` |
+          | android12 — 5.10 | \`${SUSFS_A12}\` |
+          | android13 — 5.15 | \`${SUSFS_A13}\` |
+          | android14 — 6.1  | \`${SUSFS_A14}\` |
+          | android15 — 6.6  | \`${SUSFS_A15}\` |
+          | android16 — 6.12 | \`${SUSFS_A16}\` |
 
           ---
 
           ## 📱 Built Devices (${#device_info[@]} total)
 
-          > All entries include: ඞ SusFS 🚀 BBR 🛡️ BBG ⏱️ TTL 🔧 IP_SET — 🐦 = also includes HMBIRD scheduler
+          > 🐦 = includes HMBIRD scheduler  |  All entries include: ඞ SusFS 🚀 BBR 🛡️ BBG ⏱️ TTL 🔧 IP_SET
           EOF
 
           # ── Emit grouped sections ────────────────────────────────────
-          emit_group "ACE Series"      "^OP-ACE|^OP_ACE"                    "🔴" >> release_notes.md
-          emit_group "Nord Series"     "^OP-NORD|^OP_NORD"                  "🔵" >> release_notes.md
-          emit_group "Flagship Series" "^OP1[0-9]|^OP[0-9]"                "🟢" >> release_notes.md
-          emit_group "Open & PAD"      "^OP-OPEN|^OP-PAD|^OP_OPEN|^OP_PAD" "🟡" >> release_notes.md
+          emit_group "ACE Series"                    "^OP-ACE|^OP_ACE"                    "🔴" >> release_notes.md
+          emit_group "Nord Series"                   "^OP-NORD|^OP_NORD"                  "🔵" >> release_notes.md
+          emit_group "Flagship Series (OP10 → OP15)" "^OP1[0-9]|^OP[0-9]"               "🟢" >> release_notes.md
+          emit_group "Open & PAD Series"             "^OP-OPEN|^OP-PAD|^OP_OPEN|^OP_PAD" "🟡" >> release_notes.md
 
           # ── Coverage summary table ───────────────────────────────────
           cat >> release_notes.md << 'COVERAGE_EOF'
@@ -770,8 +776,9 @@ jobs:
             [ "$count" -eq 0 ] && continue
             av="${gen_key%%-*}"
             kv="${gen_key##*-}"
+            av_display=$(echo "$av" | sed 's/android/Android /')
             printf "| %-6s | %-12s | %-7s | %-6s |\n" \
-              "${kv}.x" "$av" "$count" "$hmbird" >> release_notes.md
+              "${kv}.x" "$av_display" "$count" "$hmbird" >> release_notes.md
           done
 
           # ── Installation & root stack ────────────────────────────────
@@ -794,19 +801,15 @@ jobs:
 
           - **ReSukiSU v${ksu_ver_global}** — Kernel-level root by the SukiSaku Project. More stable and stealthier than Magisk for supported GKI devices.
           - **SUSFS ${SUSFS_BASE_VERSION}** — Filesystem-level spoofing that hides root mounts, \`/proc\` entries, and kernel modifications from userspace detection.
-          - **KPM (${{ inputs.kpm_mode }})** — Kernel Patch Module: allows dynamic kernel patching without reflashing, enabling modular extensions post-boot.
+          - **KPM (Kernel Patch Module)** — Allows dynamic kernel patching without reflashing, enabling modular extensions post-boot.
 
           ---
 
-          ## 💖 Support the Project
+          ## 💝 Donations
 
-          This kernel is built and maintained for free by the community.
-          Any and all donations are genuinely appreciated and help keep the project alive!
+          Any and all donations are appreciated!
 
-          | Platform | Link |
-          |---|---|
-          | 💳 **PayPal** | [paypal.me/fatalcoder524](https://paypal.me/fatalcoder524) |
-          | 📱 **UPI** | DM on Telegram for UPI donations |
+          PayPal: [paypal.me/fatalcoder524](https://paypal.me/fatalcoder524)
 
           ---
 
