@@ -805,24 +805,26 @@ runs:
         set -euo pipefail
         echo "::group::Add BBG LSM"
         cd "$KERNEL_PLATFORM_FOLDER"
-
-        # Download to temp file — avoid blind pipe-to-bash
-        _BBG_TMP=$(mktemp)
-        if ! curl --proto '=https' --tlsv1.2 -fsSL \
-               "https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh" \
-               -o "$_BBG_TMP"; then
-          echo "::warning::BBG setup.sh download failed, skipping"
-          rm -f "$_BBG_TMP"
-        else
-          [ -s "$_BBG_TMP" ] || { echo "::warning::BBG setup.sh empty, skipping"; rm -f "$_BBG_TMP"; }
-          bash "$_BBG_TMP" fix_blkdev_rename || echo "::warning::BBG setup script failed, continuing"
-          rm -f "$_BBG_TMP"
+        echo "Adding BBG..."
+        if ! wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s fix_blkdev_rename; then
+          echo "::warning::BBG setup script failed, continuing anyway"
         fi
-
         echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
-        sed -i \
-          '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' \
-          common/security/Kconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+        
+        if grep -qxF $'\t\tconst char* symlink_target_link = inode->i_op->get_link(dentry, inode, NULL);' ./Baseband-guard/baseband_guard.c; then
+          echo "Applying BBG get_link fix"
+          patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/experimental/bbg/bbg_fix_get_link.patch"
+        fi
+        
+        # if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          # cd ./KernelSU-Next
+        # else
+          # cd ./KernelSU
+        # fi
+        
+        # echo "Patching BBG Enhanced Security!"
+        # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
         echo "✅ BBG LSM added"
         echo "::endgroup::"
 
