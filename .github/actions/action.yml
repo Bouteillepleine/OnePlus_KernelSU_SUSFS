@@ -734,18 +734,24 @@ runs:
         echo "✅ ReSukiSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
-    - name: Add KPM Configuration
+    - name: Configure KPM Mode
       shell: bash
-      if: ${{ env.OP_KPM == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Add KPM Configuration"
-        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
-        CONFIG_KPM=y
-        CONFIG_KALLSYMS=y
-        CONFIG_KALLSYMS_ALL=y
-        CONFIG_KPROBES=y
+        echo "::group::Configure KPM mode"
+
+        if [ "${{ inputs.kpm_mode }}" = "KPM" ]; then
+          cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+        CONFIG_KPM=y       
         EOF
+          echo "✅ KPM mode enabled"
+        else
+          cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+        CONFIG_KPM=n
+        EOF
+          echo "✅ KP mode selected — CONFIG_KPM disabled"
+        fi
+
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
