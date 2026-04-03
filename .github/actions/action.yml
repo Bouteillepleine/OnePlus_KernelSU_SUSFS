@@ -1,4 +1,4 @@
-name: 'Build OnePlus Kernel with ReSukiSU'
+name: 'Build OnePlus Kernel'
 description: 'GitHub Action to build OnePlus kernels with ReSukiSU and SUSFS integration, optimized for performance and reliability'
 
 inputs:
@@ -21,7 +21,7 @@ inputs:
     required: false
     type: choice
     options:
-      - KP (no KPM)
+      - KPN
       - KPM
     default: KPM
   optimize_level:
