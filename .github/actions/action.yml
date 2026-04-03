@@ -275,8 +275,7 @@ runs:
         for i in 1 2 3; do
           if "$REPO" sync -c --no-clone-bundle --no-tags --optimized-fetch \
                -j"$(nproc --all)" --fail-fast; then
-            success=true
-            break
+            success=true; break
           fi
           echo "⚠️ repo sync attempt $i failed; retrying in 30s..."
           sleep 30
@@ -361,9 +360,6 @@ runs:
         } >> "$GITHUB_ENV"
 
         echo "✅ Detected: $ANDROID_VERSION-$FULL_VERSION"
-        if [ "$OP_SUSFS" = "true" ]; then
-          echo "   SUSFS Branch: gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
-        fi
         echo "::endgroup::"
 
     - name: 🏷️ Set Build Identity
@@ -445,7 +441,7 @@ runs:
         if [ "$CLANG_FOUND" = false ] && command -v clang >/dev/null 2>&1; then
           CLANG_BIN="$(dirname "$(command -v clang)")"
           CLANG_FOUND=true
-          echo "⚠️ Using system clang (no prebuilt found)"
+          echo "⚠️ Using system clang"
         fi
 
         [ "$CLANG_FOUND" = true ] || { echo "::error::No clang toolchain found"; exit 1; }
@@ -631,15 +627,13 @@ runs:
           while [ $attempt -le $max_attempts ]; do
             echo "🔄 Attempt $attempt/$max_attempts: cloning $url ($branch)"
             git clone "${clone_args[@]}" "$url" "$dir" && {
-              echo "✅ Success"
-              return 0
+              echo "✅ Success"; return 0
             }
             echo "❌ Failed, cleaning up..."
             rm -rf "$dir" 2>/dev/null
             sleep $((attempt++ * 5))
           done
-          echo "💥 All attempts failed"
-          return 1
+          echo "💥 All attempts failed"; return 1
         }
 
         retry_clone "https://github.com/Bouteillepleine/AnyKernel3.git" "$ANYKERNEL_BRANCH"
@@ -657,8 +651,7 @@ runs:
             git checkout "$SUSFS_BRANCH"
           else
             echo "::error::SUSFS branch or commit '$SUSFS_BRANCH' not found"
-            git branch -r | head -n 20
-            exit 1
+            git branch -r | head -n 20; exit 1
           fi
 
           SUSFS_COMMIT_SHA=$(git rev-parse HEAD)
@@ -697,7 +690,6 @@ runs:
         KSU_REF="${{ inputs.ksu_branch_or_hash }}"
         [ -z "$KSU_REF" ] && KSU_REF="main"
 
-        # Download setup script to temp file and verify it is non-empty before executing
         _SETUP_TMP=$(mktemp)
         curl --proto '=https' --tlsv1.2 -fsSL \
           "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" \
@@ -752,7 +744,6 @@ runs:
 
         cd "$COMMON_KERNEL_FOLDER"
 
-        # android15-6.6 specific pre-patch fixups
         if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' \
@@ -764,7 +755,6 @@ runs:
         if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
           if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' \
                ./fs/proc/task_mmu.c; then
-            echo "nr_subpages line not found — fake patching"
             sed -i \
               -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
               -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' \
@@ -778,8 +768,7 @@ runs:
         fi
 
         for av_kv in "android12-5.10" "android13-5.15" "android14-6.1"; do
-          av="${av_kv%%-*}"
-          kv="${av_kv##*-}"
+          av="${av_kv%%-*}"; kv="${av_kv##*-}"
           if [ "$ANDROID_VER" = "$av" ] && [ "$KERNEL_VER" = "$kv" ]; then
             if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
               fake_patched=1
@@ -794,9 +783,9 @@ runs:
           fi
         fi
 
-        patch -p1 < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${SUSFS_KERNEL_BRANCH}.patch"
+        patch -p1 --forward \
+          < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${SUSFS_KERNEL_BRANCH}.patch"
 
-        # Undo fake-patch lines after real patch applied
         if [ "$fake_patched" = 1 ]; then
           if [ "$ANDROID_VER" = "android15" ] && [ "$KERNEL_VER" = "6.6" ]; then
             if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' \
@@ -808,8 +797,7 @@ runs:
             fi
           fi
           for av_kv in "android12-5.10" "android13-5.15" "android14-6.1"; do
-            av="${av_kv%%-*}"
-            kv="${av_kv##*-}"
+            av="${av_kv%%-*}"; kv="${av_kv##*-}"
             if [ "$ANDROID_VER" = "$av" ] && [ "$KERNEL_VER" = "$kv" ]; then
               if grep -qxF $'\t\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
                 sed -i 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
@@ -820,6 +808,32 @@ runs:
 
         echo "✅ SUSFS patches applied"
         echo "::endgroup::"
+
+    - name: Add SUSFS Configuration Settings
+      if: ${{ env.OP_SUSFS == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" << 'EOF'
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        CONFIG_KSU_SUSFS_SUS_MAP=y
+        CONFIG_KSU_SUSFS_SUS_SU=n
+        EOF
+        echo "✅ SUSFS config written"
 
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
@@ -850,6 +864,17 @@ runs:
         # patch -p1 --forward < "../../../kernel_patches/common/bbg_untrusted_cred.patch"
         echo "✅ BBG LSM added"
         echo "::endgroup::"
+        
+    - name: Apply KSU Hooks
+      shell: bash
+      if: ${{ env.NEED_HOOKS == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Apply ReSukiSU hooks"
+        cd "$COMMON_KERNEL_FOLDER"
+        patch -p1 < "$KERNEL_PATCHES_FOLDER/next/scope_min_manual_hooks_v1.4.patch"
+        echo "✅ ReSukiSU hooks applied"
+        echo "::endgroup::"
 
     - name: Apply Other Patches
       shell: bash
@@ -857,8 +882,8 @@ runs:
         set -euo pipefail
         echo "::group::Apply other patches"
         cd "$COMMON_KERNEL_FOLDER"
-
         MIN_VERSION="5.16"
+
         if [ "$(printf '%s\n' "$KERNEL_VER" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VER" ]; then
           echo "Patching ptrace!"
           patch -p1 -F 3 < "$KERNEL_PATCHES_FOLDER/gki_ptrace.patch"
@@ -882,17 +907,23 @@ runs:
         echo "✅ Other patches applied"
         echo "::endgroup::"
 
-    - name: Apply KSU Hooks
+    - name: Apply Unicode Fix Patch
       shell: bash
-      if: ${{ env.NEED_HOOKS == 'true' }}
+      if: ${{ env.OP_UNICODE == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Apply ReSukiSU hooks"
+        echo "::group::Apply Unicode Fix patch"
         cd "$COMMON_KERNEL_FOLDER"
-        patch -p1 < "$KERNEL_PATCHES_FOLDER/next/scope_min_manual_hooks_v1.4.patch"
-        echo "✅ ReSukiSU hooks applied"
+        MIN_VERSION="5.16"
+        echo "Patching unicode!"
+        if [ "$(printf '%s\n' "$KERNEL_VER" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VER" ]; then
+          patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1-.patch"
+        else
+          patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
+        fi
+        echo "✅ Unicode fix applied"
         echo "::endgroup::"
-        
+
     - name: Add ReSukiSU Base Configuration Settings
       shell: bash
       run: |
@@ -906,32 +937,6 @@ runs:
         CONFIG_TMPFS_POSIX_ACL=y
         EOF
         echo "✅ ReSukiSU base config written"
-
-    - name: Add SUSFS Configuration Settings
-      if: ${{ env.OP_SUSFS == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" << 'EOF'
-        CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_PATH=y
-        CONFIG_KSU_SUSFS_SUS_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_KSTAT=y
-        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-        CONFIG_KSU_SUSFS_ENABLE_LOG=y
-        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-        CONFIG_KSU_SUSFS_SUS_MAP=y
-        CONFIG_KSU_SUSFS_SUS_SU=n
-        EOF
-        echo "✅ SUSFS config written"
 
     - name: Add BBR
       if: ${{ env.OP_BBR == 'true' }}
@@ -958,7 +963,7 @@ runs:
         EOF
         echo "✅ TTL config written"
 
-    - name: Add IP SET Support
+    - name: Add IP SET & IPv6 NAT Support
       if: ${{ env.OP_IP_SET == 'true' }}
       shell: bash
       run: |
@@ -1161,20 +1166,6 @@ runs:
 
         OUT=out
         mkdir -p "$OUT"
-
-        echo "============================================"
-        echo "🔍 Compiler & ccache Verification"
-        echo "============================================"
-        echo "which clang: $(which clang)"
-        echo "CC: $CC"
-        if [ "${{ inputs.clean }}" != "true" ]; then
-          clang --version 2>&1 | head -n1 || true
-          ccache -p | grep -E "(compression|direct_mode|depend|sloppiness)" || true
-          ccache -s | head -n 20
-        else
-          echo "⚠️ Clean build - ccache bypassed"
-        fi
-        echo "============================================"
 
         make O="$OUT" gki_defconfig
 
@@ -1595,7 +1586,7 @@ runs:
         } | tee summary.txt
 
         {
-          echo "### 🎯 Kernel Build Summary"
+          echo "### 🎯 ReSukiSU Kernel Build Summary"
           echo ""
           echo "| Metric | Value |"
           echo "|--------|-------|"
@@ -1638,6 +1629,7 @@ runs:
           echo "| Metric | Value |"
           echo "|--------|-------|"
           echo "| **Optimization** | ${{ inputs.optimize_level }} |"
+          echo "| **KPM Mode** | ${{ inputs.kpm_mode }} |"
           echo "| **Clean Build** | ${{ inputs.clean }} |"
           echo "| **Build Time** | ${{ steps.collect_stats.outputs.build_time }}s |"
           if [ "${{ inputs.clean }}" != "true" ]; then
@@ -1687,3 +1679,4 @@ runs:
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ${{ env.CCACHE_KEY }}
+
