@@ -1,4 +1,4 @@
-name: 'Build OnePlus Kernel with ReSukiSU'
+name: 'Build OnePlus Kernel'
 
 inputs:
   op_config_json:
