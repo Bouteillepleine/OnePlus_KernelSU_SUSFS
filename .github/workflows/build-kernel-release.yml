@@ -148,8 +148,8 @@ jobs:
             OOS14) jq_filter='map(select(.os_version == "OOS14"))' ;;
             android*-*.*)
               IFS='-' read -r av kv <<< "$input"
-              jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
-              echo "ℹ️ Android-Kernel filter: $av-$kv (OOS15/OOS16 only)"
+              jq_filter="map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
+              echo "ℹ️ Android-Kernel filter: $av-$kv"
               ;;
             *)
               echo "::warning::Unknown input '$input'. Using empty filter."
@@ -382,11 +382,6 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "> **💡 Note:** Hashes are resolved at run time via API calls before builds start." >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "> **⚠️ Android-Kernel Filter:** Only OOS15 and OOS16 devices will be built for \`${{ inputs.op_model }}\`" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
   build:
     name: build (${{ matrix.model }}, ${{ matrix.os_version }}, ${{ matrix.android_version }}-${{ matrix.kernel_version }}, ReSukiSU)
     needs: set-op-model
@@ -395,9 +390,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
-
-    outputs:
-      resukisu_ver: ${{ steps.build-stat.outputs.ksu_version }}
 
     steps:
       - name: 🧹 Emergency Disk Cleanup
@@ -514,10 +506,8 @@ jobs:
             if [ "${{ inputs.clean_build }}" != "true" ]; then
               echo "  - ccache hit: ${{ steps.build.outputs.ccache_hit_rate }}"
             fi
-            echo "ksu_version=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
           else
             echo "❌ Build failed"
-            echo "ksu_version=unknown" >> "$GITHUB_OUTPUT"
           fi
           echo "::endgroup::"
 
@@ -621,11 +611,18 @@ jobs:
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
 
-      - name: 📥 Download Artifacts
+      - name: 📥 Download matrix artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-matrix
+          path: ./downloaded-artifacts
+
+      - name: 📥 Download kernel artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./downloaded-artifacts
           merge-multiple: true
+          pattern: kernel-*
 
       - name: 📝 Generate Device List and Final Release Notes
         id: generate-notes
@@ -639,7 +636,7 @@ jobs:
           declare -A device_info
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/matrix.json)
 
-          for file in $(find downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | sort); do
+          for file in ./downloaded-artifacts/*.zip; do
             [ -f "$file" ] || continue
 
             zipname=$(basename "$file" .zip)
