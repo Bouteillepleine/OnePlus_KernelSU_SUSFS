@@ -77,46 +77,47 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Validate inputs"
-        model="$OP_MODEL"
-        soc="$OP_SOC"
-        branch="$OP_BRANCH"
-        manifest="$OP_MANIFEST"
-        android_version="$OP_ANDROID_VERSION"
-        kernel_version="$OP_KERNEL_VERSION"
-        os_version="$OP_OS_VERSION"
-        hmbird="$OP_HMBIRD"
-        susfs="$OP_SUSFS"
-        bbg="$OP_BBG"
-        bbr="$OP_BBR"
-        ttl="$OP_TTL"
-        ip_set="$OP_IP_SET"
-        rust_build="$OP_RUST_BUILD"
-        lto="$OP_LTO"
-        uname="$OP_UNAME"
-        unicode="$OP_UNICODE"
-        kpm="$OP_KPM"
+    
+        model="${OP_MODEL:-}"
+        soc="${OP_SOC:-}"
+        branch="${OP_BRANCH:-}"
+        manifest="${OP_MANIFEST:-}"
+        android_version="${OP_ANDROID_VERSION:-}"
+        kernel_version="${OP_KERNEL_VERSION:-}"
+        os_version="${OP_OS_VERSION:-}"
+        hmbird="${OP_HMBIRD:-false}"
+        susfs="${OP_SUSFS:-false}"
+        bbg="${OP_BBG:-false}"
+        bbr="${OP_BBR:-false}"
+        ttl="${OP_TTL:-false}"
+        ip_set="${OP_IP_SET:-false}"
+        rust_build="${OP_RUST_BUILD:-false}"
+        lto="${OP_LTO:-}"
+        uname="${OP_UNAME:-}"
+        unicode="${OP_UNICODE:-false}"
         optimize='${{ inputs.optimize_level }}'
-
+        kpm_mode='${{ inputs.kpm_mode }}'
+    
         errors=()
-
+    
         if [[ -z "$model" ]]; then
           errors+=("Input 'model' cannot be empty")
         elif [[ ! "$model" =~ ^OP ]]; then
           errors+=("Input 'model' does not start with 'OP'. Got: '$model'")
         fi
-
+    
         if [[ -z "$soc" ]]; then
           errors+=("Input 'soc' cannot be empty")
         elif [[ ! "$soc" =~ ^[A-Za-z0-9_-]+$ ]]; then
           errors+=("Input 'soc' contains invalid characters. Got: '$soc'")
         fi
-
+    
         if [[ -z "$branch" ]]; then
           errors+=("Input 'branch' cannot be empty")
         elif [[ ! "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
           errors+=("Input 'branch' contains invalid characters. Got: '$branch'")
         fi
-
+    
         if [[ -z "$manifest" ]]; then
           errors+=("Input 'manifest' cannot be empty")
         elif [[ "$manifest" == http*://* ]]; then
@@ -134,25 +135,25 @@ runs:
             errors+=("Manifest filename cannot contain spaces. Got: '$manifest'")
           fi
         fi
-
+    
         if [[ -z "$android_version" ]]; then
           errors+=("Input 'android_version' cannot be empty")
         elif [[ ! "$android_version" =~ ^android[0-9]+$ ]]; then
           errors+=("Input 'android_version' invalid. Got: '$android_version'")
         fi
-
+    
         if [[ -z "$kernel_version" ]]; then
           errors+=("Input 'kernel_version' cannot be empty")
         elif [[ ! "$kernel_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
           errors+=("Input 'kernel_version' invalid. Got: '$kernel_version'")
         fi
-
+    
         if [[ -z "$os_version" ]]; then
           errors+=("Input 'os_version' cannot be empty")
         elif [[ ! "$os_version" =~ ^OOS ]]; then
           errors+=("Input 'os_version' does not start with 'OOS'. Got: '$os_version'")
         fi
-
+    
         for pair in \
           "hmbird:$hmbird" \
           "susfs:$susfs" \
@@ -161,8 +162,7 @@ runs:
           "ttl:$ttl" \
           "ip_set:$ip_set" \
           "rust_build:$rust_build" \
-          "unicode:$unicode" \
-          "kpm:$kpm"; do
+          "unicode:$unicode"; do
           key="${pair%%:*}"
           val="${pair#*:}"
           if [[ -z "$val" ]]; then
@@ -171,24 +171,29 @@ runs:
             errors+=("Input '$key' must be 'true' or 'false'. Got: '$val'")
           fi
         done
-
+    
         if [[ -z "$lto" ]]; then
           errors+=("Input 'lto' cannot be empty")
         elif [[ "$lto" != "none" && "$lto" != "thin" && "$lto" != "full" ]]; then
           errors+=("Input 'lto' must be 'thin', 'full' or 'none'. Got: '$lto'")
         fi
-
+    
         if [[ -z "$uname" ]]; then
           errors+=("Input 'uname' cannot be empty")
         elif [[ ${#uname} -gt 44 ]]; then
           errors+=("Input 'uname' too long. Maximum length: 44. Got: '$uname'")
         fi
-
+    
         case "$optimize" in
           O2|O3) ;;
           *) errors+=("optimize_level must be O2 or O3. Got: '$optimize'") ;;
         esac
-
+    
+        case "$kpm_mode" in
+          KPM|KP) ;;
+          *) errors+=("kpm_mode must be KPM or KP. Got: '$kpm_mode'") ;;
+        esac
+    
         if [ ${#errors[@]} -ne 0 ]; then
           echo "Found ${#errors[@]} validation error(s):" >&2
           for error in "${errors[@]}"; do
@@ -197,7 +202,7 @@ runs:
           echo "::error::Input validation failed. See logs for details."
           exit 1
         fi
-
+    
         echo "✅ Input validation passed"
         echo "::endgroup::"
 
