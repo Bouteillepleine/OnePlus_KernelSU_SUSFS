@@ -1,5 +1,9 @@
 name: Build and Release OnePlus Kernels
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CCACHE_MAX_SIZE: '2G'
+
 permissions:
   contents: write
   actions: write
@@ -321,31 +325,31 @@ jobs:
       - name: 📊 Build plan summary
         shell: bash
         run: |
+          set -euo pipefail
+
           resukisu_ref="${{ steps.set-matrix.outputs.resukisu_ref_normalized }}"
           resolved="${{ steps.set-matrix.outputs.resukisu_resolved_hash }}"
 
           if [[ "$resukisu_ref" =~ ^[0-9a-f]{40}$ ]]; then
-            resukisu_display="📌 \`ReSukiSU\`, \`$resukisu_ref\`"
+            resukisu_display="$resukisu_ref"
           else
-            resukisu_display="🔀 \`ReSukiSU\`, \`$resukisu_ref\` (\`$resolved\`)"
+            resukisu_display="$resukisu_ref ($resolved)"
           fi
 
           {
-            cat << EOF
-          ## 🎯 Build Plan
-
-          **Target:** ${{ inputs.op_model }}
-          **Devices:** ${{ steps.set-matrix.outputs.count }}
-
-          **Configuration:**
-          - ReSukiSU Config: $resukisu_display
-          - KPM Mode: ${{ inputs.kpm_mode }}
-          - Optimization: ${{ inputs.optimize_level }}
-          - Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}
-          - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
-
-          **SUSFS Configuration:**
-          EOF
+            echo "## 🎯 Build Plan"
+            echo ""
+            echo "**Target:** ${{ inputs.op_model }}"
+            echo "**Devices:** ${{ steps.set-matrix.outputs.count }}"
+            echo ""
+            echo "**Configuration:**"
+            echo "- ReSukiSU Config: \`${resukisu_display}\`"
+            echo "- KPM Mode: ${{ inputs.kpm_mode }}"
+            echo "- Optimization: ${{ inputs.optimize_level }}"
+            echo "- Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}"
+            echo "- Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}"
+            echo ""
+            echo "**SUSFS Configuration:**"
           } >> "$GITHUB_STEP_SUMMARY"
 
           declare -A susfs_inputs=(
@@ -356,32 +360,19 @@ jobs:
             ["android16-6.12"]="${{ inputs.android16-6_12_susfs_branch_or_commit }}"
           )
 
-          declare -A step_hashes=(
-            ["android12-5.10"]="${{ steps.set-matrix.outputs.susfs_hash_android12_5_10 }}"
-            ["android13-5.15"]="${{ steps.set-matrix.outputs.susfs_hash_android13_5_15 }}"
-            ["android14-6.1"]="${{ steps.set-matrix.outputs.susfs_hash_android14_6_1 }}"
-            ["android15-6.6"]="${{ steps.set-matrix.outputs.susfs_hash_android15_6_6 }}"
-            ["android16-6.12"]="${{ steps.set-matrix.outputs.susfs_hash_android16_6_12 }}"
-          )
-
-          IFS=',' read -ra active_keys_display <<< "${{ steps.set-matrix.outputs.active_gki_keys }}"
-
-          for key in "${active_keys_display[@]}"; do
-            [ -n "$key" ] || continue
-            value="${susfs_inputs[$key]:-}"
-            fetched_hash="${step_hashes[$key]:-unknown}"
-
+          for key in "android12-5.10" "android13-5.15" "android14-6.1" "android15-6.6" "android16-6.12"; do
+            value="${susfs_inputs[$key]}"
             if [ -z "$value" ]; then
-              echo "- $key: 🔄 auto (\`$fetched_hash\`)" >> "$GITHUB_STEP_SUMMARY"
-            elif [[ "$value" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "- $key: 📌 \`$value\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "- ${key}: 🔄 auto (\`gki-${key}\`)" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "- $key: 🔀 \`$value\` (\`$fetched_hash\`)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- ${key}: 📌 \`${value}\`" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
 
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "> **💡 Note:** Hashes are resolved at run time via API calls before builds start." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo ""
+            echo "> **💡 Note:** Empty values auto-map to matching \`gki-androidX-Y.Z\` branches."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: build (${{ matrix.model }}, ${{ matrix.os_version }}, ${{ matrix.android_version }}-${{ matrix.kernel_version }}, ReSukiSU)
@@ -452,7 +443,7 @@ jobs:
         run: |
           if command -v ccache >/dev/null 2>&1; then
             echo "::group::ccache configuration"
-            ccache -o max_size=2.0G
+            ccache -o max_size="${CCACHE_MAX_SIZE}"
             ccache -o compression=true
             ccache -o compression_level=3
             ccache -s
@@ -516,9 +507,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          STATUS_ICON=$( [ "${{ job.status }}" = "success" ] && echo "✅ Success" || echo "❌ Failed" )
+
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
 
-          ### ${{ matrix.model }} (${{ matrix.os_version }}) — ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+          ### ${{ matrix.model }} (${{ matrix.os_version }}) — ${STATUS_ICON}
 
           **Kernel:** ${{ matrix.android_version }}-${{ matrix.kernel_version }}
           **KPM Mode:** ${{ inputs.kpm_mode }}
@@ -533,22 +526,29 @@ jobs:
           | Metric | Value |
           |--------|-------|
           | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
-          | **ReSukiSU** | ${{ steps.build.outputs.ksu_version }} |
+          | **ReSukiSU** | v${{ steps.build.outputs.ksu_version }} |
           | **KPM Mode** | ${{ inputs.kpm_mode }} |
           EOF
+
             if [ "${{ matrix.susfs }}" = "true" ]; then
               echo "| **SUSFS** | ${{ steps.build.outputs.susfs_version }} |" >> "$GITHUB_STEP_SUMMARY"
             fi
-            cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          | **Build Time** | ${{ steps.build.outputs.build_time }}s |
-          | **Image SHA256** | \`${{ steps.build.outputs.image_sha256 }}\` |
-          EOF
+
+            echo "| **Build Time** | ${{ steps.build.outputs.build_time }}s |" >> "$GITHUB_STEP_SUMMARY"
+
             if [ "${{ inputs.clean_build }}" != "true" ]; then
               cat >> "$GITHUB_STEP_SUMMARY" << EOF
           | **ccache Hit Rate** | ${{ steps.build.outputs.ccache_hit_rate }} |
           | **ccache Direct Rate** | ${{ steps.build.outputs.ccache_direct_rate }} |
           EOF
             fi
+
+            if [ -n "${{ steps.build.outputs.warnings }}" ]; then
+              echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**SHA256:** \`${{ steps.build.outputs.image_sha256 }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: 🧹 Final cleanup and space report
@@ -581,12 +581,12 @@ jobs:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With ReSukiSU & SUSFS v2.1.0 *TEST BUILD*'
+      RELEASE_NAME: '* OnePlus Kernels With ReSukiSU & SUSFS v2.1.0 *'
       SUSFS_BASE_VERSION: 'v2.1.0'
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -613,13 +613,13 @@ jobs:
           git push origin "$NEW_TAG"
 
       - name: 📥 Download matrix artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: build-matrix
           path: ./downloaded-artifacts
 
       - name: 📥 Download kernel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: ./downloaded-artifacts
           merge-multiple: true
@@ -863,17 +863,16 @@ jobs:
           ## 🎉 Release Created Successfully
 
           **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})
+          **Status:** Draft — publish manually when ready
           **KPM Mode:** ${{ inputs.kpm_mode }}
-          **Kernels:** $(find ./downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | wc -l)
+          **Kernels:** $(find ./downloaded-artifacts -name "*.zip" | wc -l)
 
           ### 📦 Assets
           EOF
 
-          for zip in ./downloaded-artifacts/*.zip; do
-            if [ -f "$zip" ]; then
-              name=$(basename "$zip")
-              size=$(stat -c%s "$zip")
-              size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
-              echo "- \`$name\` (${size_mb} MB)" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          while IFS= read -r -d '' zip; do
+            [ -f "$zip" ] || continue
+            name=$(basename "$zip")
+            size_mb=$(awk "BEGIN { printf \"%.2f\", $(stat -c%s "$zip") / 1048576 }")
+            echo "- \`$name\` (${size_mb} MB)" >> "$GITHUB_STEP_SUMMARY"
+          done < <(find ./downloaded-artifacts -name "*.zip" -print0 | sort -z)
