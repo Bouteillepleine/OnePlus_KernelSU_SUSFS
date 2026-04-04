@@ -1536,7 +1536,8 @@ runs:
       uses: actions/upload-artifact@v5
       with:
         name: >-
-          kernel-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}-${{ env.OP_ANDROID_VERSION }}-${{ env.OP_KERNEL_VERSION }}-${{ inputs.kpm_mode }}-${{ inputs.optimize_level }}-${{ steps.artifact_suffix.outputs.safe_ref }}-${{ github.run_attempt }}
+          kernel-${{ env.CONFIG }}_${{ env.OP_OS_VERSION }}-${{ env.OP_ANDROID_VERSION }}-${{ env.OP_KERNEL_VERSION }}-${{ inputs.optimize_level }}
         path: ${{ env.ARTIFACTS_FOLDER }}/
         compression-level: 0
         retention-days: 20
+
