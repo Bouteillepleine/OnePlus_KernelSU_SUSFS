@@ -381,58 +381,66 @@ runs:
         echo "::group::Detect Clang"
         CLANG_FOUND=false
         CLANG_BIN=""
-
+        
         if [ -n "$OP_ZYC_COMPILER" ]; then
+          # Priority 1: User explicitly wants ZyC compiler
           echo "OP_ZYC_COMPILER detected as download link: $OP_ZYC_COMPILER"
-
+          
           ZYC_DIR="$CONFIG_FOLDER/compiler/zyc"
           TEMP_TAR="$CONFIG_FOLDER/compiler.tar.gz"
           mkdir -p "$ZYC_DIR"
-
+          
           echo "Downloading ZyC Clang from link..."
-
+          
           max_retries=5
           attempt=1
           download_success=false
-
+          
           while [ $attempt -le $max_retries ]; do
             echo "Download attempt $attempt/$max_retries..."
+            
             if curl -L --fail --retry 3 --retry-delay 5 --connect-timeout 60 -o "$TEMP_TAR" "$OP_ZYC_COMPILER"; then
-              echo "Download successful."
-              download_success=true
-              break
-            else
-              echo "Download failed (attempt $attempt)."
-              rm -f "$TEMP_TAR" 2>/dev/null
-              if [ $attempt -eq $max_retries ]; then
-                echo "Error: Failed to download ZyC Clang after $max_retries attempts."
+                echo "Download successful."
+                download_success=true
                 break
-              fi
-              attempt=$((attempt + 1))
-              sleep 8
+            else
+                echo "Download failed (attempt $attempt)."
+                rm -f "$TEMP_TAR" 2>/dev/null
+                if [ $attempt -eq $max_retries ]; then
+                    echo "Error: Failed to download ZyC Clang after $max_retries attempts."
+                    break
+                fi
+                attempt=$((attempt + 1))
+                sleep 8
             fi
           done
-
+        
           if [ "$download_success" = true ]; then
+            # Extract
             echo "Extracting to $ZYC_DIR ..."
             if tar -xzf "$TEMP_TAR" -C "$ZYC_DIR" 2>/dev/null; then
+              # Symlink extraction fix
+              tar -xzf "$TEMP_TAR" -C "$ZYC_DIR" 2>/dev/null || true
+              # Cleanup
               rm -f "$TEMP_TAR"
-
+              
+              # Verify clang exists
               if [ -x "$ZYC_DIR/bin/clang" ]; then
-                CLANG_BIN="$ZYC_DIR/bin"
-                CLANG_FOUND=true
-                echo "ZyC Clang successfully downloaded and extracted."
-                echo "Using: $CLANG_BIN/clang"
+                  CLANG_BIN="$ZYC_DIR/bin"
+                  CLANG_FOUND=true
+                  echo "ZyC Clang successfully downloaded and extracted."
+                  echo "Using: $CLANG_BIN/clang"
               else
-                echo "Warning: Extraction done, but clang binary not found at $ZYC_DIR/bin/clang"
+                  echo "Warning: Extraction done, but clang binary not found at $ZYC_DIR/bin/clang"
               fi
             else
-              echo "Error: Failed to extract the tar.gz file."
-              rm -f "$TEMP_TAR"
+                echo "Error: Failed to extract the tar.gz file."
+                rm -f "$TEMP_TAR"
             fi
           fi
-
+        
         elif [ -n "$OP_C_COMPILER" ]; then
+          # Priority 2: User specified a custom C compiler
           if [ -x "$CONFIG_FOLDER/$OP_C_COMPILER/clang" ]; then
             CLANG_BIN="$CONFIG_FOLDER/$OP_C_COMPILER"
             CLANG_FOUND=true
@@ -440,8 +448,9 @@ runs:
             echo "Warning: OP_C_COMPILER='$OP_C_COMPILER' but clang binary not found at $CONFIG_FOLDER/$OP_C_COMPILER/clang"
           fi
         fi
-
+        
         if [ "$CLANG_FOUND" = false ]; then
+          # Priority 3: Auto-detect from prebuilts (when both variables are empty / user clang not found)
           for base in "$KERNEL_PLATFORM_FOLDER/prebuilts" "$KERNEL_PLATFORM_FOLDER/prebuilts-master"; do
             [ -d "$base/clang/host/linux-x86" ] || continue
             latest=$(ls -d "$base/clang/host/linux-x86/clang-r"* 2>/dev/null | sort -V | tail -n1 || true)
@@ -452,31 +461,34 @@ runs:
             fi
           done
         fi
-
+        
         if [ "$CLANG_FOUND" = false ] && command -v clang >/dev/null 2>&1; then
+          # Priority 4: Fallback to system-installed clang
           CLANG_BIN="$(dirname "$(command -v clang)")"
           CLANG_FOUND=true
           echo "Using system clang."
         fi
-
+        
         [ "$CLANG_FOUND" = true ] || { echo "::error::No clang toolchain found"; exit 1; }
-
+        
         echo "CLANG_BIN_PATH=$CLANG_BIN" >> "$GITHUB_ENV"
-
+        
         CLANG_VERSION="$("$CLANG_BIN/clang" --version | head -n1)"
         echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_ENV"
-
+        
+        echo "Derive Clang fingerprint"
+        
         short="$("${CLANG_BIN}/clang" --version | sed -n '1s/.*clang-r\([0-9.]\+\).*/\1/p')"
-
+        
         if [ -z "$short" ]; then
           short="$("${CLANG_BIN}/clang" --version | sha256sum | cut -c1-8)"
           echo "⚠️ Could not extract clang-r version, using hash: $short"
         else
           echo "✅ Clang version fingerprint: $short"
         fi
-
+        
         echo "CLANG_VERSION_SHORT=$short" >> "$GITHUB_ENV"
-
+        
         echo "✅ Detected Clang: $CLANG_VERSION"
         echo "::endgroup::"
 
@@ -487,7 +499,7 @@ runs:
         set -euo pipefail
         echo "::group::Detect Rust"
         RUSTC_FOUND=false
-
+        
         if [ -z "$OP_RUST_COMPILER" ]; then
           for base in "$KERNEL_PLATFORM_FOLDER/prebuilts" "$KERNEL_PLATFORM_FOLDER/prebuilts-master"; do
             [ -d "$base/rust/linux-x86" ] || continue
@@ -504,13 +516,14 @@ runs:
             RUSTC_FOUND=true
           fi
         fi
-
+        
         [ "$RUSTC_FOUND" = true ] || { echo "::error::No RUST toolchain found"; exit 1; }
-
+        
         echo "RUSTC_BIN_PATH=$RUSTC_BIN" >> "$GITHUB_ENV"
         RUSTC_VERSION="$("$RUSTC_BIN/rustc" --version | head -n1)"
         echo "RUSTC_VERSION=$RUSTC_VERSION" >> "$GITHUB_ENV"
         echo "✅ Detected RUSTC: $RUSTC_VERSION"
+        
         echo "::endgroup::"
 
     - name: Set Cache Environment
