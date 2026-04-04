@@ -7,7 +7,6 @@ env:
 permissions:
   contents: write
   actions: write
-  workflows: write
 
 on:
   workflow_dispatch:
@@ -312,6 +311,8 @@ jobs:
             --argjson hashes "$susfs_hashes_json" \
             '[.[] | . + {susfs_resolved_hash: ($hashes["\(.android_version)-\(.kernel_version)"] // "unknown")}]')
 
+          echo "$merged_matrix" > matrix.json
+
           wrapped=$(jq -n --argjson items "$merged_matrix" '{ include: $items }')
           echo "matrix=$(jq -c . <<< "$wrapped")" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
@@ -468,7 +469,7 @@ jobs:
           susfs_commit_hash_or_branch: ${{ matrix.susfs_resolved_hash }}
           kpm_mode: ${{ inputs.kpm_mode }}
           optimize_level: ${{ inputs.optimize_level }}
-          clean: ${{ inputs.clean_build }}
+          clean: ${{ inputs.clean_build }}      
 
       - name: 📊 Build statistics
         id: build-stat
@@ -581,7 +582,7 @@ jobs:
     env:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
       RELEASE_NAME: '* OnePlus Kernels With ReSukiSU & SUSFS v2.1.0 *'
       SUSFS_BASE_VERSION: 'v2.1.0'
 
@@ -590,17 +591,18 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 🏷️ Generate and Create New Tag
         shell: bash
         run: |
-          BASE_TAG="$SUSFS_BASE_VERSION-r0"
-          LATEST_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags --jq '.[0].name' 2>/dev/null || true)
+          set -euo pipefail
+
+          LATEST_TAG=$(gh api "repos/$REPO_OWNER/$REPO_NAME/tags?per_page=100" --paginate \
+            --jq '.[].name' 2>/dev/null | grep -E "^${SUSFS_BASE_VERSION}-r[0-9]+$" | sort -V | tail -n1 || true)
 
           if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="$BASE_TAG"
-          else
-            LATEST_TAG=$(printf "%s\n%s\n" "$LATEST_TAG" "$BASE_TAG" | sort -rV | head -n1)
+            LATEST_TAG="${SUSFS_BASE_VERSION}-r0"
           fi
 
           NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{
@@ -608,8 +610,19 @@ jobs:
             printf "%s-r%d", $1, suffix
           }')
 
+          echo "Latest tag: $LATEST_TAG"
           echo "New tag: $NEW_TAG"
-          echo "NEW_TAG=${NEW_TAG}" >> "$GITHUB_ENV"
+          echo "NEW_TAG=$NEW_TAG" >> "$GITHUB_ENV"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
+
+          if git ls-remote --tags origin "refs/tags/$NEW_TAG" | grep -q "refs/tags/$NEW_TAG$"; then
+            echo "::error::Tag $NEW_TAG already exists on remote"
+            exit 1
+          fi
+
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
 
@@ -800,8 +813,7 @@ jobs:
           ---
 
           ## 📱 Manager Applications
-          - **ReSukiSU Manager** → https://github.com/ReSukiSU/ReSukiSU/releases
-          - **WildKSU Manager** → https://github.com/WildKernels/Wild_KSU/releases
+          - **ReSukiSU Manager** → https://github.com/ReSukiSU/ReSukiSU/releases          
           - **KSU SUSFS Module** → https://github.com/sidex15/ksu_module_susfs/releases
           - **Kernel Flasher** → https://github.com/fatalcoder524/KernelFlasher/releases
 
@@ -810,10 +822,18 @@ jobs:
           ## 📥 Installation Instructions
           1. Download the appropriate ZIP for your device
           2. Flash the ZIP using Kernel Flasher to the active slot
-          3. Clean previous root solution state if needed
-          4. Reboot system
-          5. Install ReSukiSU Manager
-          6. Install SusFS module from manager
+          3. Install SusFS module from AK3 if wanted
+          4. Install ReSukiSU Manager (if not yet installed)
+          5. Reboot & Enjoy !
+          
+          ---
+
+          ## Donations
+          Any and all donations are appreciated!
+
+          PayPal: paypal.me/fatalcoder524
+
+          DM on Telegram for UPI donations!
 
           ---
 
@@ -822,12 +842,12 @@ jobs:
           - **KernelSU Team**
           - **simonpunk**
           - **OnePlus**
-          - **TheWildJames**
+          - **TheWildJames & Fatalcoder**
           - **Community Contributors**
 
           ---
 
-          **⚡ Built with ❤️ by the community — Powered by ReSukiSU**
+          **⚡Powered with ❤️ by ReSukiSU**
           EOF
           } >> release_notes.md
 
@@ -846,11 +866,10 @@ jobs:
       - name: 📤 Upload Release Assets
         shell: bash
         run: |
+          shopt -s nullglob
           for file in ./downloaded-artifacts/*.zip; do
-            if [ -f "$file" ]; then
-              echo "Uploading $file..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
-            fi
+            echo "Uploading $file..."
+            gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
           done
 
       - name: 📊 Release summary
