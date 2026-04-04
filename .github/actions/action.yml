@@ -190,8 +190,8 @@ runs:
         esac
     
         case "$kpm_mode" in
-          KPM|KP) ;;
-          *) errors+=("kpm_mode must be KPM or KP. Got: '$kpm_mode'") ;;
+          KPM|KP|NONE) ;;
+          *) errors+=("kpm_mode must be KPM, KP or NONE. Got: '$kpm_mode'") ;;
         esac
     
         if [ ${#errors[@]} -ne 0 ]; then
@@ -757,19 +757,29 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Configure KPM mode"
-
-        if [ "${{ inputs.kpm_mode }}" = "KPM" ]; then
-          cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
-        CONFIG_KPM=y       
+    
+        case "${{ inputs.kpm_mode }}" in
+          KPM)
+            cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+        CONFIG_KPM=y
         EOF
-          echo "✅ KPM mode enabled"
-        else
-          cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+            echo "✅ KPM mode enabled"
+            ;;
+          KP)
+            cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_KPM=n
         EOF
-          echo "✅ KP mode selected — CONFIG_KPM disabled"
-        fi
-
+            echo "✅ KP mode selected — CONFIG_KPM disabled"
+            ;;
+          NONE)
+            echo "✅ No KPM/KP mode selected — leaving CONFIG_KPM untouched"
+            ;;
+          *)
+            echo "::error::Invalid kpm_mode: ${{ inputs.kpm_mode }}"
+            exit 1
+            ;;
+        esac
+    
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
