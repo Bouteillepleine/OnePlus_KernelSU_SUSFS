@@ -589,11 +589,21 @@ jobs:
     env:
       REPO_OWNER: ${{ github.repository_owner }}
       REPO_NAME: ${{ github.event.repository.name }}
-      GH_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_NAME: '* OnePlus Kernels With ReSukiSU & SUSFS v2.1.0 *'
       SUSFS_BASE_VERSION: 'v2.1.0'
 
-    steps:
+    steps:      
+    
+      - name: 🔐 Validate release token
+        shell: bash
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GITHUB_TOKEN is not available — check workflow permissions"
+            exit 1
+          fi
+          echo "✅ Release token present (${#GH_TOKEN} chars)"
+
       - name: 📥 Checkout code
         uses: actions/checkout@v5
         with:
