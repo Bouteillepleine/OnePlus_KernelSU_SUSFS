@@ -1244,7 +1244,7 @@ runs:
 
         make O="$OUT" olddefconfig
 
-        KCFLAGS="$KCFLAGS -Wno-error -pipe ${KCFLAGS_EXTRA}"
+        KCFLAGS="$KCFLAGS -Wno-error -pipe ${KCFLAGS_EXTRA} -ftree-vectorize -fno-semantic-interposition"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
 
         BUILD_START=$(date +%s)
