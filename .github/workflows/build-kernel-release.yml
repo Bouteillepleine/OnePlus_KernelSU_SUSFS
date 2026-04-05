@@ -185,7 +185,6 @@ jobs:
 
           KSU_REPO_OWNER="ReSukiSU"
           KSU_REPO_NAME="ReSukiSU"
-
           HEAD_REF="refs/heads/${resukisu_ref}"
           TAG_REF="refs/tags/${resukisu_ref}"
 
@@ -210,7 +209,6 @@ jobs:
               -f headRef="$HEAD_REF" \
               -f tagRef="$TAG_REF" \
               -f objRef="$resukisu_ref" 2>/dev/null) && break
-
             RETRY_COUNT=$((RETRY_COUNT + 1))
             echo "::warning::GitHub API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying..."
             sleep $RETRY_DELAY
@@ -392,7 +390,6 @@ jobs:
           echo "::group::Disk Usage Before Cleanup"
           df -h
           echo "::endgroup::"
-
           echo "::group::Removing Unnecessary Software"
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo apt-get clean
@@ -400,7 +397,6 @@ jobs:
             docker rmi $(docker images -q) 2>/dev/null || true
           fi
           echo "::endgroup::"
-
           echo "::group::Disk Usage After Cleanup"
           df -h
           echo "::endgroup::"
@@ -408,7 +404,8 @@ jobs:
       - name: Download Apache Arrow's util_free_space.sh
         if: ${{ matrix.disk_cleanup }}
         run: |
-          curl -L -o util_free_space.sh https://raw.githubusercontent.com/apache/arrow/main/ci/scripts/util_free_space.sh
+          curl -L -o util_free_space.sh \
+            https://raw.githubusercontent.com/apache/arrow/main/ci/scripts/util_free_space.sh
           chmod +x util_free_space.sh
           ./util_free_space.sh
 
@@ -458,7 +455,8 @@ jobs:
         run: |
           echo "config_json=$(jq -nc \
             --argjson m '${{ toJSON(matrix) }}' \
-            '$m | del(.resukisu_ref, .resukisu_resolved_hash, .susfs_resolved_hash)')" >> "$GITHUB_OUTPUT"
+            '$m | del(.resukisu_ref, .resukisu_resolved_hash, .susfs_resolved_hash)')" \
+            >> "$GITHUB_OUTPUT"
 
       - name: 🔨 Build Kernel (ReSukiSU)
         id: build
@@ -469,7 +467,7 @@ jobs:
           susfs_commit_hash_or_branch: ${{ matrix.susfs_resolved_hash }}
           kpm_mode: ${{ inputs.kpm_mode }}
           optimize_level: ${{ inputs.optimize_level }}
-          clean: ${{ inputs.clean_build }}      
+          clean: ${{ inputs.clean_build }}
 
       - name: 📊 Build statistics
         id: build-stat
@@ -486,7 +484,6 @@ jobs:
             echo "SUSFS Hash: ${{ matrix.susfs_resolved_hash }}"
           fi
           echo "Status    : ${{ job.status }}"
-
           if [ "${{ steps.build.outcome }}" = "success" ]; then
             echo ""
             echo "✅ Build completed successfully"
@@ -509,48 +506,56 @@ jobs:
         if: always()
         shell: bash
         run: |
-          STATUS_ICON=$( [ "${{ job.status }}" = "success" ] && echo "✅ Success" || echo "❌ Failed" )
+          STATUS_ICON=$( [ "${{ job.status }}" = "success" ] \
+            && echo "✅ Success" || echo "❌ Failed" )
 
-          cat >> "$GITHUB_STEP_SUMMARY" << EOF
-
-          ### ${{ matrix.model }} (${{ matrix.os_version }}) — ${STATUS_ICON}
-
-          **Kernel:** ${{ matrix.android_version }}-${{ matrix.kernel_version }}
-          **KPM Mode:** ${{ inputs.kpm_mode }}
-          EOF
+          {
+            echo ""
+            echo "### ${{ matrix.model }} (${{ matrix.os_version }}) — ${STATUS_ICON}"
+            echo ""
+            echo "**Kernel:** ${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+            echo "**KPM Mode:** ${{ inputs.kpm_mode }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${{ matrix.susfs }}" = "true" ]; then
-            echo "**SUSFS Hash:** \`${{ matrix.susfs_resolved_hash }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "**SUSFS Hash:** \`${{ matrix.susfs_resolved_hash }}\`" \
+              >> "$GITHUB_STEP_SUMMARY"
           fi
 
           if [ "${{ steps.build.outcome }}" = "success" ]; then
-            cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          | Metric | Value |
-          |--------|-------|
-          | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
-          | **ReSukiSU** | v${{ steps.build.outputs.ksu_version }} |
-          | **KPM Mode** | ${{ inputs.kpm_mode }} |
-          EOF
+            {
+              echo ""
+              echo "| Metric | Value |"
+              echo "|--------|-------|"
+              echo "| **Kernel** | ${{ steps.build.outputs.kernel_version }} |"
+              echo "| **ReSukiSU** | v${{ steps.build.outputs.ksu_version }} |"
+              echo "| **KPM Mode** | ${{ inputs.kpm_mode }} |"
+            } >> "$GITHUB_STEP_SUMMARY"
 
             if [ "${{ matrix.susfs }}" = "true" ]; then
-              echo "| **SUSFS** | ${{ steps.build.outputs.susfs_version }} |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| **SUSFS** | ${{ steps.build.outputs.susfs_version }} |" \
+                >> "$GITHUB_STEP_SUMMARY"
             fi
 
-            echo "| **Build Time** | ${{ steps.build.outputs.build_time }}s |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| **Build Time** | ${{ steps.build.outputs.build_time }}s |" \
+              >> "$GITHUB_STEP_SUMMARY"
 
             if [ "${{ inputs.clean_build }}" != "true" ]; then
-              cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          | **ccache Hit Rate** | ${{ steps.build.outputs.ccache_hit_rate }} |
-          | **ccache Direct Rate** | ${{ steps.build.outputs.ccache_direct_rate }} |
-          EOF
+              {
+                echo "| **ccache Hit Rate** | ${{ steps.build.outputs.ccache_hit_rate }} |"
+                echo "| **ccache Direct Rate** | ${{ steps.build.outputs.ccache_direct_rate }} |"
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
 
             if [ -n "${{ steps.build.outputs.warnings }}" ]; then
-              echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" \
+                >> "$GITHUB_STEP_SUMMARY"
             fi
 
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "**SHA256:** \`${{ steps.build.outputs.image_sha256 }}\`" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo ""
+              echo "**SHA256:** \`${{ steps.build.outputs.image_sha256 }}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: 🧹 Final cleanup and space report
@@ -558,7 +563,8 @@ jobs:
         shell: bash
         run: |
           echo "::group::Cleanup"
-          sudo rm -rf "$GITHUB_WORKSPACE/out" \
+          sudo rm -rf \
+            "$GITHUB_WORKSPACE/out" \
             "$GITHUB_WORKSPACE/build" \
             "$GITHUB_WORKSPACE/kernel/out" \
             "$GITHUB_WORKSPACE/.repo" \
@@ -572,6 +578,7 @@ jobs:
           df -h /
           echo "::endgroup::"
 
+  # ── FIX #1 : indentation correcte à 2 espaces sous jobs: ────────────────
   trigger-release:
     needs:
       - set-op-model
@@ -593,38 +600,52 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: 🔐 Validate release token
+        shell: bash
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_RELEASE_TOKEN is not set!"
+            echo "::error::Add it via: Settings → Secrets → Actions → New repository secret"
+            exit 1
+          fi
+          echo "✅ Release token present (${#GH_TOKEN} chars)"
+
       - name: 🏷️ Generate and Create New Tag
         shell: bash
         run: |
           set -euo pipefail
 
-          LATEST_TAG=$(gh api "repos/$REPO_OWNER/$REPO_NAME/tags?per_page=100" --paginate \
-            --jq '.[].name' 2>/dev/null | grep -E "^${SUSFS_BASE_VERSION}-r[0-9]+$" | sort -V | tail -n1 || true)
+          LATEST_TAG=$(gh api "repos/$REPO_OWNER/$REPO_NAME/tags?per_page=100" \
+            --jq '.[].name' 2>/dev/null \
+            | grep -E "^${SUSFS_BASE_VERSION}-r[0-9]+$" \
+            | sort -V | tail -n1 || true)
 
           if [ -z "$LATEST_TAG" ]; then
             LATEST_TAG="${SUSFS_BASE_VERSION}-r0"
           fi
 
-          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{
-            suffix=$2; if (!suffix) suffix=0; suffix++;
-            printf "%s-r%d", $1, suffix
-          }')
+          CURRENT_NUM=$(echo "$LATEST_TAG" | grep -oE '[0-9]+$')
+          NEW_NUM=$(( ${CURRENT_NUM:-0} + 1 ))
+          NEW_TAG="${SUSFS_BASE_VERSION}-r${NEW_NUM}"
 
-          echo "Latest tag: $LATEST_TAG"
-          echo "New tag: $NEW_TAG"
+          echo "Latest tag : $LATEST_TAG"
+          echo "New tag    : $NEW_TAG"
           echo "NEW_TAG=$NEW_TAG" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
 
-          if git ls-remote --tags origin "refs/tags/$NEW_TAG" | grep -q "refs/tags/$NEW_TAG$"; then
+          if git ls-remote --tags origin "refs/tags/$NEW_TAG" \
+              | grep -q "refs/tags/$NEW_TAG$"; then
             echo "::error::Tag $NEW_TAG already exists on remote"
             exit 1
           fi
 
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
+          echo "✅ Tag $NEW_TAG pushed"
 
       - name: 📥 Download matrix artifact
         uses: actions/download-artifact@v5
@@ -639,21 +660,21 @@ jobs:
           merge-multiple: true
           pattern: kernel-*
 
-      - name: 📝 Generate Device List and Final Release Notes
+      - name: 📝 Generate Release Notes
         id: generate-notes
         shell: bash
         run: |
           set -euo pipefail
           echo "=== Building release notes ==="
 
-          [ -f ./downloaded-artifacts/matrix.json ] || { echo "::error::matrix.json missing"; exit 1; }
+          [ -f ./downloaded-artifacts/matrix.json ] \
+            || { echo "::error::matrix.json missing"; exit 1; }
 
           declare -A device_info
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/matrix.json)
 
           for file in ./downloaded-artifacts/*.zip; do
             [ -f "$file" ] || continue
-
             zipname=$(basename "$file" .zip)
             rest="${zipname#AK3_}"
             IFS='_' read -ra parts <<< "$rest"
@@ -661,19 +682,18 @@ jobs:
             model="${parts[0]}"
             os_version="${parts[1]}"
             kernel_version="${parts[2]}"
-            resukisu_tag="${parts[3]}"
             resukisu_ver="${parts[4]}"
 
             if [ "${parts[5]:-}" = "SuSFS" ]; then
               susfs_ver="${parts[6]:-unknown}"
-              kpm_tag="${parts[7]:-KPM}"
+              kpm_tag="${parts[7]:-NONE}"
             else
               susfs_ver="none"
-              kpm_tag="${parts[5]:-KPM}"
+              kpm_tag="${parts[5]:-NONE}"
             fi
 
             full_model="${model}_${os_version}"
-            device_info["$full_model"]="$model|$os_version|$kernel_version|$resukisu_tag|$resukisu_ver|$susfs_ver|$kpm_tag"
+            device_info["$full_model"]="$model|$os_version|$kernel_version|${parts[3]}|$resukisu_ver|$susfs_ver|$kpm_tag"
           done
 
           resukisu_ref="${{ needs.set-op-model.outputs.resukisu_ref_normalized }}"
@@ -690,25 +710,28 @@ jobs:
             ["android16-6.12"]="${{ needs.set-op-model.outputs.susfs_hash_android16_6_12 }}"
           )
 
-          IFS=',' read -ra active_gki_keys <<< "${{ needs.set-op-model.outputs.active_gki_keys }}"
+          IFS=',' read -ra active_gki_keys \
+            <<< "${{ needs.set-op-model.outputs.active_gki_keys }}"
 
-          cat << EOF > release_notes.md
-          # ⚡ OnePlus Kernels with ReSukiSU & SUSFS $SUSFS_BASE_VERSION
-
-          > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          > **Build ID:** \`${{ github.run_id }}\`
-          > **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-          ---
-
-          ## 📦 Built Devices (${#device_info[@]} total)
-
-          | Model | OS Version | Kernel Version | KPM | Features |
-          |-------|------------|----------------|-----|----------|
-          EOF
+          # ── FIX #2 : génération du MD entièrement via printf (0 heredoc indenté) ──
+          {
+            printf '# ⚡ OnePlus Kernels with ReSukiSU & SUSFS %s\n\n' "$SUSFS_BASE_VERSION"
+            printf '> **Build Date:** %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            printf '> **Build ID:** `%s`\n' "${{ github.run_id }}"
+            printf '> **Workflow:** [`%s`](%s/%s/actions/runs/%s)\n\n' \
+              "${{ github.workflow }}" \
+              "${{ github.server_url }}" \
+              "${{ github.repository }}" \
+              "${{ github.run_id }}"
+            printf '---\n\n'
+            printf '## 📦 Built Devices (%d total)\n\n' "${#device_info[@]}"
+            printf '| Model | OS Version | Kernel Version | KPM | Features |\n'
+            printf '|-------|------------|----------------|-----|----------|\n'
+          } > release_notes.md
 
           for full_key in $(printf '%s\n' "${!device_info[@]}" | sort); do
-            IFS='|' read -r model os_ver kernel_ver _ _ _ kpm_tag <<< "${device_info[$full_key]}"
+            IFS='|' read -r model os_ver kernel_ver _ _ _ kpm_tag \
+              <<< "${device_info[$full_key]}"
 
             feature_flags=$(jq -r --arg MODEL "$model" '
               .[] | select(.model == $MODEL) |
@@ -717,142 +740,115 @@ jobs:
 
             features=""
             if [ -n "$feature_flags" ]; then
-              IFS=$'\t' read -r hmbird susfs bbr bbg ttl ip_set unicode <<< "$feature_flags"
-              [[ "$hmbird" == "true" ]] && features+="🐦 HMBIRD "
-              [[ "$susfs" == "true" ]] && features+="ඞ SusFS "
-              [[ "$bbr" == "true" ]] && features+="🚀 BBR "
-              [[ "$bbg" == "true" ]] && features+="🛡️ BBG "
-              [[ "$ttl" == "true" ]] && features+="🌐 TTL "
-              [[ "$ip_set" == "true" ]] && features+="🧱 IP_SET "
+              IFS=$'\t' read -r hmbird susfs bbr bbg ttl ip_set unicode \
+                <<< "$feature_flags"
+              [[ "$hmbird"  == "true" ]] && features+="🐦 HMBIRD "
+              [[ "$susfs"   == "true" ]] && features+="ඞ SusFS "
+              [[ "$bbr"     == "true" ]] && features+="🚀 BBR "
+              [[ "$bbg"     == "true" ]] && features+="🛡️ BBG "
+              [[ "$ttl"     == "true" ]] && features+="🌐 TTL "
+              [[ "$ip_set"  == "true" ]] && features+="🧱 IP_SET "
               [[ "$unicode" == "true" ]] && features+="🔧 Unicode"
             fi
 
-            printf "| %-13s | %-10s | %-16s | %-3s | %-30s |\n" \
-              "$model" "$os_ver" "$kernel_ver" "$kpm_tag" "$features" >> release_notes.md
+            printf '| %-13s | %-10s | %-16s | %-4s | %-30s |\n' \
+              "$model" "$os_ver" "$kernel_ver" "$kpm_tag" "$features" \
+              >> release_notes.md
           done
 
           if [ ${#device_info[@]} -gt 0 ]; then
             first_entry=$(printf '%s\n' "${!device_info[@]}" | sort | head -n1)
-            IFS='|' read -r _ _ _ _ resukisu_ver_global _ _ <<< "${device_info[$first_entry]}"
+            IFS='|' read -r _ _ _ _ resukisu_ver_global _ _ \
+              <<< "${device_info[$first_entry]}"
           else
-            echo "::error::No device info found!"
+            echo "::error::No device info found in downloaded ZIPs!"
             exit 1
           fi
 
           display_ref() {
-            local input="$1"
-            local resolved="$2"
-            if [[ "$input" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "$input"
-            else
-              echo "$input ($resolved)"
-            fi
+            local input="$1" resolved="$2"
+            [[ "$input" =~ ^[0-9a-f]{40}$ ]] && echo "$input" \
+              || echo "$input ($resolved)"
           }
 
           resukisu_display=$(display_ref "$resukisu_ref" "$resukisu_resolved_hash")
+          clean_label=$( [ "$CLEAN_BUILD" = "true" ] \
+            && echo "✅ Yes (no ccache)" || echo "❌ No (ccache enabled)" )
 
           {
-            cat << EOF
-
-          ---
-
-          ## 🔧 Build Configuration
-
-          | Component | Version/Setting |
-          |-----------|----------------|
-          | **ReSukiSU Branch** | \`$resukisu_display\` |
-          | **ReSukiSU Version** | \`$resukisu_ver_global\` |
-          | **KPM Mode** | \`${KPM_MODE}\` |
-          | **SUSFS Version** | \`${SUSFS_BASE_VERSION}\` |
-          | **Optimization Level** | \`${OPTIMIZE_LEVEL}\` |
-          | **Clean Build** | $( [ "$CLEAN_BUILD" = "true" ] && echo "✅ Yes (no ccache)" || echo "❌ No (ccache enabled)" ) |
-          | **Compiler** | Clang (version varies by device) |
-
-          ### 📌 SUSFS Branch Mapping
-
-          | Kernel Version | SUSFS Commit |
-          |----------------|--------------|
-          EOF
-
-            for key in "${active_gki_keys[@]}"; do
-              [ -n "$key" ] || continue
-              echo "| $key | \`${susfs_map[$key]:-unknown}\` |"
-            done
-
-            cat << EOF
-
-          ---
-
-          ## ✨ Features & Capabilities
-
-          ### 🔐 Root Management
-          - **ReSukiSU** — Enhanced KernelSU fork with multi-manager support
-          - **SUSFS ${SUSFS_BASE_VERSION}** — Advanced hiding and security features
-          - **KPM Mode: ${KPM_MODE}** — Kernel Patch Module $([ "$KPM_MODE" = "KPM" ] && echo "enabled" || echo "disabled")
-          - **Magic Mount Support** — Seamless file system modifications
-          - **Multi-Manager Support** — Multiple manager compatibility
-
-          ### 🛡️ Security & Privacy
-          - **Baseband Guard (BBG)** — LSM-based baseband security
-          - **SUSFS Hide Features**
-          - **Ptrace Leak Fix** — For kernels < 5.16
-          - **Unicode Fix** — Prevent path traversal detections
-
-          ### 🚀 Performance & Networking
-          - **BBRv1** — Improved TCP congestion control
-          - **IP Set & IPv6 NAT Support** — Advanced firewall capabilities
-          - **TTL Target Support** — Network packet manipulation
-          - **LTO (Link Time Optimization)** — Optimized binary size and performance
-          - **Oryon-1 CPU Tuning** — For SM8750/SM8850/SM8845 SoCs
-
-          ### 🔧 System Features
-          - **TMPFS_XATTR** — Extended attributes for tmpfs
-          - **TMPFS_POSIX_ACL** — POSIX ACLs for tmpfs
-          - **HMBIRD SCX** — Scheduler extensions where supported
-
-          ---
-
-          ## 📱 Manager Applications
-          - **ReSukiSU Manager** → https://github.com/ReSukiSU/ReSukiSU/releases          
-          - **KSU SUSFS Module** → https://github.com/sidex15/ksu_module_susfs/releases
-          - **Kernel Flasher** → https://github.com/fatalcoder524/KernelFlasher/releases
-
-          ---
-
-          ## 📥 Installation Instructions
-          1. Download the appropriate ZIP for your device
-          2. Flash the ZIP using Kernel Flasher to the active slot
-          3. Install SusFS module from AK3 if wanted
-          4. Install ReSukiSU Manager (if not yet installed)
-          5. Reboot & Enjoy !
-          
-          ---
-
-          ## Donations
-          Any and all donations are appreciated!
-
-          PayPal: paypal.me/fatalcoder524
-
-          DM on Telegram for UPI donations!
-
-          ---
-
-          ## 🙏 Credits
-          - **ReSukiSU Team**
-          - **KernelSU Team**
-          - **simonpunk**
-          - **OnePlus**
-          - **TheWildJames & Fatalcoder**
-          - **Community Contributors**
-
-          ---
-
-          **⚡Powered with ❤️ by ReSukiSU**
-          EOF
+            printf '\n---\n\n'
+            printf '## 🔧 Build Configuration\n\n'
+            printf '| Component | Version/Setting |\n'
+            printf '|-----------|----------------|\n'
+            printf '| **ReSukiSU Branch** | `%s` |\n'   "$resukisu_display"
+            printf '| **ReSukiSU Version** | `%s` |\n'  "$resukisu_ver_global"
+            printf '| **KPM Mode** | `%s` |\n'          "$KPM_MODE"
+            printf '| **SUSFS Version** | `%s` |\n'     "$SUSFS_BASE_VERSION"
+            printf '| **Optimization Level** | `%s` |\n' "$OPTIMIZE_LEVEL"
+            printf '| **Clean Build** | %s |\n'         "$clean_label"
+            printf '| **Compiler** | Clang (version varies by device) |\n\n'
+            printf '### 📌 SUSFS Branch Mapping\n\n'
+            printf '| Kernel Version | SUSFS Commit |\n'
+            printf '|----------------|-------------|\n'
           } >> release_notes.md
 
-          echo "--- Final Release Notes ---"
-          cat release_notes.md
+          for key in "${active_gki_keys[@]}"; do
+            [ -n "$key" ] || continue
+            printf '| %s | `%s` |\n' "$key" "${susfs_map[$key]:-unknown}" \
+              >> release_notes.md
+          done
+
+          # ── FIX #2 suite : bloc statique via printf multi-lignes ────────
+          {
+            printf '\n---\n\n'
+            printf '## ✨ Features & Capabilities\n\n'
+            printf '### 🔐 Root Management\n'
+            printf '- **ReSukiSU** — Enhanced KernelSU fork with multi-manager support\n'
+            printf '- **Magic Mount Support** — Seamless file system modifications\n'
+            printf '- **Multi-Manager Support** — Multiple manager compatibility\n\n'
+            printf '### 🛡️ Security & Privacy\n'
+            printf '- **Baseband Guard (BBG)** — LSM-based baseband security\n'
+            printf '- **SUSFS Hide Features**\n'
+            printf '- **Ptrace Leak Fix** — For kernels < 5.16\n'
+            printf '- **Unicode Fix** — Prevent path traversal detections\n\n'
+            printf '### 🚀 Performance & Networking\n'
+            printf '- **BBRv1** — Improved TCP congestion control\n'
+            printf '- **IP Set & IPv6 NAT Support** — Advanced firewall capabilities\n'
+            printf '- **TTL Target Support** — Network packet manipulation\n'
+            printf '- **LTO (Link Time Optimization)** — Optimized binary size and performance\n'
+            printf '- **Oryon-1 CPU Tuning** — For SM8750/SM8850/SM8845 SoCs\n\n'
+            printf '### 🔧 System Features\n'
+            printf '- **TMPFS_XATTR** — Extended attributes for tmpfs\n'
+            printf '- **TMPFS_POSIX_ACL** — POSIX ACLs for tmpfs\n'
+            printf '- **HMBIRD SCX** — Scheduler extensions where supported\n\n'
+            printf '---\n\n'
+            printf '## 📱 Manager Applications\n'
+            printf '- **ReSukiSU Manager** → https://github.com/ReSukiSU/ReSukiSU/releases\n'
+            printf '- **KSU SUSFS Module** → https://github.com/sidex15/ksu_module_susfs/releases\n'
+            printf '- **Kernel Flasher** → https://github.com/fatalcoder524/KernelFlasher/releases\n\n'
+            printf '---\n\n'
+            printf '## 📥 Installation Instructions\n'
+            printf '1. Download the appropriate ZIP for your device\n'
+            printf '2. Flash the ZIP using Kernel Flasher to the active slot\n'
+            printf '3. Install SusFS module from AK3 if wanted\n'
+            printf '4. Install ReSukiSU Manager (if not yet installed)\n'
+            printf '5. Reboot & Enjoy!\n\n'
+            printf '---\n\n'
+            printf '## Donations\n'
+            printf 'Any and all donations are appreciated!\n\n'
+            printf 'PayPal: paypal.me/fatalcoder524\n\n'
+            printf 'DM on Telegram for UPI donations!\n\n'
+            printf '---\n\n'
+            printf '## 🙏 Credits\n'
+            printf '- **ReSukiSU Team** | **KernelSU Team** | **simonpunk**\n'
+            printf '- **OnePlus** | **TheWildJames & Fatalcoder**\n'
+            printf '- **Community Contributors**\n\n'
+            printf '---\n\n'
+            printf '**⚡ Powered with ❤️ by ReSukiSU**\n'
+          } >> release_notes.md
+
+          echo "--- Release Notes Preview (first 30 lines) ---"
+          head -n 30 release_notes.md
 
       - name: 🚀 Create GitHub Release
         shell: bash
@@ -862,33 +858,37 @@ jobs:
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --draft
+          echo "✅ Draft release created: ${{ env.NEW_TAG }}"
 
       - name: 📤 Upload Release Assets
         shell: bash
         run: |
           shopt -s nullglob
+          count=0
           for file in ./downloaded-artifacts/*.zip; do
-            echo "Uploading $file..."
+            echo "Uploading $(basename "$file")..."
             gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
+            count=$((count + 1))
           done
+          echo "✅ $count asset(s) uploaded"
 
       - name: 📊 Release summary
         if: success()
         shell: bash
         run: |
-          cat >> "$GITHUB_STEP_SUMMARY" << EOF
-
-          ---
-
-          ## 🎉 Release Created Successfully
-
-          **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})
-          **Status:** Draft — publish manually when ready
-          **KPM Mode:** ${{ inputs.kpm_mode }}
-          **Kernels:** $(find ./downloaded-artifacts -name "*.zip" | wc -l)
-
-          ### 📦 Assets
-          EOF
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 🎉 Release Created Successfully"
+            echo ""
+            echo "**Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})"
+            echo "**Status:** Draft — publish manually when ready"
+            echo "**KPM Mode:** ${{ inputs.kpm_mode }}"
+            echo "**Kernels:** $(find ./downloaded-artifacts -name '*.zip' | wc -l)"
+            echo ""
+            echo "### 📦 Assets"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           while IFS= read -r -d '' zip; do
             [ -f "$zip" ] || continue
